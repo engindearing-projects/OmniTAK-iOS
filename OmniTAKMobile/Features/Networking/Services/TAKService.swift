@@ -925,6 +925,128 @@ struct CoTDetail {
     let battery: Int?
     let device: String?
     let platform: String?
+    // Widened fields for lossless TAK protobuf round-trip.
+    // Existing fields above already cover several Detail submessage attributes:
+    //   `team`     -> <__group name>
+    //   `device`   -> <takv device>
+    //   `platform` -> <takv platform>
+    //   `battery`  -> <status battery>
+    //   `speed`    -> <track speed>
+    //   `course`   -> <track course>
+    //   `callsign` -> <contact callsign>
+    // The fields below cover the rest of the TAK Detail proto so portnum-72
+    // payloads round-trip without resorting to a stashed XML blob.
+    var groupRole: String? = nil           // <__group role="Team Member"/>
+    var contactEndpoint: String? = nil     // <contact endpoint="*:-1:stcp"/>
+    var takvOs: String? = nil              // <takv os="iOS"/>
+    var takvVersion: String? = nil         // <takv version="2.0.0"/>
+    var precisionGeopointSrc: String? = nil // <precisionlocation geopointsrc="GPS"/>
+    var precisionAltSrc: String? = nil     // <precisionlocation altsrc="DTED0"/>
+    var xmlDetail: String? = nil           // free-form passthrough for unmodeled <detail> children
+
+    /// Spec alias for `team` — TAK protobuf calls this `Group.name`. The
+    /// existing iOS code uses `team` to mean the same thing; expose both names
+    /// so the typed field naming stays consistent with the wire schema.
+    var groupName: String? { team }
+}
+
+extension CoTDetail {
+    /// Render this CoTDetail as the `<detail>...</detail>` XML fragment used
+    /// by the TAK-server emission paths. Mirrors the format produced by
+    /// `MeshtasticCOTBridge.generateCOTXML` and the parser's reverse
+    /// `renderDetailXML`, so wire-level XML and protobuf paths stay in sync.
+    ///
+    /// `defaultTeam` / `defaultRole` are only used as fallbacks when the
+    /// CoTDetail itself doesn't carry group info — set to `nil` to skip the
+    /// `<__group>` element entirely in that case.
+    func toDetailXML(defaultTeam: String? = nil, defaultRole: String? = nil) -> String {
+        // If the source carried a verbatim xmlDetail blob, prefer that — it
+        // already represents the full <detail> body and may include things we
+        // don't model. Wrap it in <detail>...</detail> if necessary.
+        if let xml = xmlDetail, !xml.isEmpty {
+            let trimmed = xml.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("<detail") {
+                return trimmed
+            } else {
+                return "<detail>\(trimmed)</detail>"
+            }
+        }
+
+        var inner = ""
+
+        // <contact callsign="..." endpoint="..."/>
+        if !callsign.isEmpty || (contactEndpoint?.isEmpty == false) {
+            var attrs = ""
+            if !callsign.isEmpty {
+                attrs += " callsign=\"\(CoTDetail.escapeXML(callsign))\""
+            }
+            if let endpoint = contactEndpoint, !endpoint.isEmpty {
+                attrs += " endpoint=\"\(CoTDetail.escapeXML(endpoint))\""
+            }
+            inner += "<contact\(attrs)/>"
+        }
+
+        // <__group name="..." role="..."/>
+        let resolvedTeam = team ?? defaultTeam
+        let resolvedRole = groupRole ?? defaultRole
+        if let groupNameValue = resolvedTeam, !groupNameValue.isEmpty {
+            var attrs = " name=\"\(CoTDetail.escapeXML(groupNameValue))\""
+            if let roleValue = resolvedRole, !roleValue.isEmpty {
+                attrs += " role=\"\(CoTDetail.escapeXML(roleValue))\""
+            }
+            inner += "<__group\(attrs)/>"
+        }
+
+        // <precisionlocation geopointsrc="..." altsrc="..."/>
+        if (precisionGeopointSrc?.isEmpty == false) || (precisionAltSrc?.isEmpty == false) {
+            var attrs = ""
+            if let geo = precisionGeopointSrc, !geo.isEmpty {
+                attrs += " geopointsrc=\"\(CoTDetail.escapeXML(geo))\""
+            }
+            if let alt = precisionAltSrc, !alt.isEmpty {
+                attrs += " altsrc=\"\(CoTDetail.escapeXML(alt))\""
+            }
+            inner += "<precisionlocation\(attrs)/>"
+        }
+
+        // <status battery="..."/>
+        if let battery = battery {
+            inner += "<status battery=\"\(battery)\"/>"
+        }
+
+        // <takv device="..." platform="..." os="..." version="..."/>
+        if device != nil || platform != nil || takvOs != nil || takvVersion != nil {
+            var attrs = ""
+            if let v = device { attrs += " device=\"\(CoTDetail.escapeXML(v))\"" }
+            if let v = platform { attrs += " platform=\"\(CoTDetail.escapeXML(v))\"" }
+            if let v = takvOs { attrs += " os=\"\(CoTDetail.escapeXML(v))\"" }
+            if let v = takvVersion { attrs += " version=\"\(CoTDetail.escapeXML(v))\"" }
+            inner += "<takv\(attrs)/>"
+        }
+
+        // <track speed="..." course="..."/>
+        if speed != nil || course != nil {
+            var attrs = ""
+            if let v = speed { attrs += " speed=\"\(v)\"" }
+            if let v = course { attrs += " course=\"\(v)\"" }
+            inner += "<track\(attrs)/>"
+        }
+
+        // <remarks>...</remarks>
+        if let remarks = remarks, !remarks.isEmpty {
+            inner += "<remarks>\(CoTDetail.escapeXML(remarks))</remarks>"
+        }
+
+        return "<detail>\(inner)</detail>"
+    }
+
+    private static func escapeXML(_ s: String) -> String {
+        return s
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
 }
 
 // MARK: - Server Connection State

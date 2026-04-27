@@ -93,21 +93,46 @@ enum ATAKPluginSerializer {
         var out = Data()
 
         // 6: contact (callsign + endpoint)
-        if !detail.callsign.isEmpty {
+        if !detail.callsign.isEmpty || (detail.contactEndpoint?.isEmpty == false) {
             var contact = Data()
-            appendString(&contact, field: 1, value: detail.callsign)
+            if !detail.callsign.isEmpty {
+                appendString(&contact, field: 1, value: detail.callsign)
+            }
+            if let endpoint = detail.contactEndpoint, !endpoint.isEmpty {
+                appendString(&contact, field: 2, value: endpoint)
+            }
             appendTag(&out, field: 6, wire: 2)
             appendVarint(&out, UInt64(contact.count))
             out.append(contact)
         }
 
-        // 2: group (name)
-        if let team = detail.team, !team.isEmpty {
+        // 2: group (name + role)
+        if (detail.team?.isEmpty == false) || (detail.groupRole?.isEmpty == false) {
             var group = Data()
-            appendString(&group, field: 1, value: team)
+            if let team = detail.team, !team.isEmpty {
+                appendString(&group, field: 1, value: team)
+            }
+            if let role = detail.groupRole, !role.isEmpty {
+                appendString(&group, field: 2, value: role)
+            }
             appendTag(&out, field: 2, wire: 2)
             appendVarint(&out, UInt64(group.count))
             out.append(group)
+        }
+
+        // 3: precisionLocation (geopointsrc + altsrc)
+        if (detail.precisionGeopointSrc?.isEmpty == false) ||
+           (detail.precisionAltSrc?.isEmpty == false) {
+            var prec = Data()
+            if let geo = detail.precisionGeopointSrc, !geo.isEmpty {
+                appendString(&prec, field: 1, value: geo)
+            }
+            if let alt = detail.precisionAltSrc, !alt.isEmpty {
+                appendString(&prec, field: 2, value: alt)
+            }
+            appendTag(&out, field: 3, wire: 2)
+            appendVarint(&out, UInt64(prec.count))
+            out.append(prec)
         }
 
         // 4: status (battery)
@@ -119,11 +144,14 @@ enum ATAKPluginSerializer {
             out.append(status)
         }
 
-        // 5: takv (device, platform)
-        if detail.device != nil || detail.platform != nil {
+        // 5: takv (device, platform, os, version)
+        if detail.device != nil || detail.platform != nil ||
+           detail.takvOs != nil || detail.takvVersion != nil {
             var takv = Data()
             if let device = detail.device { appendString(&takv, field: 1, value: device) }
             if let platform = detail.platform { appendString(&takv, field: 2, value: platform) }
+            if let os = detail.takvOs { appendString(&takv, field: 3, value: os) }
+            if let version = detail.takvVersion { appendString(&takv, field: 4, value: version) }
             appendTag(&out, field: 5, wire: 2)
             appendVarint(&out, UInt64(takv.count))
             out.append(takv)
@@ -145,9 +173,12 @@ enum ATAKPluginSerializer {
             out.append(track)
         }
 
-        // 1: xmlDetail (free-form) — stash remarks here so parsers that ignore
-        // structured submessages still see them.
-        if let remarks = detail.remarks, !remarks.isEmpty {
+        // 1: xmlDetail (free-form passthrough). Prefer an explicit xmlDetail
+        // when set; otherwise fall back to wrapping remarks so older parsers
+        // that only look at xmlDetail still surface them.
+        if let xml = detail.xmlDetail, !xml.isEmpty {
+            appendString(&out, field: 1, value: xml)
+        } else if let remarks = detail.remarks, !remarks.isEmpty {
             let xml = "<remarks>\(escape(remarks))</remarks>"
             appendString(&out, field: 1, value: xml)
         }

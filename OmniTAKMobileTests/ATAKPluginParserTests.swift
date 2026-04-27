@@ -66,6 +66,101 @@ final class ATAKPluginParserTests: XCTestCase {
         XCTAssertEqual(parsed.detail.remarks, "Test remark")
     }
 
+    /// Round-trip every widened CoTDetail field — this is the test the Phase 4
+    /// merges asked for: prove the proto serializer/parser pair preserves the
+    /// full TAK Detail submessage without dropping anything.
+    func testRoundTripAllWidenedFields() {
+        var detail = CoTDetail(
+            callsign: "CHARLIE-2",
+            team: "Cyan",
+            speed: 3.4,
+            course: 180.0,
+            remarks: nil, // verify xmlDetail wins when both could be set
+            battery: 78,
+            device: "iPhone 15 Pro",
+            platform: "OmniTAK"
+        )
+        detail.groupRole = "Squad Lead"
+        detail.contactEndpoint = "*:-1:stcp"
+        detail.takvOs = "iOS"
+        detail.takvVersion = "2.0.0"
+        detail.precisionGeopointSrc = "GPS"
+        detail.precisionAltSrc = "DTED0"
+        detail.xmlDetail = "<remarks>Raw passthrough</remarks>"
+
+        let original = CoTEvent(
+            uid: "OPS-omega",
+            type: "a-f-G-U-C",
+            time: Date(timeIntervalSince1970: 1714111111),
+            point: CoTPoint(lat: 47.0, lon: -122.0, hae: 50.0, ce: 5.0, le: 5.0),
+            detail: detail
+        )
+
+        let bytes = ATAKPluginSerializer.serialize(
+            original,
+            sendTime: original.time,
+            startTime: original.time,
+            staleTime: original.time.addingTimeInterval(60)
+        )
+
+        guard let parsed = ATAKPluginParser.parse(bytes) else {
+            return XCTFail("parser returned nil for widened-fields payload")
+        }
+
+        XCTAssertEqual(parsed.detail.callsign, "CHARLIE-2")
+        XCTAssertEqual(parsed.detail.team, "Cyan")
+        XCTAssertEqual(parsed.detail.groupRole, "Squad Lead")
+        XCTAssertEqual(parsed.detail.contactEndpoint, "*:-1:stcp")
+        XCTAssertEqual(parsed.detail.takvOs, "iOS")
+        XCTAssertEqual(parsed.detail.takvVersion, "2.0.0")
+        XCTAssertEqual(parsed.detail.device, "iPhone 15 Pro")
+        XCTAssertEqual(parsed.detail.platform, "OmniTAK")
+        XCTAssertEqual(parsed.detail.precisionGeopointSrc, "GPS")
+        XCTAssertEqual(parsed.detail.precisionAltSrc, "DTED0")
+        XCTAssertEqual(parsed.detail.battery, 78)
+        XCTAssertEqual(parsed.detail.speed, 3.4)
+        XCTAssertEqual(parsed.detail.course, 180.0)
+        XCTAssertEqual(parsed.detail.xmlDetail, "<remarks>Raw passthrough</remarks>")
+        // groupName mirrors team for spec parity.
+        XCTAssertEqual(parsed.detail.groupName, "Cyan")
+    }
+
+    /// Hand-crafted TAKMessage with a populated Group submessage —
+    /// asserts the parser pulls both `name` and `role` into the typed
+    /// CoTDetail fields directly.
+    func testParseHandCraftedGroupNameAndRole() {
+        // Build Detail submessage (field 15 of CoTEvent) with Group (field 2
+        // of Detail). Group has name=field 1 and role=field 2.
+        var group = Data()
+        appendString(&group, field: 1, value: "Cyan")
+        appendString(&group, field: 2, value: "Team Lead")
+
+        var detail = Data()
+        appendTag(&detail, field: 2, wire: 2)
+        appendVarint(&detail, UInt64(group.count))
+        detail.append(group)
+
+        var cotEvent = Data()
+        appendString(&cotEvent, field: 1, value: "a-f-G-U-C")
+        appendString(&cotEvent, field: 5, value: "GROUP-TEST")
+        // Detail at field 15
+        appendTag(&cotEvent, field: 15, wire: 2)
+        appendVarint(&cotEvent, UInt64(detail.count))
+        cotEvent.append(detail)
+
+        var takMessage = Data()
+        appendTag(&takMessage, field: 2, wire: 2)
+        appendVarint(&takMessage, UInt64(cotEvent.count))
+        takMessage.append(cotEvent)
+
+        guard let parsed = ATAKPluginParser.parse(takMessage) else {
+            return XCTFail("parser failed on hand-crafted Group bytes")
+        }
+        XCTAssertEqual(parsed.detail.team, "Cyan")
+        XCTAssertEqual(parsed.detail.groupName, "Cyan")
+        XCTAssertEqual(parsed.detail.groupRole, "Team Lead")
+    }
+
     // MARK: - Hand-crafted protobuf bytes
 
     func testParseHandCraftedTAKMessage() {

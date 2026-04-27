@@ -52,14 +52,12 @@ import Foundation
 
 /// Result of a successful ATAK-plugin payload parse.
 ///
-/// We surface the populated `CoTEvent` plus the reconstructed `<detail>` XML
-/// fragment so downstream code that expects raw CoT XML can still see the
-/// extra TAK-protobuf submessages (group/contact/status/takv/track/etc.) even
-/// though the current `CoTEvent` model can't carry them all natively.
-///
-/// TODO: widen `CoTDetail` to carry these fields directly (group role,
-///       precisionLocation src, takv version) so the XML round-trip becomes
-///       lossless without piggy-backing on remarks.
+/// Surfaces the populated `CoTEvent` plus the reconstructed `<detail>` XML
+/// fragment so downstream code that expects raw CoT XML can still consume it.
+/// Since `CoTDetail` was widened to carry every TAK Detail submessage
+/// natively (group/contact/takv/precisionlocation/track/status/xmlDetail),
+/// the structured event is now the lossless source of truth and `detailXML`
+/// is just a convenient pre-rendered view.
 struct ATAKPluginParsedMessage {
     let event: CoTEvent
     let detailXML: String
@@ -217,7 +215,7 @@ enum ATAKPluginParser {
 
         let parsedDetail = detailBytes.flatMap(parseDetail) ?? ParsedDetail()
 
-        let cotDetail = CoTDetail(
+        var cotDetail = CoTDetail(
             callsign: parsedDetail.callsign ?? resolvedUid,
             team: parsedDetail.groupName,
             speed: parsedDetail.speed,
@@ -227,6 +225,15 @@ enum ATAKPluginParser {
             device: parsedDetail.device,
             platform: parsedDetail.platform
         )
+        // Populate the widened CoTDetail fields directly so the proto
+        // round-trip is lossless — no need to stash anything in rawXml.
+        cotDetail.groupRole = parsedDetail.groupRole
+        cotDetail.contactEndpoint = parsedDetail.endpoint
+        cotDetail.takvOs = parsedDetail.os
+        cotDetail.takvVersion = parsedDetail.version
+        cotDetail.precisionGeopointSrc = parsedDetail.precisionGeo
+        cotDetail.precisionAltSrc = parsedDetail.precisionAlt
+        cotDetail.xmlDetail = parsedDetail.xmlDetail
 
         let event = CoTEvent(
             uid: resolvedUid,

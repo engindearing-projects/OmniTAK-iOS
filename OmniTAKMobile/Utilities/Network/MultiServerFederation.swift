@@ -380,9 +380,6 @@ class MultiServerFederation: ObservableObject {
     }
 
     private func generateCoTXml(event: CoTEvent) -> String {
-        let callsign = event.detail.callsign
-        let team = event.detail.team ?? "Cyan"
-
         let dateFormatter = ISO8601DateFormatter()
         let time = dateFormatter.string(from: event.time)
         let start = time
@@ -392,10 +389,7 @@ class MultiServerFederation: ObservableObject {
         <?xml version="1.0" encoding="UTF-8"?>
         <event version="2.0" uid="\(event.uid)" type="\(event.type)" time="\(time)" start="\(start)" stale="\(stale)" how="h-e">
           <point lat="\(event.point.lat)" lon="\(event.point.lon)" hae="\(event.point.hae)" ce="\(event.point.ce)" le="\(event.point.le)"/>
-          <detail>
-            <contact callsign="\(callsign)"/>
-            <__group name="\(team)" role="Team Member"/>
-          </detail>
+          \(event.detail.toDetailXML(defaultTeam: "Cyan", defaultRole: "Team Member"))
         </event>
         """
     }
