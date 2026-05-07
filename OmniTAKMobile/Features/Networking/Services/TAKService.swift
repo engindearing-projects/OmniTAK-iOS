@@ -1159,9 +1159,18 @@ class TAKService: ObservableObject {
                 self.updateOverallConnectionState()
 
                 if success {
-                    // Configure ChatManager and PositionBroadcastService if this is the first connection
+                    // Wire the chat sender on every successful connect, not just
+                    // the first. The earlier `connectedServerIds.count == 1` gate
+                    // looked correct but in practice ChatManager.takService stayed
+                    // nil (chats were generated, then dropped with "❌ TAKService
+                    // not configured"), so we always reach here on connect now.
+                    ChatManager.shared.setTAKService(self)
+                    // Mirror the PPLI EUD identity into chat so messages share
+                    // the same UID/callsign the server has registered (e.g.
+                    // ALPHA-1 + IOS-…) instead of a stale SELF-<vendorID>.
+                    ChatManager.shared.currentUserId = PositionBroadcastService.shared.userUID
+                    ChatManager.shared.currentUserCallsign = PositionBroadcastService.shared.userCallsign
                     if self.connectedServerIds.count == 1 {
-                        ChatManager.shared.setTAKService(self)
                         PositionBroadcastService.shared.configure(takService: self, locationManager: LocationManager.shared)
                     }
                     #if DEBUG

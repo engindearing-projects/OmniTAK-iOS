@@ -23,6 +23,14 @@ class DataPackageImportManager: ObservableObject {
     private var passwordContinuation: CheckedContinuation<String?, Never>?
     private var yamlCertConfig: YAMLCertConfig?
 
+    /// Servers parsed from preferences/configs during the current import.
+    /// Held until certificates have been imported so the auto-connect that
+    /// `ServerManager.addServer` triggers can actually load the cert from
+    /// the keychain. Without this defer the first connect after a fresh
+    /// data-package import races the cert import and gets stuck on
+    /// "Connecting…" — only a manual disable+enable toggle recovers.
+    private var pendingServers: [TAKServer] = []
+
     // MARK: - Password Prompt Support
 
     /// Called by the view when the user enters (or cancels) the certificate password prompt.
@@ -45,6 +53,10 @@ class DataPackageImportManager: ObservableObject {
 
     func importPackage(from url: URL, statusCallback: @escaping (ImportStatus) async -> Void) async throws {
         print("📦 DataPackageImportManager: Starting import from \(url.lastPathComponent)")
+
+        // Reset per-import state so repeat imports don't replay stale servers.
+        pendingServers.removeAll()
+        yamlCertConfig = nil
 
         // Create temporary directory
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -114,6 +126,17 @@ class DataPackageImportManager: ObservableObject {
                 print("   ❌ Failed to import certificate: \(error)")
             }
         }
+
+        // Step 4: Now that the certs are in the keychain, register the parsed
+        // servers. ServerManager.addServer auto-connects when enabled, and the
+        // first connect needs the cert to already be loadable — adding the
+        // server in step 1 instead would race the cert import and leave the
+        // entry stuck on "Connecting…" until a manual disable+enable toggle.
+        for server in pendingServers {
+            serverManager.addServer(server)
+            print("🔗 Registered server post-cert-import: \(server.displayName)")
+        }
+        pendingServers.removeAll()
 
         print("📊 Import complete: \(importedItems) items imported")
 
@@ -494,9 +517,9 @@ class DataPackageImportManager: ObservableObject {
             certificateName: config.certificateName
         )
 
-        // Add to server manager
-        serverManager.addServer(server)
-        print("✅ Imported server configuration: \(server.name)")
+        // Defer to post-cert-import (see pendingServers comment).
+        pendingServers.append(server)
+        print("✅ Imported server configuration: \(server.name) (deferred until cert import completes)")
     }
 
     private func parseXMLConfig(data: Data) async throws {
@@ -523,8 +546,8 @@ class DataPackageImportManager: ObservableObject {
                     isDefault: false
                 )
 
-                serverManager.addServer(server)
-                print("✅ Imported server from XML: \(server.name)")
+                pendingServers.append(server)
+                print("✅ Imported server from XML: \(server.name) (deferred until cert import completes)")
             }
         }
     }
@@ -608,8 +631,8 @@ class DataPackageImportManager: ObservableObject {
             caCertificateName: caCertificateName
         )
 
-        serverManager.addServer(server)
-        print("✅ Imported server from YAML config: \(name) (\(host):\(port), TLS: \(useTLS))")
+        pendingServers.append(server)
+        print("✅ Imported server from YAML config: \(name) (\(host):\(port), TLS: \(useTLS)) (deferred until cert import completes)")
     }
 
     // MARK: - Parse Preferences
@@ -683,8 +706,8 @@ class DataPackageImportManager: ObservableObject {
                     caCertificatePassword: caPassword
                 )
 
-                serverManager.addServer(server)
-                print("✅ Imported server from preferences: \(description) (\(host):\(port), TLS: \(useTLS))")
+                pendingServers.append(server)
+                print("✅ Imported server from preferences: \(description) (\(host):\(port), TLS: \(useTLS)) (deferred until cert import completes)")
                 if let caCert = caCertificateName {
                     print("   📜 CA Certificate: \(caCert)")
                 }
