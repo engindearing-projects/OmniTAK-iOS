@@ -1,26 +1,28 @@
 /*
- Localizable.strings (en)
- OmniTAK Mobile — canonical English copy.
- Keys are dotted paths (onboarding.<page>.<element>).
- Keep keys stable — translators copy these into pl/de/fr.
+ Localizable.strings (pl) — Polish.
+
+ // LLM-translated 2026-05-08. Needs native speaker review before public release.
+ // Translation philosophy: formal "Pan/Pani" register; tactical military
+ // vocabulary where possible (znak wywoławczy, namiar, łączność szyfrowana).
+ // Imperative forms kept short for fat-thumb buttons.
  */
 
 // MARK: - Common
 
-"common.continue" = "Continue";
-"common.back" = "Back";
-"common.skip" = "Skip";
-"common.maybeLater" = "Maybe later";
-"common.cancel" = "Cancel";
-"common.done" = "Done";
-"common.next" = "Next";
+"common.continue" = "Dalej";
+"common.back" = "Wstecz";
+"common.skip" = "Pomiń";
+"common.maybeLater" = "Może później";
+"common.cancel" = "Anuluj";
+"common.done" = "Gotowe";
+"common.next" = "Dalej";
 
 // MARK: - Page 1: Welcome / Language
 
-"onboarding.welcome.title" = "Welcome to OmniTAK";
-"onboarding.welcome.subtitle" = "By Engindearing — situational awareness for everyone.";
-"onboarding.welcome.languagePrompt" = "Pick your language";
-"onboarding.welcome.cta" = "Get Started";
+"onboarding.welcome.title" = "Witaj w OmniTAK";
+"onboarding.welcome.subtitle" = "Engindearing — świadomość sytuacyjna dla każdego.";
+"onboarding.welcome.languagePrompt" = "Wybierz język";
+"onboarding.welcome.cta" = "Zaczynamy";
 "onboarding.language.english" = "English";
 "onboarding.language.polish" = "Polski";
 "onboarding.language.german" = "Deutsch";
@@ -28,107 +30,107 @@
 
 // MARK: - Page 2: What OmniTAK Does
 
-"onboarding.about.title" = "What OmniTAK does";
-"onboarding.about.subtitle" = "Four things, every time you open it.";
-"onboarding.about.feature.location.title" = "Real-time location";
-"onboarding.about.feature.location.body" = "Your team sees you, you see your team.";
-"onboarding.about.feature.comms.title" = "Secure comms";
-"onboarding.about.feature.comms.body" = "Encrypted chat, marker drops, file share.";
-"onboarding.about.feature.map.title" = "Map awareness";
-"onboarding.about.feature.map.body" = "Online or offline. ATAK-compatible markers.";
-"onboarding.about.feature.crossPlatform.title" = "Multi-platform";
-"onboarding.about.feature.crossPlatform.body" = "Talks to ATAK, WinTAK, iTAK, OpenTAK servers.";
+"onboarding.about.title" = "Co potrafi OmniTAK";
+"onboarding.about.subtitle" = "Cztery rzeczy — przy każdym uruchomieniu.";
+"onboarding.about.feature.location.title" = "Pozycja w czasie rzeczywistym";
+"onboarding.about.feature.location.body" = "Twój zespół widzi Pana, Pan widzi zespół.";
+"onboarding.about.feature.comms.title" = "Łączność szyfrowana";
+"onboarding.about.feature.comms.body" = "Czat, znaczniki i pliki — wszystko zaszyfrowane.";
+"onboarding.about.feature.map.title" = "Świadomość mapy";
+"onboarding.about.feature.map.body" = "Online lub offline. Znaczniki zgodne z ATAK.";
+"onboarding.about.feature.crossPlatform.title" = "Wieloplatformowość";
+"onboarding.about.feature.crossPlatform.body" = "Współpracuje z ATAK, WinTAK, iTAK, OpenTAK.";
 
 // MARK: - Page 3: Location Permission
 
-"onboarding.location.title" = "Share your location";
-"onboarding.location.subtitle" = "OmniTAK is useless without GPS — that's the whole point.";
-"onboarding.location.bullet.share" = "Send your position to your team";
-"onboarding.location.bullet.see" = "See teammates on the map";
-"onboarding.location.bullet.background" = "Stay visible when the screen is off";
-"onboarding.location.allow" = "Allow Location";
-"onboarding.location.granted" = "Location enabled";
+"onboarding.location.title" = "Udostępnij swoją pozycję";
+"onboarding.location.subtitle" = "Bez GPS OmniTAK jest bezużyteczny — to istota systemu.";
+"onboarding.location.bullet.share" = "Wysyłanie pozycji do zespołu";
+"onboarding.location.bullet.see" = "Widok kolegów na mapie";
+"onboarding.location.bullet.background" = "Widoczność, gdy ekran jest wygaszony";
+"onboarding.location.allow" = "Zezwól na lokalizację";
+"onboarding.location.granted" = "Lokalizacja włączona";
 
 // MARK: - Page 4: Bluetooth Permission
 
-"onboarding.bluetooth.title" = "Connect Meshtastic radios";
-"onboarding.bluetooth.subtitle" = "Off-grid mesh comms when there's no cell or Wi-Fi.";
-"onboarding.bluetooth.bullet.lora" = "LoRa text + position over BLE";
-"onboarding.bluetooth.bullet.range" = "Miles of range, no infrastructure";
-"onboarding.bluetooth.bullet.optional" = "Optional — skip if you don't have a radio";
-"onboarding.bluetooth.allow" = "Allow Bluetooth";
-"onboarding.bluetooth.granted" = "Bluetooth enabled";
+"onboarding.bluetooth.title" = "Połącz radia Meshtastic";
+"onboarding.bluetooth.subtitle" = "Łączność mesh poza siecią — bez zasięgu komórki ani Wi-Fi.";
+"onboarding.bluetooth.bullet.lora" = "Wiadomości i pozycja LoRa przez BLE";
+"onboarding.bluetooth.bullet.range" = "Kilometry zasięgu, bez infrastruktury";
+"onboarding.bluetooth.bullet.optional" = "Opcjonalne — można pominąć bez radia";
+"onboarding.bluetooth.allow" = "Zezwól na Bluetooth";
+"onboarding.bluetooth.granted" = "Bluetooth włączony";
 
 // MARK: - Page 5: Notifications Permission
 
-"onboarding.notifications.title" = "Get alerted";
-"onboarding.notifications.subtitle" = "Direct messages, geofence breaches, server events.";
-"onboarding.notifications.bullet.dm" = "Direct messages from teammates";
-"onboarding.notifications.bullet.geofence" = "Geofence enter/exit alerts";
-"onboarding.notifications.bullet.server" = "Server connection status";
-"onboarding.notifications.allow" = "Allow Notifications";
-"onboarding.notifications.granted" = "Notifications enabled";
+"onboarding.notifications.title" = "Otrzymuj alerty";
+"onboarding.notifications.subtitle" = "Wiadomości bezpośrednie, naruszenia geofencji, zdarzenia serwera.";
+"onboarding.notifications.bullet.dm" = "Wiadomości od członków zespołu";
+"onboarding.notifications.bullet.geofence" = "Alerty wejścia/wyjścia ze stref";
+"onboarding.notifications.bullet.server" = "Stan połączenia z serwerem";
+"onboarding.notifications.allow" = "Zezwól na powiadomienia";
+"onboarding.notifications.granted" = "Powiadomienia włączone";
 
 // MARK: - Page 6: Callsign
 
-"onboarding.callsign.title" = "Pick your callsign";
-"onboarding.callsign.subtitle" = "How your team sees you on the map.";
-"onboarding.callsign.use" = "Use this callsign";
-"onboarding.callsign.choose" = "Choose my own";
-"onboarding.callsign.custom.title" = "Enter your callsign";
-"onboarding.callsign.custom.placeholder" = "e.g. RAVEN-6";
-"onboarding.callsign.custom.save" = "Save";
+"onboarding.callsign.title" = "Wybierz znak wywoławczy";
+"onboarding.callsign.subtitle" = "Tak Pana widzi zespół na mapie.";
+"onboarding.callsign.use" = "Użyj tego znaku";
+"onboarding.callsign.choose" = "Wybiorę własny";
+"onboarding.callsign.custom.title" = "Wpisz swój znak wywoławczy";
+"onboarding.callsign.custom.placeholder" = "np. KRUK-6";
+"onboarding.callsign.custom.save" = "Zapisz";
 
 // MARK: - Page 7: Team / Role / Position
 
-"onboarding.team.title" = "Pick your team & role";
-"onboarding.team.subtitle" = "Color groups your team on the map. Role tells them what you do.";
-"onboarding.team.colorLabel" = "Team color";
-"onboarding.team.roleLabel" = "Role";
-"onboarding.team.positionLabel" = "Position";
+"onboarding.team.title" = "Wybierz zespół i funkcję";
+"onboarding.team.subtitle" = "Kolor grupuje zespół na mapie. Funkcja informuje o roli.";
+"onboarding.team.colorLabel" = "Kolor zespołu";
+"onboarding.team.roleLabel" = "Funkcja";
+"onboarding.team.positionLabel" = "Stanowisko";
 
-"onboarding.team.color.white" = "White";
-"onboarding.team.color.yellow" = "Yellow";
-"onboarding.team.color.orange" = "Orange";
+"onboarding.team.color.white" = "Biały";
+"onboarding.team.color.yellow" = "Żółty";
+"onboarding.team.color.orange" = "Pomarańczowy";
 "onboarding.team.color.magenta" = "Magenta";
-"onboarding.team.color.red" = "Red";
-"onboarding.team.color.maroon" = "Maroon";
-"onboarding.team.color.purple" = "Purple";
-"onboarding.team.color.darkBlue" = "Dark Blue";
-"onboarding.team.color.blue" = "Blue";
-"onboarding.team.color.cyan" = "Cyan";
-"onboarding.team.color.teal" = "Teal";
-"onboarding.team.color.green" = "Green";
-"onboarding.team.color.darkGreen" = "Dark Green";
-"onboarding.team.color.brown" = "Brown";
+"onboarding.team.color.red" = "Czerwony";
+"onboarding.team.color.maroon" = "Bordowy";
+"onboarding.team.color.purple" = "Fioletowy";
+"onboarding.team.color.darkBlue" = "Granatowy";
+"onboarding.team.color.blue" = "Niebieski";
+"onboarding.team.color.cyan" = "Cyjan";
+"onboarding.team.color.teal" = "Morski";
+"onboarding.team.color.green" = "Zielony";
+"onboarding.team.color.darkGreen" = "Ciemnozielony";
+"onboarding.team.color.brown" = "Brązowy";
 
-"onboarding.team.role.member" = "Team Member";
-"onboarding.team.role.lead" = "Team Lead";
-"onboarding.team.role.hq" = "HQ";
-"onboarding.team.role.sniper" = "Sniper";
-"onboarding.team.role.medic" = "Medic";
-"onboarding.team.role.fo" = "Forward Observer";
-"onboarding.team.role.rto" = "RTO";
-"onboarding.team.role.k9" = "K9";
-"onboarding.team.role.driver" = "Driver";
-"onboarding.team.role.gunner" = "Gunner";
+"onboarding.team.role.member" = "Członek zespołu";
+"onboarding.team.role.lead" = "Dowódca zespołu";
+"onboarding.team.role.hq" = "Sztab";
+"onboarding.team.role.sniper" = "Snajper";
+"onboarding.team.role.medic" = "Medyk";
+"onboarding.team.role.fo" = "Obserwator artyleryjski";
+"onboarding.team.role.rto" = "Radiooperator";
+"onboarding.team.role.k9" = "Przewodnik psa";
+"onboarding.team.role.driver" = "Kierowca";
+"onboarding.team.role.gunner" = "Strzelec";
 
 // MARK: - Page 8: Connect Server
 
-"onboarding.connect.title" = "Connect to a TAK server";
-"onboarding.connect.subtitle" = "Pick whatever's easiest — you can change it later.";
-"onboarding.connect.demo.title" = "Use Demo Server";
-"onboarding.connect.demo.body" = "1-tap. Public OpenTAK server.";
-"onboarding.connect.demo.time" = "< 30 sec";
-"onboarding.connect.qr.title" = "Scan QR code";
-"onboarding.connect.qr.body" = "From your TAK admin or onboarding email.";
-"onboarding.connect.qr.time" = "< 30 sec";
-"onboarding.connect.import.title" = "Import .zip / certs";
-"onboarding.connect.import.body" = "Data package or .p12 file from Files.";
+"onboarding.connect.title" = "Połącz z serwerem TAK";
+"onboarding.connect.subtitle" = "Wybierz najprostszą metodę — można zmienić później.";
+"onboarding.connect.demo.title" = "Serwer demonstracyjny";
+"onboarding.connect.demo.body" = "Jedno dotknięcie. Publiczny serwer OpenTAK.";
+"onboarding.connect.demo.time" = "< 30 s";
+"onboarding.connect.qr.title" = "Skanuj kod QR";
+"onboarding.connect.qr.body" = "Z e-maila lub od administratora TAK.";
+"onboarding.connect.qr.time" = "< 30 s";
+"onboarding.connect.import.title" = "Importuj .zip / certyfikaty";
+"onboarding.connect.import.body" = "Pakiet danych lub plik .p12 z Plików.";
 "onboarding.connect.import.time" = "< 1 min";
-"onboarding.connect.skip" = "Skip — I'll connect later";
+"onboarding.connect.skip" = "Pomiń — połączę się później";
 
 // MARK: - Final / Ready
 
-"onboarding.ready.title" = "You're ready!";
-"onboarding.ready.subtitle" = "Tap anywhere to open the map.";
+"onboarding.ready.title" = "Gotowe!";
+"onboarding.ready.subtitle" = "Dotknij ekran, aby otworzyć mapę.";
