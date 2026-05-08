@@ -80,7 +80,7 @@ After ground-truthing the radial menu and Settings, the **actually missing** fea
 
 ### Tier 1 — first-impression wins (this week)
 1. **Topo basemap default + basemap picker** (OSM/OpenTopo/Sat/Dark) — 2h. The single most-noticeable visual delta.
-2. **Default dev server pre-configured at first run** — 1h. Ship with FreeTAKServer demo creds or `omnitak.dev.engindearing.soy`.
+2. **Default dev server pre-configured at first run** — 1h. Ship with OpenTAKServer demo creds at `tak.engindearing.soy`.
 3. **Radial menu floating on map** (no grey backplate) — `RadialMenuView.swift:73` `.fill(glassBgColor)` → `.fill(Color.clear)`. 5 minutes. Per J.
 4. **MIL-STD-2525 affiliation icons** — vendor TAKAware `IconData.swift` + iconset, 3-6h.
 5. **14 ATAK team colors + Combat Role + Position at signup** — 2h SwiftUI form.

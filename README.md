@@ -4,7 +4,7 @@ Open-source TAK (Team Awareness Kit) client for iPhone and iPad, built in Swift 
 
 OmniTAK speaks Cursor-on-Target (CoT) over TLS to any TAK Server, supports data-package import, ADS-B traffic display, RTSP/SRT/HLS video feeds, Meshtastic radios, and more — designed for search-and-rescue, civil defense, and outdoor operations.
 
-> **Bring your own TAK Server.** OmniTAK is a client. Stand up [TAK Server](https://tak.gov) (community CIV edition) or [FreeTAKServer](https://github.com/FreeTAKTeam/FreeTakServer) and point OmniTAK at it.
+> **Bring your own TAK Server.** OmniTAK is a client. Stand up [TAK Server](https://tak.gov) (community CIV edition) or [OpenTAKServer](https://docs.opentakserver.io) and point OmniTAK at it.
 
 ## Features
 
@@ -110,6 +110,6 @@ OmniTAK-iOS bundles or links the following open-source components:
 
 ## Acknowledgments
 
-Built by [Engindearing](https://engindearing.soy). Inspired by [ATAK](https://github.com/deptofdefense/AndroidTacticalAssaultKit-CIV), iTAK, [FreeTAKServer](https://github.com/FreeTAKTeam/FreeTakServer), and the broader TAK community.
+Built by [Engindearing](https://engindearing.soy). Inspired by [ATAK](https://github.com/deptofdefense/AndroidTacticalAssaultKit-CIV), iTAK, [OpenTAKServer](https://docs.opentakserver.io), and the broader TAK community.
 
 OmniTAK is not affiliated with or endorsed by the U.S. Department of Defense, the TAK Product Center, or any other organization.

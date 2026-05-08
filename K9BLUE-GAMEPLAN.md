@@ -63,7 +63,7 @@ After the audit, the **actually-missing** list is:
 ## What TROP has that we shouldn't try to copy
 
 - **Right-side menu panel** — TROP's primary nav consumes ~30% of map area. Our full-screen map is a **strict UX win** (J's rule). Don't copy.
-- **TROP server (their own backend)** — We're TAK-server-native + FreeTAKServer-native. Building a third backend is wasted effort. Stay client-pure.
+- **TROP server (their own backend)** — We're TAK-server-native + OpenTAKServer-native. Building a third backend is wasted effort. Stay client-pure.
 
 ## OmniTAK strengths (publicly defensible, all evidence-backed)
 
