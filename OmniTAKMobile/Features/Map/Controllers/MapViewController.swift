@@ -2565,71 +2565,36 @@ struct TacticalMapView: UIViewRepresentable {
                 return view
             }
 
-            // Handle point marker annotations (hostile, friendly, etc. from radial menu)
+            // Handle point marker annotations (hostile, friendly, etc. from radial menu).
+            // Route through MilStd2525MapAnnotationView so the affiliation
+            // shape matches what TAKAware / ATAK render: blue rounded
+            // rectangle = friend, red rotated square = hostile, green
+            // square = neutral, yellow quatrefoil = unknown. Defaults to
+            // unknown when the underlying CoT type omits an affiliation
+            // (matching the upstream TAKAware behaviour adapted in
+            // Vendor/TAKAware/IconData.swift).
             if let pointMarkerAnnotation = annotation as? PointMarkerAnnotation {
-                let identifier = "PointMarker"
-                var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
+                let identifier = "PointMarker_MilStd"
+                var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MilStd2525MapAnnotationView
 
                 if annotationView == nil {
-                    annotationView = MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                    annotationView?.canShowCallout = true
+                    annotationView = MilStd2525MapAnnotationView(annotation: annotation, reuseIdentifier: identifier)
                 } else {
                     annotationView?.annotation = annotation
                 }
 
                 let marker = pointMarkerAnnotation.marker
-                let size = CGSize(width: 36, height: 36)
-                let renderer = UIGraphicsImageRenderer(size: size)
-                let image = renderer.image { context in
-                    let rect = CGRect(origin: .zero, size: size)
+                let cotType = marker.cotType.isEmpty ? "a-u-G" : marker.cotType
+                annotationView?.configure(
+                    cotType: cotType,
+                    callsign: marker.name,
+                    echelon: nil
+                )
 
-                    // Draw outer circle with affiliation color
-                    marker.affiliation.color.uiColor.setFill()
-                    let outerPath = UIBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2))
-                    outerPath.fill()
-
-                    // Draw white border
-                    UIColor.white.setStroke()
-                    outerPath.lineWidth = 2
-                    outerPath.stroke()
-
-                    // Draw affiliation icon in center
-                    let iconRect = rect.insetBy(dx: 8, dy: 8)
-                    let iconColor = UIColor.white
-                    iconColor.setFill()
-
-                    // Draw simple shape based on affiliation
-                    switch marker.affiliation {
-                    case .hostile:
-                        // Diamond shape for hostile
-                        let path = UIBezierPath()
-                        path.move(to: CGPoint(x: iconRect.midX, y: iconRect.minY))
-                        path.addLine(to: CGPoint(x: iconRect.maxX, y: iconRect.midY))
-                        path.addLine(to: CGPoint(x: iconRect.midX, y: iconRect.maxY))
-                        path.addLine(to: CGPoint(x: iconRect.minX, y: iconRect.midY))
-                        path.close()
-                        path.fill()
-                    case .friendly:
-                        // Circle for friendly
-                        let path = UIBezierPath(ovalIn: iconRect.insetBy(dx: 2, dy: 2))
-                        path.fill()
-                    case .unknown:
-                        // Question mark style for unknown
-                        let path = UIBezierPath(ovalIn: iconRect.insetBy(dx: 2, dy: 2))
-                        path.fill()
-                    case .neutral:
-                        // Square for neutral
-                        let path = UIBezierPath(rect: iconRect.insetBy(dx: 2, dy: 2))
-                        path.fill()
-                    }
-                }
-
-                annotationView?.image = image
-                annotationView?.centerOffset = CGPoint(x: 0, y: -size.height / 2)
-
-                // Add callout accessory
-                let detailButton = UIButton(type: .detailDisclosure)
-                annotationView?.rightCalloutAccessoryView = detailButton
+                // Keep the (i) callout button so the existing radial
+                // menu / SALUTE viewing flow remains accessible.
+                annotationView?.canShowCallout = true
+                annotationView?.rightCalloutAccessoryView = UIButton(type: .detailDisclosure)
 
                 return annotationView
             }

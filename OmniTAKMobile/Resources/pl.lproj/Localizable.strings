@@ -1,0 +1,136 @@
+/*
+ Localizable.strings (pl) — Polish.
+
+ // LLM-translated 2026-05-08. Needs native speaker review before public release.
+ // Translation philosophy: formal "Pan/Pani" register; tactical military
+ // vocabulary where possible (znak wywoławczy, namiar, łączność szyfrowana).
+ // Imperative forms kept short for fat-thumb buttons.
+ */
+
+// MARK: - Common
+
+"common.continue" = "Dalej";
+"common.back" = "Wstecz";
+"common.skip" = "Pomiń";
+"common.maybeLater" = "Może później";
+"common.cancel" = "Anuluj";
+"common.done" = "Gotowe";
+"common.next" = "Dalej";
+
+// MARK: - Page 1: Welcome / Language
+
+"onboarding.welcome.title" = "Witaj w OmniTAK";
+"onboarding.welcome.subtitle" = "Engindearing — świadomość sytuacyjna dla każdego.";
+"onboarding.welcome.languagePrompt" = "Wybierz język";
+"onboarding.welcome.cta" = "Zaczynamy";
+"onboarding.language.english" = "English";
+"onboarding.language.polish" = "Polski";
+"onboarding.language.german" = "Deutsch";
+"onboarding.language.french" = "Français";
+
+// MARK: - Page 2: What OmniTAK Does
+
+"onboarding.about.title" = "Co potrafi OmniTAK";
+"onboarding.about.subtitle" = "Cztery rzeczy — przy każdym uruchomieniu.";
+"onboarding.about.feature.location.title" = "Pozycja w czasie rzeczywistym";
+"onboarding.about.feature.location.body" = "Twój zespół widzi Pana, Pan widzi zespół.";
+"onboarding.about.feature.comms.title" = "Łączność szyfrowana";
+"onboarding.about.feature.comms.body" = "Czat, znaczniki i pliki — wszystko zaszyfrowane.";
+"onboarding.about.feature.map.title" = "Świadomość mapy";
+"onboarding.about.feature.map.body" = "Online lub offline. Znaczniki zgodne z ATAK.";
+"onboarding.about.feature.crossPlatform.title" = "Wieloplatformowość";
+"onboarding.about.feature.crossPlatform.body" = "Współpracuje z ATAK, WinTAK, iTAK, OpenTAK.";
+
+// MARK: - Page 3: Location Permission
+
+"onboarding.location.title" = "Udostępnij swoją pozycję";
+"onboarding.location.subtitle" = "Bez GPS OmniTAK jest bezużyteczny — to istota systemu.";
+"onboarding.location.bullet.share" = "Wysyłanie pozycji do zespołu";
+"onboarding.location.bullet.see" = "Widok kolegów na mapie";
+"onboarding.location.bullet.background" = "Widoczność, gdy ekran jest wygaszony";
+"onboarding.location.allow" = "Zezwól na lokalizację";
+"onboarding.location.granted" = "Lokalizacja włączona";
+
+// MARK: - Page 4: Bluetooth Permission
+
+"onboarding.bluetooth.title" = "Połącz radia Meshtastic";
+"onboarding.bluetooth.subtitle" = "Łączność mesh poza siecią — bez zasięgu komórki ani Wi-Fi.";
+"onboarding.bluetooth.bullet.lora" = "Wiadomości i pozycja LoRa przez BLE";
+"onboarding.bluetooth.bullet.range" = "Kilometry zasięgu, bez infrastruktury";
+"onboarding.bluetooth.bullet.optional" = "Opcjonalne — można pominąć bez radia";
+"onboarding.bluetooth.allow" = "Zezwól na Bluetooth";
+"onboarding.bluetooth.granted" = "Bluetooth włączony";
+
+// MARK: - Page 5: Notifications Permission
+
+"onboarding.notifications.title" = "Otrzymuj alerty";
+"onboarding.notifications.subtitle" = "Wiadomości bezpośrednie, naruszenia geofencji, zdarzenia serwera.";
+"onboarding.notifications.bullet.dm" = "Wiadomości od członków zespołu";
+"onboarding.notifications.bullet.geofence" = "Alerty wejścia/wyjścia ze stref";
+"onboarding.notifications.bullet.server" = "Stan połączenia z serwerem";
+"onboarding.notifications.allow" = "Zezwól na powiadomienia";
+"onboarding.notifications.granted" = "Powiadomienia włączone";
+
+// MARK: - Page 6: Callsign
+
+"onboarding.callsign.title" = "Wybierz znak wywoławczy";
+"onboarding.callsign.subtitle" = "Tak Pana widzi zespół na mapie.";
+"onboarding.callsign.use" = "Użyj tego znaku";
+"onboarding.callsign.choose" = "Wybiorę własny";
+"onboarding.callsign.custom.title" = "Wpisz swój znak wywoławczy";
+"onboarding.callsign.custom.placeholder" = "np. KRUK-6";
+"onboarding.callsign.custom.save" = "Zapisz";
+
+// MARK: - Page 7: Team / Role / Position
+
+"onboarding.team.title" = "Wybierz zespół i funkcję";
+"onboarding.team.subtitle" = "Kolor grupuje zespół na mapie. Funkcja informuje o roli.";
+"onboarding.team.colorLabel" = "Kolor zespołu";
+"onboarding.team.roleLabel" = "Funkcja";
+"onboarding.team.positionLabel" = "Stanowisko";
+
+"onboarding.team.color.white" = "Biały";
+"onboarding.team.color.yellow" = "Żółty";
+"onboarding.team.color.orange" = "Pomarańczowy";
+"onboarding.team.color.magenta" = "Magenta";
+"onboarding.team.color.red" = "Czerwony";
+"onboarding.team.color.maroon" = "Bordowy";
+"onboarding.team.color.purple" = "Fioletowy";
+"onboarding.team.color.darkBlue" = "Granatowy";
+"onboarding.team.color.blue" = "Niebieski";
+"onboarding.team.color.cyan" = "Cyjan";
+"onboarding.team.color.teal" = "Morski";
+"onboarding.team.color.green" = "Zielony";
+"onboarding.team.color.darkGreen" = "Ciemnozielony";
+"onboarding.team.color.brown" = "Brązowy";
+
+"onboarding.team.role.member" = "Członek zespołu";
+"onboarding.team.role.lead" = "Dowódca zespołu";
+"onboarding.team.role.hq" = "Sztab";
+"onboarding.team.role.sniper" = "Snajper";
+"onboarding.team.role.medic" = "Medyk";
+"onboarding.team.role.fo" = "Obserwator artyleryjski";
+"onboarding.team.role.rto" = "Radiooperator";
+"onboarding.team.role.k9" = "Przewodnik psa";
+"onboarding.team.role.driver" = "Kierowca";
+"onboarding.team.role.gunner" = "Strzelec";
+
+// MARK: - Page 8: Connect Server
+
+"onboarding.connect.title" = "Połącz z serwerem TAK";
+"onboarding.connect.subtitle" = "Wybierz najprostszą metodę — można zmienić później.";
+"onboarding.connect.demo.title" = "Serwer demonstracyjny";
+"onboarding.connect.demo.body" = "Jedno dotknięcie. Publiczny serwer OpenTAK.";
+"onboarding.connect.demo.time" = "< 30 s";
+"onboarding.connect.qr.title" = "Skanuj kod QR";
+"onboarding.connect.qr.body" = "Z e-maila lub od administratora TAK.";
+"onboarding.connect.qr.time" = "< 30 s";
+"onboarding.connect.import.title" = "Importuj .zip / certyfikaty";
+"onboarding.connect.import.body" = "Pakiet danych lub plik .p12 z Plików.";
+"onboarding.connect.import.time" = "< 1 min";
+"onboarding.connect.skip" = "Pomiń — połączę się później";
+
+// MARK: - Final / Ready
+
+"onboarding.ready.title" = "Gotowe!";
+"onboarding.ready.subtitle" = "Dotknij ekran, aby otworzyć mapę.";
