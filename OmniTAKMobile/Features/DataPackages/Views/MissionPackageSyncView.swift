@@ -386,6 +386,7 @@ struct StatisticView: View {
 struct ServerSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var syncService: MissionPackageSyncService
+    @ObservedObject private var serverManager = ServerManager.shared
 
     @State private var serverURL: String = ""
     @State private var port: String = ""
@@ -406,6 +407,33 @@ struct ServerSettingsView: View {
                 backgroundColor.ignoresSafeArea()
 
                 Form {
+                    // #10: pull from servers already configured under the
+                    // main Servers tab so users don't have to re-enter the
+                    // host/port by hand. Picking one fills in the URL,
+                    // port, and TLS toggle below.
+                    if !serverManager.servers.isEmpty {
+                        Section(header: Text("Pick From Saved Servers").foregroundColor(accentColor)) {
+                            Menu {
+                                ForEach(serverManager.servers) { server in
+                                    Button(server.displayName) {
+                                        applySavedServer(server)
+                                    }
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: "list.bullet.rectangle")
+                                        .foregroundColor(accentColor)
+                                    Text("Use a configured TAK server")
+                                        .foregroundColor(.white)
+                                    Spacer()
+                                    Image(systemName: "chevron.down")
+                                        .foregroundColor(accentColor)
+                                }
+                            }
+                        }
+                        .listRowBackground(Color(hex: "#2A2A2A"))
+                    }
+
                     Section(header: Text("Server Connection").foregroundColor(accentColor)) {
                         TextField("Server URL", text: $serverURL)
                             .autocapitalization(.none)
@@ -483,6 +511,16 @@ struct ServerSettingsView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Save") {
                         saveSettings()
+                        // Mirror what Test Connection does so the
+                        // connection state actually flips to Connected
+                        // after Save. Without this, the user reported in
+                        // #10 that they had to "Test Connection → Save"
+                        // to see "Connected", because Save alone
+                        // persisted the URL/port without ever
+                        // re-handshaking.
+                        Task {
+                            _ = await syncService.connect()
+                        }
                         dismiss()
                     }
                     .foregroundColor(accentColor)
@@ -523,6 +561,17 @@ struct ServerSettingsView: View {
         Task {
             _ = await syncService.connect()
         }
+    }
+
+    /// Mirror the selected TAK server's endpoint into the Mission Sync
+    /// form fields. Auth credentials aren't carried over because the
+    /// Mission Sync server uses an API-key flow that's distinct from the
+    /// CoT cert/username flow on TAKServer.
+    private func applySavedServer(_ server: TAKServer) {
+        serverURL = server.host
+        port = String(server.port)
+        useTLS = server.useTLS
+        if let user = server.username { username = user }
     }
 }
 
