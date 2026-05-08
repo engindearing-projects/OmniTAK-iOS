@@ -23,6 +23,9 @@ struct OmniTAKMobileApp: App {
         // appear on the map after a Meshtastic view is opened.
         _ = MeshtasticManager.shared
         Logger.meshtastic.info("MeshtasticManager + CoT bridge initialized at launch")
+
+        // Load bundled OmniTAK plugins (see OmniTAKMobile/Plugins/Core).
+        PluginRegistry.shared.loadBundledPlugins()
     }
 
     var body: some Scene {

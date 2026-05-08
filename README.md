@@ -17,7 +17,7 @@ OmniTAK speaks Cursor-on-Target (CoT) over TLS to any TAK Server, supports data-
 - **Video feeds** — HTTP / HLS via AVPlayer, RTSP / SRT via [MobileVLCKit](https://code.videolan.org/videolan/VLCKit) (LGPL v2.1+)
 - **Meshtastic** — BLE + TCP connection to Meshtastic mesh radios
 - **Photo attachments** — capture photos against CoT events with EXIF location
-- **Plugin system** — Swift package extensions for custom CoT types and UI panels
+- **Plugin SDK** — Swift Package extensions with a defined `OmniTAKPlugin` protocol; ADS-B itself ships as the reference plugin (see [docs/PLUGIN_AUTHORING.md](docs/PLUGIN_AUTHORING.md))
 
 ## Requirements
 
@@ -52,6 +52,23 @@ OmniTAK supports four ADS-B providers. API keys (where required) are entered in 
 | dump1090 (local) | No | Local network |
 | adsbExchange | Yes (RapidAPI) | https://rapidapi.com/adsbx |
 | FlightRadar24 | Yes (paid) | https://fr24api.flightradar24.com |
+
+## Plugin SDK
+
+OmniTAK ships with a small plugin protocol (`OmniTAKPlugin`) and a registry
+(`PluginRegistry`) that lets third parties extend the app with map overlays,
+radial menu actions, CoT handlers, and settings rows.
+
+iOS doesn't allow runtime code loading, so a "plugin" is a Swift Package
+compiled into the binary at build time. The host app instantiates each
+registered plugin at startup and surfaces it in **Settings → Plugins** with
+an enable/disable toggle.
+
+The ADS-B feature is itself a plugin — see
+[`plugins/example-adsb-plugin/`](plugins/example-adsb-plugin) for the
+canonical reference implementation, and
+[`docs/PLUGIN_AUTHORING.md`](docs/PLUGIN_AUTHORING.md) for the full
+authoring walkthrough.
 
 ## Architecture
 
