@@ -20,7 +20,7 @@ class MapLibreService: ObservableObject {
     @Published var isMapLoaded = false
     @Published var is3DEnabled = false
     @Published var terrainExaggeration: Double = 1.5
-    @Published var currentStyle: MapLibreStyle = .liberty
+    @Published var currentStyle: MapLibreStyle = .topo
     @Published var showBuildings = true
 
     // MARK: - Map Reference
@@ -216,6 +216,7 @@ class MapLibreService: ObservableObject {
 // MARK: - Map Styles
 
 enum MapLibreStyle: String, CaseIterable, Identifiable {
+    case topo = "Topo"              // OpenTopoMap raster - default
     case liberty = "Liberty"        // OpenFreeMap - colorful OSM style
     case bright = "Bright"          // OpenFreeMap - clean bright style
     case positron = "Positron"      // OpenFreeMap - light minimalist style
@@ -226,6 +227,7 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .topo: return "mountain.2.fill"
         case .liberty: return "map.fill"
         case .bright: return "sun.max.fill"
         case .positron: return "rectangle.split.3x1"
@@ -239,6 +241,9 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
         let urlString: String
 
         switch self {
+        case .topo:
+            // OpenTopoMap raster tiles - inline style JSON written to a temp file
+            return MapLibreStyle.topoStyleURL
         case .liberty:
             // OpenFreeMap Liberty - colorful detailed style
             urlString = "https://tiles.openfreemap.org/styles/liberty"
@@ -258,6 +263,46 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
 
         return URL(string: urlString)
     }
+
+    // OpenTopoMap raster style JSON, attribution per CC-BY-SA
+    static let topoAttribution = "© OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)"
+
+    private static let topoStyleJSON: String = """
+    {
+      "version": 8,
+      "name": "OpenTopoMap",
+      "sources": {
+        "opentopomap": {
+          "type": "raster",
+          "tiles": ["https://a.tile.opentopomap.org/{z}/{x}/{y}.png", "https://b.tile.opentopomap.org/{z}/{x}/{y}.png", "https://c.tile.opentopomap.org/{z}/{x}/{y}.png"],
+          "tileSize": 256,
+          "minzoom": 0,
+          "maxzoom": 17,
+          "attribution": "© OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)"
+        }
+      },
+      "layers": [
+        {
+          "id": "opentopomap",
+          "type": "raster",
+          "source": "opentopomap",
+          "minzoom": 0,
+          "maxzoom": 22
+        }
+      ]
+    }
+    """
+
+    private static let topoStyleURL: URL? = {
+        let dir = FileManager.default.temporaryDirectory
+        let url = dir.appendingPathComponent("opentopomap-style.json")
+        do {
+            try topoStyleJSON.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
+        }
+    }()
 }
 
 // MARK: - Flyover Animation

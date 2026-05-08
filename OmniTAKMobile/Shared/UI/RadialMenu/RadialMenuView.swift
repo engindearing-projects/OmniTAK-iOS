@@ -70,7 +70,7 @@ struct RadialMenuView: View {
             ZStack {
                 // Outer glass ring
                 Circle()
-                    .fill(glassBgColor)
+                    .fill(Color.clear)
                     .overlay(
                         Circle()
                             .stroke(
@@ -82,7 +82,6 @@ struct RadialMenuView: View {
                                 lineWidth: 1.5
                             )
                     )
-                    .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
 
                 // Selection highlight arc (subtle glow)
                 if let selected = selectedIndex {
