@@ -118,6 +118,7 @@
 		7B72D545DB79B8DA805A8EFA /* RadialMenuAnimations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F099B5C217F27EDE875B8E76 /* RadialMenuAnimations.swift */; };
 		7D14F0452B6D98AD5FB1FC0D /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D15E6FD65F0D6C4467F8C3D /* ConversationView.swift */; };
 		7EDBE9DF6FFCE3C341C5E915 /* DigitalPointerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C09CF368D064E2DA8CDF9BA /* DigitalPointerView.swift */; };
+		7F39494CB4B69AE30378C92D /* IconData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7472079033469AB3330ABE45 /* IconData.swift */; };
 		7F4769A3BF90593F6E532177 /* MissionPackageSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81AB96FEB1A016C2A97FA87E /* MissionPackageSyncService.swift */; };
 		804CCF2345FE867EE8D91EBD /* NavigationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB935C34F50FCED41AA9526D /* NavigationService.swift */; };
 		804EB04B625E53111E9AF10D /* SNAP-------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 6255D6D7C0457143CC3E570B /* SNAP-------.svg */; };
@@ -155,6 +156,7 @@
 		9D1E97C264F38CD9B0017F5A /* DrawingPropertiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA8A6851F2CB32B82BEA2817 /* DrawingPropertiesView.swift */; };
 		9D41D2F2BD209FCD028D5785 /* ImprovedErrorDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD37DB92FC41317D68DAAF0 /* ImprovedErrorDialog.swift */; };
 		9D4DD979FA07D0D920CA576A /* MEDEVACRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C046FF14CC38A998A3C9C57A /* MEDEVACRequestView.swift */; };
+		9D91E67A508D84BB77794B6A /* IconsetImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C449120ABC626FA109F4512A /* IconsetImporter.swift */; };
 		9F360AA41C05B15FC6B71F75 /* EchelonModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D5A42ABFBE8EF268B187D8 /* EchelonModels.swift */; };
 		A1645CC72ECC172B00B71E89 /* BuildFile in Frameworks */ = {isa = PBXBuildFile; };
 		A1645CC82ECC172B00B71E89 /* BuildFile in Frameworks */ = {isa = PBXBuildFile; };
@@ -394,6 +396,7 @@
 		6FBC2615A833D70CD96C5723 /* RadialMenuModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RadialMenuModels.swift; path = OmniTAKMobile/Shared/UI/RadialMenu/RadialMenuModels.swift; sourceTree = "<group>"; };
 		72FA80C978460AFCBAA502D9 /* SimpleEnrollView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SimpleEnrollView.swift; path = OmniTAKMobile/Features/Networking/Views/SimpleEnrollView.swift; sourceTree = "<group>"; };
 		743A8E555F95C2902C263102 /* SHGPU------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPU------.svg"; sourceTree = "<group>"; };
+		7472079033469AB3330ABE45 /* IconData.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconData.swift; path = OmniTAKMobile/Features/Military/Vendor/TAKAware/IconData.swift; sourceTree = SOURCE_ROOT; };
 		751D3A5EF96A28BFB73F0122 /* PhotoPickerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PhotoPickerView.swift; path = OmniTAKMobile/Shared/UI/Components/PhotoPickerView.swift; sourceTree = "<group>"; };
 		76EE71ECBA829946C5219664 /* ChatXMLGenerator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChatXMLGenerator.swift; path = OmniTAKMobile/CoT/Parsers/ChatXMLGenerator.swift; sourceTree = "<group>"; };
 		7740DF1463CF041207C4772B /* RegionSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RegionSelectionView.swift; path = OmniTAKMobile/Features/OfflineMaps/Views/RegionSelectionView.swift; sourceTree = "<group>"; };
@@ -477,6 +480,7 @@
 		C046FF14CC38A998A3C9C57A /* MEDEVACRequestView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MEDEVACRequestView.swift; path = OmniTAKMobile/Features/Military/Views/MEDEVACRequestView.swift; sourceTree = "<group>"; };
 		C132B1527EDDA1CD436D2320 /* ElevationProfileModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ElevationProfileModels.swift; path = OmniTAKMobile/Features/Measurement/Models/ElevationProfileModels.swift; sourceTree = "<group>"; };
 		C2DAE3A8F3F0D5B7D8036B3E /* SFAPACF----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFAPACF----.svg"; sourceTree = "<group>"; };
+		C449120ABC626FA109F4512A /* IconsetImporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconsetImporter.swift; path = OmniTAKMobile/Features/Military/Vendor/TAKAware/IconsetImporter.swift; sourceTree = SOURCE_ROOT; };
 		C7522ED76D659E2CAEA384D5 /* EnhancedCoTMarker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EnhancedCoTMarker.swift; path = OmniTAKMobile/Features/Map/Markers/EnhancedCoTMarker.swift; sourceTree = "<group>"; };
 		C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticManager.swift; path = OmniTAKMobile/Features/Meshtastic/Managers/MeshtasticManager.swift; sourceTree = "<group>"; };
 		CA8A6851F2CB32B82BEA2817 /* DrawingPropertiesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingPropertiesView.swift; path = OmniTAKMobile/Features/Drawing/Views/DrawingPropertiesView.swift; sourceTree = "<group>"; };
@@ -738,6 +742,15 @@
 			name = Views;
 			sourceTree = "<group>";
 		};
+		1946EAE460E8E8955A04CA6E /* Vendor */ = {
+			isa = PBXGroup;
+			children = (
+				270B8A7F33083294B3208250 /* TAKAware */,
+			);
+			name = Vendor;
+			path = Vendor;
+			sourceTree = "<group>";
+		};
 		1BC72CA255E660735100D4F5 /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -847,6 +860,16 @@
 				A03D5161E9D380E54D28BB35 /* RadialMenu */,
 			);
 			name = UI;
+			sourceTree = "<group>";
+		};
+		270B8A7F33083294B3208250 /* TAKAware */ = {
+			isa = PBXGroup;
+			children = (
+				7472079033469AB3330ABE45 /* IconData.swift */,
+				C449120ABC626FA109F4512A /* IconsetImporter.swift */,
+			);
+			name = TAKAware;
+			path = TAKAware;
 			sourceTree = "<group>";
 		};
 		2ABF28B5C0B444F56FCF87EC /* Calculators */ = {
@@ -1322,6 +1345,15 @@
 			name = Models;
 			sourceTree = "<group>";
 		};
+		81BFD3A696968AC4DCF91091 /* Military */ = {
+			isa = PBXGroup;
+			children = (
+				1946EAE460E8E8955A04CA6E /* Vendor */,
+			);
+			name = Military;
+			path = Military;
+			sourceTree = "<group>";
+		};
 		851034217AC0882668B9645B /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -1528,6 +1560,7 @@
 				1EBFF14344454FC8A68505F9 /* Networking */,
 				9EB54CAC617A5D2943CD8BB2 /* Meshtastic */,
 				76E4B12A4AFDE84F43ECDD27 /* ADSB */,
+				81BFD3A696968AC4DCF91091 /* Military */,
 			);
 			name = Features;
 			sourceTree = "<group>";
@@ -2223,6 +2256,8 @@
 				C9797C0F3D1C2B8868AC829C /* AircraftAnnotation.swift in Sources */,
 				78B31CA785CE3564CFC6DAE8 /* MilStdIconService.swift in Sources */,
 				40BCC83669B81473CF4AEAD6 /* MeshtasticCOTBridge.swift in Sources */,
+				7F39494CB4B69AE30378C92D /* IconData.swift in Sources */,
+				9D91E67A508D84BB77794B6A /* IconsetImporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
