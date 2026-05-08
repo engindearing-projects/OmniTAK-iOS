@@ -83,5 +83,14 @@
 	<false/>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>pl</string>
+		<string>de</string>
+		<string>fr</string>
+	</array>
 </dict>
 </plist>
