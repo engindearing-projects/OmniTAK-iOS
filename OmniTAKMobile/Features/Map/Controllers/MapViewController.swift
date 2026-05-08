@@ -661,6 +661,41 @@ struct ATAKMapView: View {
                 drawingManager.pendingRenameID = drawingId
             }
         }
+        // ContactDetailView's "Show on Map" button posts this so the map
+        // can recenter on the contact's last-known CoT position. Without
+        // an observer the button silently dismissed (#9, sub-3).
+        .onReceive(NotificationCenter.default.publisher(for: .centerMapOnContact)) { notification in
+            guard let uid = notification.userInfo?["uid"] as? String else { return }
+            if let event = takService.cotEvents.first(where: { $0.uid == uid }) {
+                let coord = CLLocationCoordinate2D(
+                    latitude: event.point.lat,
+                    longitude: event.point.lon
+                )
+                mapRegion = MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                )
+            }
+        }
+        // ContactDetailView's "Navigate to Contact" button posts this so
+        // we can hand off to the existing turn-by-turn route service.
+        // Without an observer the button silently dismissed (#9, sub-3).
+        .onReceive(NotificationCenter.default.publisher(for: .startNavigationToContact)) { notification in
+            guard let uid = notification.userInfo?["uid"] as? String else { return }
+            if let event = takService.cotEvents.first(where: { $0.uid == uid }) {
+                let coord = CLLocationCoordinate2D(
+                    latitude: event.point.lat,
+                    longitude: event.point.lon
+                )
+                // Recenter the map on the destination so the user has
+                // visual feedback before turn-by-turn kicks in.
+                mapRegion = MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+                )
+                TurnByTurnNavigationService.shared.startNavigation(to: coord)
+            }
+        }
     }
 
     private var modalSheets: some View {
