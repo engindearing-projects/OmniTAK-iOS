@@ -86,6 +86,7 @@
 		664F8613B5F60B743FBF798E /* SUA---------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 8D6AFD4385B2CB747A74C320 /* SUA---------.svg */; };
 		669DCCE82BC14EE536DD18ED /* MeshtasticDevicePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0D37E8D6422BE44C712E352 /* MeshtasticDevicePickerView.swift */; };
 		67D3B55F33075F852EB28D49 /* TeamStorageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800C09D831D949B6F1EDAEC8 /* TeamStorageManager.swift */; };
+		6A6463FAE2609861EE063491 /* OmniTAKPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5D37D757278969BF41F1DF /* OmniTAKPlugin.swift */; };
 		6AB2406C2D21637386B8FE1D /* CSREnrollmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DC2F34C8C26D8B010197EF8 /* CSREnrollmentService.swift */; };
 		6C86CCC544404088FB266892 /* TurnByTurnNavigationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 045FA9DC0AB1CBA9035D7E0B /* TurnByTurnNavigationView.swift */; };
 		6D9DE9DE73C01F9DE7DC8CFC /* SFSP-------.svg in Resources */ = {isa = PBXBuildFile; fileRef = CAC01FCB3F359AE0399C8DCC /* SFSP-------.svg */; };
@@ -209,6 +210,7 @@
 		C4A7E6CF5F6C4EFBB7F3EF39 /* RouteOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA920F17CA44D16A21FE01A /* RouteOverlayView.swift */; };
 		C5531F2B04C6EA133FDDF3E6 /* CSRGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B8D46995079943866D66720 /* CSRGenerator.swift */; };
 		C5F04FC952F95D148C499140 /* DataPackageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD0915DECF434E22D068531 /* DataPackageView.swift */; };
+		C6711AEC15016B1480D4C5C6 /* PluginRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07326C09BE3B220B7CD1BDA0 /* PluginRegistry.swift */; };
 		C834B4EAB8F038DE7CB99099 /* DataPackageImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9BD8FABAF37BB1D8BCFEBCB /* DataPackageImportView.swift */; };
 		C8503B442D6A99449B3FE8C4 /* MeasurementCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55AC5270E9592B701917919E /* MeasurementCalculator.swift */; };
 		C8503B452D6A99449B3FE8C5 /* UnitPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56AC5271E9592B701917920E /* UnitPreferences.swift */; };
@@ -239,6 +241,7 @@
 		DA570B3A75475DF16DA4E252 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 833DDF1E94F3AD95C29CF6F9 /* NetworkMonitor.swift */; };
 		DABDFF989E658D9DE52E3CA2 /* CoTFilterManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D927DC29FB5FDD9F156C1899 /* CoTFilterManager.swift */; };
 		DC61BCF4E8961A2CE7E6FEC1 /* SFAPACR----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 9001E88B5E1060AC73E893AF /* SFAPACR----.svg */; };
+		DCDDE37CA3DE6EBC99B2D568 /* BundledPlugins.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7006F833D70792E7802700D /* BundledPlugins.swift */; };
 		DE13E8D462F0655B012B5AB0 /* RadialMenuModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FBC2615A833D70CD96C5723 /* RadialMenuModels.swift */; };
 		DE33389B8145869804340112 /* BNGConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5160EE3247DE0377F3E6CE8 /* BNGConverter.swift */; };
 		E072202BA54DC55005061421 /* BreadcrumbTrailOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E18E500589D60B62FC2D310 /* BreadcrumbTrailOverlay.swift */; };
@@ -284,7 +287,9 @@
 		032A62EF89434562EEB3178B /* TrackModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrackModels.swift; path = OmniTAKMobile/Features/Tracking/Models/TrackModels.swift; sourceTree = "<group>"; };
 		045FA9DC0AB1CBA9035D7E0B /* TurnByTurnNavigationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TurnByTurnNavigationView.swift; path = OmniTAKMobile/Features/Navigation/Views/TurnByTurnNavigationView.swift; sourceTree = "<group>"; };
 		06968B4309853CB9BD15D16B /* MapOverlayCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MapOverlayCoordinator.swift; path = OmniTAKMobile/Features/Map/Controllers/MapOverlayCoordinator.swift; sourceTree = "<group>"; };
+		07326C09BE3B220B7CD1BDA0 /* PluginRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PluginRegistry.swift; path = OmniTAKMobile/Plugins/Core/PluginRegistry.swift; sourceTree = SOURCE_ROOT; };
 		09DAC73D9366FC5CC53349A0 /* WaypointManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WaypointManager.swift; path = OmniTAKMobile/Features/Navigation/Managers/WaypointManager.swift; sourceTree = "<group>"; };
+		0A5D37D757278969BF41F1DF /* OmniTAKPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OmniTAKPlugin.swift; path = OmniTAKMobile/Plugins/Core/OmniTAKPlugin.swift; sourceTree = SOURCE_ROOT; };
 		0AE09A8DEEF0138AFC876D09 /* SFGPU------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPU------.svg"; sourceTree = "<group>"; };
 		0C27B3788362A7692A3F6B70 /* CertificateEnrollmentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CertificateEnrollmentView.swift; path = OmniTAKMobile/Features/Authentication/Views/CertificateEnrollmentView.swift; sourceTree = "<group>"; };
 		0DADFB16189D9AD132105CFF /* SNSP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNSP-------.svg"; sourceTree = "<group>"; };
@@ -446,6 +451,7 @@
 		A5B7E4CB59250C961E37D51A /* DigitalPointerService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DigitalPointerService.swift; path = OmniTAKMobile/Features/Tracking/Services/DigitalPointerService.swift; sourceTree = "<group>"; };
 		A5F9A46BE3568A1DB7E52044 /* SFAP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFAP-------.svg"; sourceTree = "<group>"; };
 		A661FC43B811FD670B9C31AB /* ContactListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactListView.swift; path = OmniTAKMobile/Features/Teams/Views/ContactListView.swift; sourceTree = "<group>"; };
+		A7006F833D70792E7802700D /* BundledPlugins.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BundledPlugins.swift; path = OmniTAKMobile/Plugins/Core/BundledPlugins.swift; sourceTree = SOURCE_ROOT; };
 		A7AC00010000000000A00001 /* ATAKPluginParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ATAKPluginParser.swift; path = OmniTAKMobile/Features/Meshtastic/Services/ATAKPluginParser.swift; sourceTree = "<group>"; };
 		A7AC00010000000000A00002 /* ATAKPluginSerializer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ATAKPluginSerializer.swift; path = OmniTAKMobile/Features/Meshtastic/Services/ATAKPluginSerializer.swift; sourceTree = "<group>"; };
 		A82EDDDAEBCE973D79E5F5EE /* RouteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RouteModels.swift; path = OmniTAKMobile/Features/Navigation/Models/RouteModels.swift; sourceTree = "<group>"; };
@@ -941,6 +947,16 @@
 			name = Utilities;
 			sourceTree = "<group>";
 		};
+		36B8BC5676516F4A70E19F6E /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				0A5D37D757278969BF41F1DF /* OmniTAKPlugin.swift */,
+				07326C09BE3B220B7CD1BDA0 /* PluginRegistry.swift */,
+				A7006F833D70792E7802700D /* BundledPlugins.swift */,
+			);
+			name = Core;
+			sourceTree = "<group>";
+		};
 		39212F042B6FB3C7E8AF8285 /* Authentication */ = {
 			isa = PBXGroup;
 			children = (
@@ -1272,6 +1288,14 @@
 			name = Resources;
 			sourceTree = "<group>";
 		};
+		6FD4F54EBF66CE57BABCF52B /* Plugins */ = {
+			isa = PBXGroup;
+			children = (
+				36B8BC5676516F4A70E19F6E /* Core */,
+			);
+			name = Plugins;
+			sourceTree = "<group>";
+		};
 		71D066BED2F311F42653EF76 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -1295,6 +1319,7 @@
 				A1E3D624354DF84639A884FE /* Features */,
 				95BC3D825D13AE61B1CE2534 /* Shared */,
 				3F4AEEBB356836B596E083E0 /* Resources */,
+				6FD4F54EBF66CE57BABCF52B /* Plugins */,
 			);
 			name = OmniTAKMobile;
 			sourceTree = "<group>";
@@ -2258,6 +2283,9 @@
 				40BCC83669B81473CF4AEAD6 /* MeshtasticCOTBridge.swift in Sources */,
 				7F39494CB4B69AE30378C92D /* IconData.swift in Sources */,
 				9D91E67A508D84BB77794B6A /* IconsetImporter.swift in Sources */,
+				6A6463FAE2609861EE063491 /* OmniTAKPlugin.swift in Sources */,
+				C6711AEC15016B1480D4C5C6 /* PluginRegistry.swift in Sources */,
+				DCDDE37CA3DE6EBC99B2D568 /* BundledPlugins.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
