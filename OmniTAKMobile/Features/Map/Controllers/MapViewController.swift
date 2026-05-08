@@ -2043,13 +2043,18 @@ struct TacticalMapView: UIViewRepresentable {
 
         for marker in drawingStore.markers {
             if let annotation = existingByID[marker.id] {
-                // Refresh in place if the underlying marker moved or was renamed.
+                // Refresh in place if the underlying marker moved or was
+                // renamed. KVO carries coordinate/title changes through to
+                // MKMapView without the remove/add cycle that caused
+                // marker flicker on every drawingStore mutation (#1).
                 if annotation.coordinate.latitude != marker.coordinate.latitude ||
-                   annotation.coordinate.longitude != marker.coordinate.longitude ||
-                   annotation.title != marker.label {
-                    mapView.removeAnnotation(annotation)
-                    mapView.addAnnotation(DrawingMarkerAnnotation(marker: marker))
+                   annotation.coordinate.longitude != marker.coordinate.longitude {
+                    annotation.coordinate = marker.coordinate
                 }
+                if annotation.title != marker.label {
+                    annotation.title = marker.label
+                }
+                annotation.marker = marker
             } else {
                 mapView.addAnnotation(DrawingMarkerAnnotation(marker: marker))
             }
@@ -2919,10 +2924,13 @@ struct TacticalMapView: UIViewRepresentable {
 // MARK: - Drawing Marker Annotation
 
 class DrawingMarkerAnnotation: NSObject, MKAnnotation {
-    let marker: MarkerDrawing
-    var coordinate: CLLocationCoordinate2D
-    var title: String?
-    var subtitle: String?
+    var marker: MarkerDrawing
+    // `@objc dynamic` so coordinate moves are observed by MKMapView and
+    // animate in place; otherwise the only way to refresh the marker on
+    // a drag was a remove/add cycle that flickered (#1).
+    @objc dynamic var coordinate: CLLocationCoordinate2D
+    @objc dynamic var title: String?
+    @objc dynamic var subtitle: String?
 
     init(marker: MarkerDrawing) {
         self.marker = marker
