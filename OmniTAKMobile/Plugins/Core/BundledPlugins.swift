@@ -13,7 +13,7 @@ enum BundledPlugins {
     static func makeAll() -> [OmniTAKPlugin] {
         return [
             // Reference plugin — the canonical example.
-            // ADS-B is wired in commit 2 of this branch.
+            ADSBPlugin()
         ]
     }
 }
