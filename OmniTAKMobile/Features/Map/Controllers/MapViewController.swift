@@ -1958,26 +1958,44 @@ struct TacticalMapView: UIViewRepresentable {
 
     private func updateDrawingTempAnnotations(mapView: MKMapView) {
         let existing = mapView.annotations.compactMap { $0 as? DrawingTempPointAnnotation }
-        let desired: [DrawingTempPointAnnotation] = drawingManager.isDrawingActive
-            ? drawingManager.getTemporaryAnnotations().map { input in
+        let desiredInputs = drawingManager.isDrawingActive
+            ? drawingManager.getTemporaryAnnotations()
+            : []
+
+        // Index-stable diff: when the user adds/moves a single in-progress
+        // point, mutate the matching existing annotation's coordinate in
+        // place instead of removing-and-re-adding the whole collection.
+        // MKPointAnnotation.coordinate is KVO-observed by MKMapView, so the
+        // marker view simply slides to the new location without the
+        // remove/add disposal cycle that caused the visible flicker
+        // reported in #3.
+        let commonCount = min(existing.count, desiredInputs.count)
+        for i in 0..<commonCount {
+            let input = desiredInputs[i]
+            let annotation = existing[i]
+            if annotation.coordinate.latitude != input.coordinate.latitude ||
+               annotation.coordinate.longitude != input.coordinate.longitude {
+                annotation.coordinate = input.coordinate
+            }
+            if annotation.title != input.title { annotation.title = input.title }
+            if annotation.subtitle != input.subtitle { annotation.subtitle = input.subtitle }
+        }
+
+        if existing.count > desiredInputs.count {
+            // Remove the trailing extras only.
+            let extras = Array(existing[desiredInputs.count..<existing.count])
+            mapView.removeAnnotations(extras)
+        } else if desiredInputs.count > existing.count {
+            // Add only the new trailing points.
+            let newAnnotations: [DrawingTempPointAnnotation] = desiredInputs[existing.count..<desiredInputs.count].map { input in
                 let a = DrawingTempPointAnnotation()
                 a.coordinate = input.coordinate
                 a.title = input.title
                 a.subtitle = input.subtitle
                 return a
             }
-            : []
-
-        if existing.count == desired.count {
-            let sameCoords = zip(existing, desired).allSatisfy { lhs, rhs in
-                lhs.coordinate.latitude == rhs.coordinate.latitude &&
-                lhs.coordinate.longitude == rhs.coordinate.longitude
-            }
-            if sameCoords { return }
+            mapView.addAnnotations(newAnnotations)
         }
-
-        if !existing.isEmpty { mapView.removeAnnotations(existing) }
-        if !desired.isEmpty { mapView.addAnnotations(desired) }
     }
 
     private func updateDrawingMarkerAnnotations(mapView: MKMapView) {
@@ -2033,7 +2051,13 @@ struct TacticalMapView: UIViewRepresentable {
             if let annotation = existingByID[item.id] {
                 let coordChanged = annotation.coordinate.latitude != item.coordinate.latitude ||
                                    annotation.coordinate.longitude != item.coordinate.longitude
-                if coordChanged || annotation.label != item.label || annotation.color != item.color {
+                let labelChanged = annotation.label != item.label
+                let colorChanged = annotation.color != item.color
+
+                if labelChanged || colorChanged {
+                    // Label/color are baked into the rendered image, so we
+                    // still need a remove/add to refresh the glyph. Apply
+                    // the new coordinate first so it doesn't double-move.
                     mapView.removeAnnotation(annotation)
                     mapView.addAnnotation(DrawingLabelAnnotation(
                         ownerID: item.id,
@@ -2041,6 +2065,9 @@ struct TacticalMapView: UIViewRepresentable {
                         label: item.label,
                         color: item.color
                     ))
+                } else if coordChanged {
+                    // KVO-driven in-place move; no flicker.
+                    annotation.coordinate = item.coordinate
                 }
             } else {
                 mapView.addAnnotation(DrawingLabelAnnotation(
@@ -2055,27 +2082,42 @@ struct TacticalMapView: UIViewRepresentable {
 
     private func updateMeasurementTempAnnotations(mapView: MKMapView) {
         let existing = mapView.annotations.compactMap { $0 as? MeasurementPointAnnotation }
-        let desired: [MeasurementPointAnnotation] = measurementManager.isActive
-            ? measurementManager.getTemporaryAnnotations().map { input in
+        let desiredInputs = measurementManager.isActive
+            ? measurementManager.getTemporaryAnnotations()
+            : []
+
+        // Index-stable diff. The previous implementation removed every
+        // measurement point and re-added the full set whenever the count
+        // changed, which is exactly what happens when a user taps to add
+        // a new measurement vertex — that caused the yellow points to
+        // flash on every tap (#3). Mutating MKPointAnnotation.coordinate
+        // in-place is observed via KVO and slides the marker view without
+        // a removal/redisplay cycle.
+        let commonCount = min(existing.count, desiredInputs.count)
+        for i in 0..<commonCount {
+            let input = desiredInputs[i]
+            let annotation = existing[i]
+            if annotation.coordinate.latitude != input.coordinate.latitude ||
+               annotation.coordinate.longitude != input.coordinate.longitude {
+                annotation.coordinate = input.coordinate
+            }
+            if annotation.title != input.title { annotation.title = input.title }
+            if annotation.subtitle != input.subtitle { annotation.subtitle = input.subtitle }
+        }
+
+        if existing.count > desiredInputs.count {
+            let extras = Array(existing[desiredInputs.count..<existing.count])
+            mapView.removeAnnotations(extras)
+        } else if desiredInputs.count > existing.count {
+            let newAnnotations: [MeasurementPointAnnotation] = desiredInputs[existing.count..<desiredInputs.count].map { input in
                 let a = MeasurementPointAnnotation()
                 a.coordinate = input.coordinate
                 a.title = input.title
                 a.subtitle = input.subtitle
                 return a
             }
-            : []
-
-        // Cheap fast path: if the set of coordinates is identical, do nothing.
-        if existing.count == desired.count {
-            let sameCoords = zip(existing, desired).allSatisfy { lhs, rhs in
-                lhs.coordinate.latitude == rhs.coordinate.latitude &&
-                lhs.coordinate.longitude == rhs.coordinate.longitude
-            }
-            if sameCoords { return }
+            mapView.addAnnotations(newAnnotations)
         }
-
-        if !existing.isEmpty { mapView.removeAnnotations(existing) }
-        if !desired.isEmpty { mapView.addAnnotations(desired) }
     }
 
     private func calculateCentroid(coordinates: [CLLocationCoordinate2D]) -> CLLocationCoordinate2D? {
@@ -2860,7 +2902,11 @@ class DrawingMarkerAnnotation: NSObject, MKAnnotation {
 
 class DrawingLabelAnnotation: NSObject, MKAnnotation {
     let ownerID: UUID
-    var coordinate: CLLocationCoordinate2D
+    // `@objc dynamic` so MKMapView's KVO observation moves the rendered
+    // annotation view in-place when the underlying shape's centroid
+    // shifts — avoids the remove/add disposal cycle that flickered
+    // shape-name pills during polygon drags (#3).
+    @objc dynamic var coordinate: CLLocationCoordinate2D
     var label: String
     var color: DrawingColor
 
