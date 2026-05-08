@@ -71,9 +71,37 @@ class ServerManager: ObservableObject {
 
     private let serversKey = "tak_servers"
     private let activeServerKey = "active_server_id"
+    private let defaultServerSeededKey = "defaultServerSeeded"
 
     init() {
         loadServers()
+        seedDefaultServerIfNeeded()
+    }
+
+    // MARK: - First-run Seeding
+
+    /// Seed a single demo entry (public OpenTAKServer) the first time the app
+    /// launches. Gated by `defaultServerSeeded` so deletes are sticky — the
+    /// user can remove it and it won't reappear.
+    private func seedDefaultServerIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: defaultServerSeededKey) else { return }
+        defaults.set(true, forKey: defaultServerSeededKey)
+
+        // Don't seed if the user already has servers (e.g. upgraded from
+        // an older build that pre-dated this flag).
+        guard servers.isEmpty else { return }
+
+        let demo = TAKServer(
+            name: "Public OpenTAKServer (Demo)",
+            host: "public.opentakserver.io",
+            port: 8089,
+            protocolType: "ssl",
+            useTLS: true,
+            enabled: false
+        )
+        servers.append(demo)
+        saveServers()
     }
 
     // MARK: - Persistence
