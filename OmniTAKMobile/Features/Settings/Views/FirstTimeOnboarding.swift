@@ -1138,11 +1138,23 @@ private final class PermissionsCoordinator: NSObject, ObservableObject, CLLocati
 
 private enum DemoServerConnector {
     static func connect() {
-        // The settings flow + SimpleEnrollView wire the actual TLS connect.
-        // We just stamp the host so the user can finish enrollment from
-        // Settings later if they bail before completing it.
-        UserDefaults.standard.set("public.opentakserver.io", forKey: "lastDemoServerHost")
-        UserDefaults.standard.set(8089, forKey: "lastDemoServerPort")
+        guard let url = Bundle.main.url(forResource: "demo-package", withExtension: "zip") else {
+            print("⚠️ DemoServerConnector: demo-package.zip not bundled in Resources/. See BUILD_FROM_SOURCE.md.")
+            UserDefaults.standard.set("tak.engindearing.soy", forKey: "lastDemoServerHost")
+            UserDefaults.standard.set(8089, forKey: "lastDemoServerPort")
+            return
+        }
+        Task { @MainActor in
+            do {
+                let manager = DataPackageManager()
+                let result = try await manager.importPackage(from: url)
+                print("✅ Demo package imported: \(result)")
+                UserDefaults.standard.set("tak.engindearing.soy", forKey: "lastDemoServerHost")
+                UserDefaults.standard.set(8089, forKey: "lastDemoServerPort")
+            } catch {
+                print("⚠️ Demo import failed: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

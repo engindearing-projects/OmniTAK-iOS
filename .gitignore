@@ -81,3 +81,6 @@ project_analysis*.json
 
 # Logs
 *.log
+
+# Demo TAK data package — contains private cert, never commit
+OmniTAKMobile/Resources/demo-package.zip
