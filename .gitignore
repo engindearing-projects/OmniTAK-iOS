@@ -84,3 +84,7 @@ project_analysis*.json
 
 # Demo TAK data package — contains private cert, never commit
 OmniTAKMobile/Resources/demo-package.zip
+
+# Internal strategy docs — kept in ~/Projects/engindearing-private/
+K9BLUE-GAMEPLAN.md
+TROP-DELTA.md
