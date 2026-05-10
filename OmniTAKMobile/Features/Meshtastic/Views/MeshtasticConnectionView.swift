@@ -30,9 +30,13 @@ struct MeshtasticConnectionView: View {
                         // Device Info Card
                         deviceInfoCard
 
-                        // Mesh Nodes List
+                        // Mesh Nodes List, or a guidance card explaining
+                        // why the list is empty so connected users don't
+                        // stare at a blank screen.
                         if !manager.meshNodes.isEmpty {
                             meshNodesSection
+                        } else {
+                            waitingForNodesCard
                         }
                     } else {
                         // No Connection - Show Setup
@@ -162,9 +166,11 @@ struct MeshtasticConnectionView: View {
                         .font(.headline)
 
                     if manager.isConnected, let device = manager.connectedDevice {
-                        Text("\(device.devicePath):\(device.nodeId ?? "4403")")
+                        Text(connectionSubtitle(for: device))
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                 }
 
@@ -238,6 +244,57 @@ struct MeshtasticConnectionView: View {
             return "Connecting..."
         default:
             return "Not Connected"
+        }
+    }
+
+    /// Empty-state shown when we're connected but the radio hasn't
+    /// streamed its node DB yet. Pre-fix the screen rendered as a tiny
+    /// "Mesh Nodes 0" row and a sea of blank space.
+    private var waitingForNodesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .foregroundColor(.secondary)
+                Text("Waiting for the radio")
+                    .font(.headline)
+            }
+            Text("The radio hasn't streamed any nodes yet. This usually takes a few seconds after connecting. If your radio just booted, give it ~30 seconds to discover its mesh.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button(action: { showingDeviceSettings = true }) {
+                Label("Device Settings", systemImage: "slider.horizontal.3")
+                    .font(.subheadline)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.systemBackground))
+        .cornerRadius(12)
+        .shadow(radius: 2)
+    }
+
+    /// Render the connection subtitle in a way that makes sense for the
+    /// active transport. BLE shows the radio name (or short UUID); TCP
+    /// shows host:port. Pre-fix this rendered every device as `host:port`
+    /// even for BLE, producing nonsense like "<peripheral-uuid>:4403".
+    private func connectionSubtitle(for device: MeshtasticDevice) -> String {
+        switch device.connectionType {
+        case .bluetooth:
+            // Prefer the BLE peripheral's advertised name; fall back to a
+            // short slice of the UUID so the operator at least knows
+            // something identifiable.
+            if !device.name.isEmpty && device.name != device.devicePath {
+                return device.name
+            }
+            // 8-char prefix is enough to disambiguate during pairing.
+            return String(device.devicePath.prefix(8))
+        case .tcp:
+            // nodeId carries the port for TCP devices (legacy field reuse).
+            let port = device.nodeId ?? "4403"
+            return "\(device.devicePath):\(port)"
         }
     }
 

@@ -1256,10 +1256,45 @@ extension MeshtasticBLEClient: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error = error {
+            let message = Self.friendlyWriteErrorMessage(error)
             DispatchQueue.main.async {
-                self.lastError = "Write failed: \(error.localizedDescription)"
+                self.lastError = message
             }
         }
+    }
+
+    /// Translate raw CoreBluetooth NSError into operator-readable copy.
+    /// Defaults back to the system message when nothing matches so we
+    /// never silently lose an unknown failure mode.
+    private static func friendlyWriteErrorMessage(_ error: Error) -> String {
+        let ns = error as NSError
+        // CBATTError domain — characteristic-level GATT failures.
+        if ns.domain == CBATTErrorDomain, let code = CBATTError.Code(rawValue: ns.code) {
+            switch code {
+            case .insufficientAuthentication, .insufficientEncryption:
+                return "Radio requires pairing. Open iOS Settings → Bluetooth, tap your radio, and confirm the PIN. Then reconnect."
+            case .insufficientAuthorization:
+                return "Radio rejected the write — not authorized. The Meshtastic firmware may require an admin key for this setting."
+            case .writeNotPermitted:
+                return "Radio refused the write. Try reconnecting; if it persists, the firmware may not support this admin field."
+            case .unlikelyError:
+                return "Radio reported an unlikely error. Try reconnecting."
+            default:
+                break
+            }
+        }
+        // CBError domain — higher-level Bluetooth stack issues.
+        if ns.domain == CBErrorDomain, let code = CBError.Code(rawValue: ns.code) {
+            switch code {
+            case .peripheralDisconnected:
+                return "Radio disconnected before the write completed."
+            case .connectionTimeout:
+                return "Bluetooth write timed out."
+            default:
+                break
+            }
+        }
+        return "Write failed: \(error.localizedDescription)"
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
