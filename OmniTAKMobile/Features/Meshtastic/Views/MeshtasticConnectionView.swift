@@ -12,6 +12,7 @@ struct MeshtasticConnectionView: View {
     @State private var showingDevicePicker = false
     @State private var showingMeshTopology = false
     @State private var showingNodeMap = false
+    @State private var showingDeviceSettings = false
 
     var body: some View {
         NavigationView {
@@ -49,6 +50,10 @@ struct MeshtasticConnectionView: View {
                                 Label("View Nodes", systemImage: "circle.hexagongrid")
                             }
 
+                            Button(action: { showingDeviceSettings = true }) {
+                                Label("Device Settings", systemImage: "slider.horizontal.3")
+                            }
+
                             if !manager.nodesWithPositions.isEmpty {
                                 Button(action: { showingNodeMap = true }) {
                                     Label("Node Map", systemImage: "map")
@@ -81,6 +86,16 @@ struct MeshtasticConnectionView: View {
             }
             .sheet(isPresented: $showingMeshTopology) {
                 MeshTopologyView()
+            }
+            .sheet(isPresented: $showingDeviceSettings) {
+                NavigationView {
+                    MeshDeviceSettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                Button("Done") { showingDeviceSettings = false }
+                            }
+                        }
+                }
             }
             .sheet(isPresented: $showingNodeMap) {
                 NavigationView {

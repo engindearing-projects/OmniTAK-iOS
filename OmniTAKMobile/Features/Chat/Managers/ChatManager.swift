@@ -93,6 +93,25 @@ class ChatManager: ObservableObject {
         // Update conversation
         updateConversation(conversationId: conversationId, with: message)
 
+        // GAP-122 / GAP-124 — mesh conversations bypass TAK CoT and go
+        // straight to the Meshtastic radio over portnum-1.
+        if MeshtasticManager.isMeshConversation(conversationId) {
+            let toNode = MeshtasticManager.meshDmNodeNum(from: conversationId)
+            let channelIdx = MeshtasticManager.meshChannelIndex(from: conversationId) ?? 0
+            let messageId = message.id
+            Task { @MainActor [weak self] in
+                let success = MeshtasticManager.shared.sendMeshChat(
+                    text: text, channelIndex: channelIdx, toNodeId: toNode
+                )
+                guard let self = self else { return }
+                if let i = self.messages.firstIndex(where: { $0.id == messageId }) {
+                    self.messages[i].status = success ? .sent : .failed
+                    self.saveMessages()
+                }
+            }
+            return
+        }
+
         // Generate and send GeoChat XML
         let xml = ChatXMLGenerator.generateGeoChatXML(
             message: message,

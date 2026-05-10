@@ -8,6 +8,7 @@
 
 import Foundation
 import Network
+import Combine
 
 // MARK: - Protocol Constants
 
@@ -31,6 +32,14 @@ protocol MeshtasticTCPClientDelegate: AnyObject {
     func tcpClient(_ client: MeshtasticTCPClient, didReceiveError message: String)
 }
 
+/// GAP-122 / GAP-124 — full-context decoded mesh text event.
+struct MeshTextEvent {
+    let from: UInt32
+    let to: UInt32
+    let channel: UInt32
+    let text: String
+}
+
 // MARK: - MeshtasticTCPClient
 
 @available(iOS 13.0, *)
@@ -44,6 +53,11 @@ class MeshtasticTCPClient: ObservableObject {
     @Published var firmwareVersion: String = ""
     @Published var nodes: [UInt32: MeshNode] = [:]
     @Published var lastError: String?
+
+    /// GAP-122 / GAP-124 — incoming text events with full mesh context.
+    let meshTextSubject = PassthroughSubject<MeshTextEvent, Never>()
+    /// GAP-109 / GAP-123 — decoded admin-port responses + want_config_id channel-slot dump.
+    let adminResponseSubject = PassthroughSubject<AdminResponse, Never>()
 
     enum ConnectionState: String {
         case disconnected = "Disconnected"
@@ -276,6 +290,17 @@ class MeshtasticTCPClient: ObservableObject {
                     index = skipField(data, from: index, wireType: wireType)
                 }
 
+            case 10: // channel (Channel submessage from want_config_id dump)
+                if wireType == 2, let (length, lengthEnd) = readVarint(data, from: index) {
+                    let end = min(lengthEnd + Int(length), data.count)
+                    let channelBytes = data.subdata(in: lengthEnd..<end)
+                    let response = AdminMessageParser.parseChannelPublic(channelBytes)
+                    DispatchQueue.main.async { self.adminResponseSubject.send(response) }
+                    index = end
+                } else {
+                    index = skipField(data, from: index, wireType: wireType)
+                }
+
             default:
                 index = skipField(data, from: index, wireType: wireType)
             }
@@ -421,7 +446,7 @@ class MeshtasticTCPClient: ObservableObject {
         return (node, messageEnd)
     }
 
-    private func parseMeshPacket(_ data: Data, from index: Int, wireType: UInt8) -> ((from: UInt32, to: UInt32, portNum: Int, payload: Data), Int)? {
+    private func parseMeshPacket(_ data: Data, from index: Int, wireType: UInt8) -> ((from: UInt32, to: UInt32, channel: UInt32, portNum: Int, payload: Data), Int)? {
         guard wireType == 2 else { return nil }
 
         guard let (length, lengthEnd) = readVarint(data, from: index) else { return nil }
@@ -430,6 +455,7 @@ class MeshtasticTCPClient: ObservableObject {
 
         var fromNode: UInt32 = 0
         var toNode: UInt32 = 0
+        var channelIndex: UInt32 = 0
         var portNum = 0
         var payload = Data()
 
@@ -454,6 +480,13 @@ class MeshtasticTCPClient: ObservableObject {
                 if wire == 5 && idx + 4 <= data.count {
                     toNode = UInt32(data[idx]) | (UInt32(data[idx+1]) << 8) | (UInt32(data[idx+2]) << 16) | (UInt32(data[idx+3]) << 24)
                     idx += 4
+                } else {
+                    idx = skipField(data, from: idx, wireType: wire)
+                }
+            case 3: // channel (varint)
+                if wire == 0, let (val, newIdx) = readVarint(data, from: idx) {
+                    channelIndex = UInt32(val)
+                    idx = newIdx
                 } else {
                     idx = skipField(data, from: idx, wireType: wire)
                 }
@@ -497,14 +530,15 @@ class MeshtasticTCPClient: ObservableObject {
             }
         }
 
-        return ((fromNode, toNode, portNum, payload), messageEnd)
+        return ((fromNode, toNode, channelIndex, portNum, payload), messageEnd)
     }
 
-    private func handleMeshPacket(_ packet: (from: UInt32, to: UInt32, portNum: Int, payload: Data)) {
+    private func handleMeshPacket(_ packet: (from: UInt32, to: UInt32, channel: UInt32, portNum: Int, payload: Data)) {
         // Port numbers from Meshtastic:
         // 1 = TEXT_MESSAGE_APP
         // 3 = POSITION_APP
         // 4 = NODEINFO_APP
+        // 6 = ADMIN_APP
         // 72 = ATAK_PLUGIN
         // 257 = ATAK_FORWARDER
 
@@ -512,6 +546,8 @@ class MeshtasticTCPClient: ObservableObject {
         case 1: // Text message
             if let text = String(data: packet.payload, encoding: .utf8) {
                 delegate?.tcpClient(self, didReceiveMessage: packet.from, text: text)
+                let event = MeshTextEvent(from: packet.from, to: packet.to, channel: packet.channel, text: text)
+                DispatchQueue.main.async { self.meshTextSubject.send(event) }
             }
 
         case 3: // Position
@@ -523,6 +559,11 @@ class MeshtasticTCPClient: ObservableObject {
                     }
                 }
                 delegate?.tcpClient(self, didReceivePosition: packet.from, position: position)
+            }
+
+        case 6: // ADMIN_APP — config read-back from radio
+            if let response = AdminMessageParser.parse(packet.payload) {
+                DispatchQueue.main.async { self.adminResponseSubject.send(response) }
             }
 
         case 72, 257: // ATAK_PLUGIN / ATAK_FORWARDER
@@ -622,8 +663,19 @@ class MeshtasticTCPClient: ObservableObject {
 
     func sendTextMessage(_ text: String, to destination: UInt32 = 0xFFFFFFFF) {
         // Build a text message packet
-        let packet = buildTextMessage(text, to: destination)
+        let packet = buildTextMessage(text, to: destination, channel: 0)
         sendToRadio(packet)
+    }
+
+    /// GAP-122 / GAP-124 — send a text message on a specific channel and
+    /// optionally to a specific node. Pass `to == 0xFFFFFFFF` for channel chat;
+    /// any other value is a directed packet (DM).
+    @discardableResult
+    func sendMeshText(_ text: String, to destination: UInt32, channel: UInt32) -> Bool {
+        guard isConnected else { return false }
+        let packet = buildTextMessage(text, to: destination, channel: channel)
+        sendToRadio(packet)
+        return true
     }
 
     private func buildWantConfig() -> Data {
@@ -638,7 +690,7 @@ class MeshtasticTCPClient: ObservableObject {
         return data
     }
 
-    private func buildTextMessage(_ text: String, to destination: UInt32) -> Data {
+    private func buildTextMessage(_ text: String, to destination: UInt32, channel: UInt32 = 0) -> Data {
         var data = Data()
 
         // ToRadio.packet (field 1, wire type 2)
@@ -649,6 +701,12 @@ class MeshtasticTCPClient: ObservableObject {
         // to (field 2, fixed32)
         meshPacket.append(0x15) // Tag: field 2, wire type 5
         meshPacket.append(contentsOf: withUnsafeBytes(of: destination.littleEndian) { Array($0) })
+
+        // channel (field 3, varint) — only emit when non-zero, mirrors Android.
+        if channel != 0 {
+            meshPacket.append(0x18) // Tag: field 3, wire type 0
+            appendVarint(&meshPacket, UInt64(channel))
+        }
 
         // decoded (field 4, sub-message)
         var decoded = Data()
@@ -680,7 +738,10 @@ class MeshtasticTCPClient: ObservableObject {
         return data
     }
 
-    private func sendToRadio(_ payload: Data) {
+    /// Push a fully-framed `ToRadio` payload over the active TCP connection.
+    /// Internal so `MeshtasticManager` can dispatch admin / mesh-chat messages
+    /// without going through `sendTextMessage` / `sendATAKPlugin`.
+    func sendToRadio(_ payload: Data) {
         guard let connection = connection else { return }
 
         // Build frame with header

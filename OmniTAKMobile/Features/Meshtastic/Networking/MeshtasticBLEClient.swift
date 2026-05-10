@@ -85,6 +85,11 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     @Published var nodes: [UInt32: MeshNode] = [:]
     @Published var lastError: String?
 
+    /// GAP-122 / GAP-124 — incoming text events with full mesh context.
+    let meshTextSubject = PassthroughSubject<MeshTextEvent, Never>()
+    /// GAP-109 / GAP-123 — decoded admin-port responses + want_config_id channel-slot dump.
+    let adminResponseSubject = PassthroughSubject<AdminResponse, Never>()
+
     enum ConnectionState: String {
         case disconnected = "Disconnected"
         case scanning = "Scanning..."
@@ -254,8 +259,37 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             return
         }
 
-        let packet = buildTextMessage(text, to: destination)
+        let packet = buildTextMessage(text, to: destination, channel: 0)
         sendToRadio(packet, peripheral: peripheral, characteristic: characteristic)
+    }
+
+    /// GAP-122 / GAP-124 — send a text message on a specific channel and
+    /// optionally to a specific node. Returns false if no active connection.
+    @discardableResult
+    func sendMeshText(_ text: String, to destination: UInt32, channel: UInt32) -> Bool {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = toRadioCharacteristic,
+              peripheral.state == .connected else {
+            DispatchQueue.main.async { self.lastError = "Not connected" }
+            return false
+        }
+        let packet = buildTextMessage(text, to: destination, channel: channel)
+        sendToRadio(packet, peripheral: peripheral, characteristic: characteristic)
+        return true
+    }
+
+    /// GAP-109a — push an arbitrary fully-framed `ToRadio` payload over BLE.
+    /// Used by `MeshtasticManager` for admin-port writes.
+    @discardableResult
+    func sendToRadio(_ data: Data) -> Bool {
+        guard let peripheral = connectedPeripheral,
+              let characteristic = toRadioCharacteristic,
+              peripheral.state == .connected else {
+            DispatchQueue.main.async { self.lastError = "Not connected" }
+            return false
+        }
+        sendToRadio(data, peripheral: peripheral, characteristic: characteristic)
+        return true
     }
 
     /// Send a portnum-72 (ATAK_PLUGIN) payload over the active BLE connection.
@@ -323,7 +357,7 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
         return data
     }
 
-    private func buildTextMessage(_ text: String, to destination: UInt32) -> Data {
+    private func buildTextMessage(_ text: String, to destination: UInt32, channel: UInt32 = 0) -> Data {
         var data = Data()
 
         var meshPacket = Data()
@@ -331,6 +365,12 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
         // to (field 2, fixed32)
         meshPacket.append(0x15) // Tag: field 2, wire type 5
         meshPacket.append(contentsOf: withUnsafeBytes(of: destination.littleEndian) { Array($0) })
+
+        // channel (field 3, varint) — only emit when non-zero, mirrors Android.
+        if channel != 0 {
+            meshPacket.append(0x18) // Tag: field 3, wire type 0
+            appendVarint(&meshPacket, UInt64(channel))
+        }
 
         // decoded (field 4, sub-message)
         var decoded = Data()
@@ -425,6 +465,17 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             case 7: // config_complete_id
                 print("📦 config_complete_id received (field 7) - all node data sent")
                 index = skipField(data, from: index, wireType: wireType)
+
+            case 10: // channel (Channel submessage from want_config_id dump)
+                if wireType == 2, let (length, lengthEnd) = readVarint(data, from: index) {
+                    let end = min(lengthEnd + Int(length), data.count)
+                    let channelBytes = data.subdata(in: lengthEnd..<end)
+                    let response = AdminMessageParser.parseChannelPublic(channelBytes)
+                    DispatchQueue.main.async { self.adminResponseSubject.send(response) }
+                    index = end
+                } else {
+                    index = skipField(data, from: index, wireType: wireType)
+                }
 
             case 8: // rebooted
                 print("📦 rebooted notification (field 8)")
@@ -657,7 +708,7 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
         return MeshPosition(latitude: lat, longitude: lon, altitude: alt)
     }
 
-    private func parseMeshPacket(_ data: Data, from index: Int, wireType: UInt8) -> ((from: UInt32, to: UInt32, portNum: Int, payload: Data), Int)? {
+    private func parseMeshPacket(_ data: Data, from index: Int, wireType: UInt8) -> ((from: UInt32, to: UInt32, channel: UInt32, portNum: Int, payload: Data), Int)? {
         guard wireType == 2 else { return nil }
 
         guard let (length, lengthEnd) = readVarint(data, from: index) else { return nil }
@@ -666,6 +717,7 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
 
         var fromNode: UInt32 = 0
         var toNode: UInt32 = 0
+        var channelIndex: UInt32 = 0
         var portNum = 0
         var payload = Data()
 
@@ -690,6 +742,13 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
                 if wire == 5 && idx + 4 <= data.count {
                     toNode = UInt32(data[idx]) | (UInt32(data[idx+1]) << 8) | (UInt32(data[idx+2]) << 16) | (UInt32(data[idx+3]) << 24)
                     idx += 4
+                } else {
+                    idx = skipField(data, from: idx, wireType: wire)
+                }
+            case 3: // channel (varint)
+                if wire == 0, let (val, newIdx) = readVarint(data, from: idx) {
+                    channelIndex = UInt32(val)
+                    idx = newIdx
                 } else {
                     idx = skipField(data, from: idx, wireType: wire)
                 }
@@ -732,14 +791,15 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             }
         }
 
-        return ((fromNode, toNode, portNum, payload), messageEnd)
+        return ((fromNode, toNode, channelIndex, portNum, payload), messageEnd)
     }
 
-    private func handleMeshPacket(_ packet: (from: UInt32, to: UInt32, portNum: Int, payload: Data)) {
+    private func handleMeshPacket(_ packet: (from: UInt32, to: UInt32, channel: UInt32, portNum: Int, payload: Data)) {
         // Port numbers from Meshtastic:
         // 1 = TEXT_MESSAGE_APP
         // 3 = POSITION_APP
         // 4 = NODEINFO_APP
+        // 6 = ADMIN_APP
         // 67 = TELEMETRY_APP
         // 72 = ATAK_PLUGIN
         // 257 = ATAK_FORWARDER
@@ -749,6 +809,12 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             if let text = String(data: packet.payload, encoding: .utf8) {
                 print("   💬 Text message from \(String(format: "0x%08X", packet.from)): \(text)")
                 delegate?.bleClient(self, didReceiveMessage: packet.from, text: text)
+                let event = MeshTextEvent(from: packet.from, to: packet.to, channel: packet.channel, text: text)
+                DispatchQueue.main.async { self.meshTextSubject.send(event) }
+            }
+        case 6: // ADMIN_APP — config read-back from radio
+            if let response = AdminMessageParser.parse(packet.payload) {
+                DispatchQueue.main.async { self.adminResponseSubject.send(response) }
             }
 
         case 3: // Position

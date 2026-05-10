@@ -18,6 +18,40 @@ public class MeshtasticManager: ObservableObject {
     /// Shared instance for app-wide Meshtastic management
     public static let shared = MeshtasticManager()
 
+    // MARK: - Mesh conversation helpers (GAP-122 / GAP-124)
+    // These are pure-function helpers — no actor state — so callers from any
+    // isolation can construct / parse the conversation IDs without hopping.
+
+    /// Conversation id used by ChatManager to bucket incoming mesh text by channel.
+    public nonisolated static func meshConversationId(channelIndex: Int) -> String {
+        return "MESH-CH\(channelIndex)"
+    }
+
+    /// GAP-124 — conversation id for directed mesh text. Both my outgoing
+    /// DM to node X and X's reply to me bucket into the same conversation.
+    public nonisolated static func meshDmConversationId(nodeId: UInt32) -> String {
+        return String(format: "MESH-DM-%08X", nodeId)
+    }
+
+    /// True if a conversation id targets the Meshtastic mesh (channel or DM).
+    public nonisolated static func isMeshConversation(_ conversationId: String) -> Bool {
+        return conversationId.hasPrefix("MESH-CH") || conversationId.hasPrefix("MESH-DM-")
+    }
+
+    /// Parse a `MESH-DM-{nodeIdHex}` conversation id back into a nodenum.
+    public nonisolated static func meshDmNodeNum(from conversationId: String) -> UInt32? {
+        guard conversationId.hasPrefix("MESH-DM-") else { return nil }
+        let hex = String(conversationId.dropFirst("MESH-DM-".count))
+        return UInt32(hex, radix: 16)
+    }
+
+    /// Parse a `MESH-CHn` conversation id back into a channel index.
+    public nonisolated static func meshChannelIndex(from conversationId: String) -> UInt32? {
+        guard conversationId.hasPrefix("MESH-CH") else { return nil }
+        let n = String(conversationId.dropFirst("MESH-CH".count))
+        return UInt32(n)
+    }
+
     // MARK: - Published Properties
 
     @Published public var connectedDevice: MeshtasticDevice?
@@ -124,6 +158,18 @@ public class MeshtasticManager: ObservableObject {
                 self?.lastError = error
             }
             .store(in: &tcpClientCancellables)
+
+        // GAP-122 / GAP-124 — incoming mesh text → ChatManager
+        client.meshTextSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in self?.handleIncomingMeshText(event) }
+            .store(in: &tcpClientCancellables)
+
+        // GAP-109 / GAP-123 — admin responses → MeshDeviceConfigStore + channel seed
+        client.adminResponseSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] response in self?.handleAdminResponse(response) }
+            .store(in: &tcpClientCancellables)
     }
 
     private func handleDisconnection() {
@@ -190,6 +236,18 @@ public class MeshtasticManager: ObservableObject {
             .sink { [weak self] (error: String?) in
                 self?.lastError = error
             }
+            .store(in: &bleClientCancellables)
+
+        // GAP-122 / GAP-124 — incoming mesh text → ChatManager
+        client.meshTextSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in self?.handleIncomingMeshText(event) }
+            .store(in: &bleClientCancellables)
+
+        // GAP-109 / GAP-123 — admin responses → MeshDeviceConfigStore + channel seed
+        client.adminResponseSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] response in self?.handleAdminResponse(response) }
             .store(in: &bleClientCancellables)
 
         client.$isScanning
@@ -508,5 +566,169 @@ public class MeshtasticManager: ObservableObject {
         // We'd need TAKService to expose a remove method, but for now just let them expire
         // meshNodes count: \(meshNodes.count) markers will expire
         print("🗺️ Mesh markers will expire from map")
+    }
+
+    // MARK: - GAP-122 / GAP-124 — Mesh text routing
+
+    /// Send a text message over the active Meshtastic transport on the
+    /// requested channel. Pass `toNodeId` to send a directed packet (DM);
+    /// otherwise broadcasts to the channel. Returns true on wire-layer
+    /// dispatch — does NOT wait for radio ack.
+    @discardableResult
+    public func sendMeshChat(text: String, channelIndex: UInt32 = 0, toNodeId: UInt32? = nil) -> Bool {
+        guard #available(iOS 13.0, *), isConnected, !text.isEmpty else { return false }
+        let dest = toNodeId ?? 0xFFFFFFFF
+        guard let device = connectedDevice else { return false }
+        switch device.connectionType {
+        case .tcp:
+            return tcpClient.sendMeshText(text, to: dest, channel: channelIndex)
+        case .bluetooth:
+            return bleClient.sendMeshText(text, to: dest, channel: channelIndex)
+        }
+    }
+
+    /// Process an incoming mesh text packet — bucket into the appropriate
+    /// MESH-CH<n> or MESH-DM-<id> conversation, drop self-echo, and forward
+    /// to ChatManager.
+    fileprivate func handleIncomingMeshText(_ event: MeshTextEvent) {
+        // Echo skip: outgoing text round-trips with from == myNodeNum.
+        if myNodeNum != 0 && event.from == myNodeNum { return }
+
+        let isBroadcast = event.to == 0xFFFFFFFF
+        let isDirectedToMe = !isBroadcast && myNodeNum != 0 && event.to == myNodeNum
+        let conversationId: String
+        if isDirectedToMe {
+            conversationId = Self.meshDmConversationId(nodeId: event.from)
+        } else {
+            conversationId = Self.meshConversationId(channelIndex: Int(event.channel))
+        }
+
+        let node = meshNodes.first(where: { $0.id == event.from })
+        let callsign = node.flatMap { n -> String? in
+            if !n.longName.isEmpty { return n.longName }
+            if !n.shortName.isEmpty { return n.shortName }
+            return nil
+        } ?? String(format: "Node %08X", event.from)
+
+        let senderId = String(format: "MESHTASTIC-%08X", event.from)
+
+        ensureMeshConversation(id: conversationId, isDm: isDirectedToMe, peerCallsign: callsign, peerId: senderId)
+
+        let message = ChatMessage(
+            conversationId: conversationId,
+            senderId: senderId,
+            senderCallsign: callsign,
+            messageText: event.text,
+            timestamp: Date(),
+            status: .delivered,
+            type: .text,
+            isFromSelf: false
+        )
+        ChatManager.shared.receiveMessage(message)
+    }
+
+    /// Create the chat conversation if it doesn't exist yet, so the Chat
+    /// tab has a target before the first incoming/outgoing message lands.
+    fileprivate func ensureMeshConversation(id: String, isDm: Bool, peerCallsign: String, peerId: String) {
+        let manager = ChatManager.shared
+        if manager.conversations.contains(where: { $0.id == id }) { return }
+        let title: String
+        var participants: [ChatParticipant] = []
+        if isDm {
+            title = "DM: \(peerCallsign)"
+            participants = [ChatParticipant(id: peerId, callsign: peerCallsign)]
+        } else if id.hasPrefix("MESH-CH") {
+            let n = id.dropFirst("MESH-CH".count)
+            title = "Mesh: Channel \(n)"
+        } else {
+            title = id
+        }
+        let convo = Conversation(
+            id: id,
+            title: title,
+            participants: participants,
+            isGroupChat: !isDm
+        )
+        manager.conversations.append(convo)
+    }
+
+    // MARK: - GAP-109 / GAP-123 — Admin response routing
+
+    fileprivate func handleAdminResponse(_ response: AdminResponse) {
+        // Mirror radio state into the persisted draft.
+        MeshDeviceConfigStore.shared.applyAdminResponse(response)
+
+        // GAP-123 — auto-seed / rename a chat conversation per non-disabled channel.
+        if case .channel(let index, let name, let role) = response {
+            guard role != 0 else { return } // DISABLED — hide
+            let id = Self.meshConversationId(channelIndex: index)
+            let displayName = name.isEmpty ? "Channel \(index)" : name
+            let title = "Mesh: \(displayName)"
+            let manager = ChatManager.shared
+            if let i = manager.conversations.firstIndex(where: { $0.id == id }) {
+                if manager.conversations[i].title != title {
+                    manager.conversations[i].title = title
+                }
+            } else {
+                let convo = Conversation(id: id, title: title, isGroupChat: true)
+                manager.conversations.append(convo)
+            }
+        }
+    }
+
+    /// GAP-109a — push the operator's draft device config to the connected
+    /// radio via portnum-6 (ADMIN_APP) AdminMessage payloads. Returns the
+    /// count of messages that landed at the wire layer (0..5).
+    public func pushDeviceConfig(_ config: MeshDeviceConfig) async -> Int {
+        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else { return 0 }
+        let messages: [Data] = [
+            AdminMessageSerializer.buildSetOwner(longName: config.longName, shortName: config.shortName),
+            AdminMessageSerializer.buildSetDeviceRole(config.role),
+            AdminMessageSerializer.buildSetPositionBroadcastSecs(config.positionBroadcastSecs),
+            AdminMessageSerializer.buildSetChannel0Name(config.channelName),
+            AdminMessageSerializer.buildSetLoraPreset(config.channelPreset),
+        ]
+        var sent = 0
+        for bytes in messages {
+            let ok: Bool
+            switch device.connectionType {
+            case .tcp:
+                tcpClient.sendToRadio(bytes); ok = true
+            case .bluetooth:
+                ok = bleClient.sendToRadio(bytes)
+            }
+            if ok { sent += 1 } else { break }
+        }
+        return sent
+    }
+
+    /// GAP-109/123 — request the radio's current owner / role / PLI / LoRa
+    /// preset / 8 channel slots. Responses arrive asynchronously via the
+    /// admin response subject and fold into MeshDeviceConfigStore.
+    @discardableResult
+    public func requestDeviceConfig() async -> Int {
+        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else { return 0 }
+        var requests: [Data] = [
+            AdminMessageSerializer.buildGetOwnerRequest(),
+            AdminMessageSerializer.buildGetConfigRequest(configType: AdminMessageSerializer.getConfigDevice),
+            AdminMessageSerializer.buildGetConfigRequest(configType: AdminMessageSerializer.getConfigPosition),
+            AdminMessageSerializer.buildGetConfigRequest(configType: AdminMessageSerializer.getConfigLora),
+        ]
+        // 8 channel slots — GAP-123
+        for idx in 0..<8 {
+            requests.append(AdminMessageSerializer.buildGetChannelRequest(channelIndex: idx))
+        }
+        var sent = 0
+        for bytes in requests {
+            let ok: Bool
+            switch device.connectionType {
+            case .tcp:
+                tcpClient.sendToRadio(bytes); ok = true
+            case .bluetooth:
+                ok = bleClient.sendToRadio(bytes)
+            }
+            if ok { sent += 1 } else { break }
+        }
+        return sent
     }
 }
