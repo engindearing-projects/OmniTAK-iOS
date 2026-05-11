@@ -161,6 +161,24 @@ class DeepLinkHandler: ObservableObject {
     func handleURL(_ url: URL) {
         print("[DeepLink] Received URL: \(url.absoluteString)")
 
+        // First, try the ATAK-canonical `/import` and `/preference` subpaths.
+        // If the path matches but the payload is bad we still consume the
+        // URL (returning .unknown) so we don't double-fire the legacy
+        // enroll/connect parser below.
+        if let action = AtakDeepLinkAction.parse(url: url) {
+            switch action {
+            case .importPackage(let downloadURL):
+                Task { await processImport(from: downloadURL) }
+                return
+            case .setPreferences(let resolved):
+                applyResolvedPreferences(resolved)
+                return
+            case .unknown:
+                lastError = "Onboarding link missing payload"
+                return
+            }
+        }
+
         guard let deepLink = TAKDeepLink.parse(url: url) else {
             print("[DeepLink] Could not parse URL")
             lastError = "Invalid TAK URL"
@@ -177,6 +195,64 @@ class DeepLinkHandler: ObservableObject {
         case .unknown(let unknownURL):
             print("[DeepLink] Unknown deep link type: \(unknownURL)")
             lastError = "Unknown link type"
+        }
+    }
+
+    // MARK: - Import a data package by URL
+
+    private func processImport(from downloadURL: URL) async {
+        await MainActor.run {
+            isProcessing = true
+            lastError = nil
+        }
+        do {
+            let (data, response) = try await urlSession.data(from: downloadURL)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                throw DeepLinkError.serverError(http.statusCode, "Data-package download")
+            }
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("import-\(Int(Date().timeIntervalSince1970)).zip")
+            try data.write(to: tmp)
+            print("[DeepLink] Data package staged at \(tmp.path) (\(data.count) bytes)")
+
+            let importer = await DataPackageImportManager()
+            try await importer.importPackage(from: tmp) { status in
+                print("[DeepLink] Import status: \(status)")
+            }
+
+            await MainActor.run {
+                isProcessing = false
+                enrolledServerName = downloadURL.lastPathComponent
+                showEnrollmentSuccess = true
+            }
+        } catch {
+            await MainActor.run {
+                isProcessing = false
+                lastError = "Data-package import failed: \(error.localizedDescription)"
+                print("[DeepLink] ❌ Import failed: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Apply preference writes
+
+    private func applyResolvedPreferences(_ resolved: [String: String]) {
+        let defaults = UserDefaults.standard
+        for (key, value) in resolved {
+            // Boolean / Int strings are written as their underlying types
+            // so @AppStorage<Bool> / @AppStorage<Int> bind cleanly.
+            if value == "true" || value == "false" {
+                defaults.set(value == "true", forKey: key)
+            } else if let intVal = Int(value), key == "trailMaxLength" {
+                defaults.set(intVal, forKey: key)
+            } else {
+                defaults.set(value, forKey: key)
+            }
+        }
+        print("[DeepLink] Applied \(resolved.count) preference write(s): \(resolved.keys.sorted())")
+        DispatchQueue.main.async {
+            self.enrolledServerName = "Preferences updated"
+            self.showEnrollmentSuccess = !resolved.isEmpty
         }
     }
 
