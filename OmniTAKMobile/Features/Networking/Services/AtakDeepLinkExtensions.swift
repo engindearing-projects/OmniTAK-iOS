@@ -171,6 +171,16 @@ enum PreferenceApplier {
             return coerceTrailColor(e.value).map { Mapped(key: "trailColorName", value: $0) }
         case "appMode":
             return coerceAppMode(e.value).map { Mapped(key: "appMode", value: $0) }
+        // mata's strategic ask: PLI / reporting interval pushable via portal.
+        // Accept the ATAK-side aliases so a config bundle generated for full
+        // ATAK reaches OmniTAK too.
+        case "pliIntervalSecs", "dispatchLocationCotInterval", "locationReportingInterval":
+            return Int(e.value.trimmingCharacters(in: .whitespaces))
+                .flatMap { (5...600).contains($0) ? Mapped(key: "pliIntervalSecs", value: String($0)) : nil }
+        case "hideSelfFromMeshContacts":
+            return coerceBool(e.value).map { Mapped(key: "hideSelfFromMeshContacts", value: $0) }
+        case "configBundleUrl":
+            return Mapped(key: "configBundleUrl", value: e.value.trimmingCharacters(in: .whitespaces))
         default:
             return nil
         }

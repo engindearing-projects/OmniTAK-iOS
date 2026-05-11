@@ -243,7 +243,7 @@ class DeepLinkHandler: ObservableObject {
             // so @AppStorage<Bool> / @AppStorage<Int> bind cleanly.
             if value == "true" || value == "false" {
                 defaults.set(value == "true", forKey: key)
-            } else if let intVal = Int(value), key == "trailMaxLength" {
+            } else if let intVal = Int(value), key == "trailMaxLength" || key == "pliIntervalSecs" {
                 defaults.set(intVal, forKey: key)
             } else {
                 defaults.set(value, forKey: key)

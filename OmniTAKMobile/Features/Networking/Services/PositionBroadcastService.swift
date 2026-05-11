@@ -102,7 +102,30 @@ class PositionBroadcastService: ObservableObject {
         loadBroadcastSettings()
         startBatteryMonitoring()
 
-        print("PositionBroadcastService initialized with UID: \(userUID)")
+        // Honour `pliIntervalSecs` if a portal-pushed config bundle wrote
+        // it. ConfigBundleFetcher writes the key to UserDefaults; we pick
+        // it up here on next launch and on every preference re-apply.
+        if let override = UserDefaults.standard.object(forKey: "pliIntervalSecs") as? Int,
+           (5...600).contains(override) {
+            self.updateInterval = TimeInterval(override)
+        }
+
+        // React to live changes (e.g. tak://preference?key1=pliIntervalSecs)
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            if let v = UserDefaults.standard.object(forKey: "pliIntervalSecs") as? Int,
+               (5...600).contains(v),
+               TimeInterval(v) != self.updateInterval {
+                print("📡 pliIntervalSecs changed → \(v)s")
+                self.updateInterval = TimeInterval(v)
+            }
+        }
+
+        print("PositionBroadcastService initialized with UID: \(userUID) interval: \(updateInterval)s")
     }
 
     // MARK: - Configuration

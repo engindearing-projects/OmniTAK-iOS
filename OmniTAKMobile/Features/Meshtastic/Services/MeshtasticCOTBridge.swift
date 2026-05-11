@@ -83,6 +83,14 @@ class MeshtasticCOTBridge: ObservableObject {
     private func handleNodesUpdate(_ nodes: [MeshNode]) {
         guard isEnabled else { return }
 
+        // mata's TAK_TRACKER ask — if the operator runs the TAK_TRACKER
+        // mesh role, their own node's PPLI duplicates the
+        // PositionBroadcastService output. When `hideSelfFromMeshContacts`
+        // is on (default) and the node's callsign matches the operator's
+        // TAK callsign, drop it.
+        let hideSelf = UserDefaults.standard.object(forKey: "hideSelfFromMeshContacts") as? Bool ?? true
+        let selfCallsign = (UserDefaults.standard.string(forKey: "userCallsign") ?? "").trimmingCharacters(in: .whitespaces)
+
         for node in nodes {
             // Only process nodes that have position data
             guard let position = node.position else {
@@ -90,6 +98,18 @@ class MeshtasticCOTBridge: ObservableObject {
                 print("MeshtasticCOTBridge: Skipping node \(node.shortName) - no position data")
                 #endif
                 continue
+            }
+
+            if hideSelf && !selfCallsign.isEmpty {
+                let long = node.longName.trimmingCharacters(in: .whitespaces)
+                let short = node.shortName.trimmingCharacters(in: .whitespaces)
+                if long.compare(selfCallsign, options: .caseInsensitive) == .orderedSame ||
+                   short.compare(selfCallsign, options: .caseInsensitive) == .orderedSame {
+                    #if DEBUG
+                    print("MeshtasticCOTBridge: Dropping self node \(short) — matches userCallsign")
+                    #endif
+                    continue
+                }
             }
 
             // Convert to COT and publish
