@@ -149,6 +149,7 @@
 		9008486FE4AD16E831A43BB9 /* RangeRingConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60E8E729DD91882F96747226 /* RangeRingConfigView.swift */; };
 		920333E0E3053D6914F3C368 /* MapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40BFBA51A756BC0EA91C9245 /* MapViewController.swift */; };
 		9283117A5B3461B4491D39CE /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB890E2F2655A343CC461349 /* AboutView.swift */; };
+		947B019EB8C21CCDA18CD894 /* ConfigBundleFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4A4FE07ABDCCE864090A6B4 /* ConfigBundleFetcher.swift */; };
 		949B46268C25A2AABBC332A4 /* SimpleEnrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72FA80C978460AFCBAA502D9 /* SimpleEnrollView.swift */; };
 		94D1BA1CC476ADFA211DCD2C /* PluginsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F56D7F0993619ED2315DFFF3 /* PluginsListView.swift */; };
 		98A5477F86EE7B3523DD71C7 /* SFGPUULC----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 521020DF5388AD3BD0C8C876 /* SFGPUULC----.svg */; };
@@ -230,6 +231,7 @@
 		CDA65525B7F2118D54C18F73 /* MissionPackageSyncView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF6787CE6D6A94F71A3003B9 /* MissionPackageSyncView.swift */; };
 		CE5F2F49F3722EA2EF4E8420 /* CoordinateDisplayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A0A793E185CC30595DAB79B /* CoordinateDisplayView.swift */; };
 		CEA67EAAD3F98BA877D50328 /* ChatStorageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B638769FF2291FA22EB55CC6 /* ChatStorageManager.swift */; };
+		CF230998BA4E806A779E3DEC /* DataPackageBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = D537981AECAF93304999FDFA /* DataPackageBootstrap.swift */; };
 		CF25720D8BE03531B4A46E54 /* DigitalPointerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B7E4CB59250C961E37D51A /* DigitalPointerService.swift */; };
 		D02BC3BA0724FA0003771440 /* ATAKToolsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54CA9186E268A8145FB69667 /* ATAKToolsView.swift */; };
 		D1864940136BE6CC3360C386 /* VideoStreamService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8774BEAA28E7885F7C95134 /* VideoStreamService.swift */; };
@@ -456,6 +458,7 @@
 		A1C234567890ABCDEF123457 /* VLCPlayerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VLCPlayerView.swift; path = OmniTAKMobile/Features/Video/Views/VLCPlayerView.swift; sourceTree = "<group>"; };
 		A29496FEB14D8897B1F6570F /* fr */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = fr; path = OmniTAKMobile/Resources/fr.lproj/Localizable.strings; sourceTree = SOURCE_ROOT; };
 		A2C4AE7792EC101310F1483A /* RadialMenuActionExecutor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RadialMenuActionExecutor.swift; path = OmniTAKMobile/Shared/UI/RadialMenu/RadialMenuActionExecutor.swift; sourceTree = "<group>"; };
+		A4A4FE07ABDCCE864090A6B4 /* ConfigBundleFetcher.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigBundleFetcher.swift; path = OmniTAKMobile/Features/Networking/Services/ConfigBundleFetcher.swift; sourceTree = "<group>"; };
 		A5B7E4CB59250C961E37D51A /* DigitalPointerService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DigitalPointerService.swift; path = OmniTAKMobile/Features/Tracking/Services/DigitalPointerService.swift; sourceTree = "<group>"; };
 		A5F9A46BE3568A1DB7E52044 /* SFAP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFAP-------.svg"; sourceTree = "<group>"; };
 		A661FC43B811FD670B9C31AB /* ContactListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactListView.swift; path = OmniTAKMobile/Features/Teams/Views/ContactListView.swift; sourceTree = "<group>"; };
@@ -514,6 +517,7 @@
 		D3F9166C79C04A21BA2FDAA5 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = OmniTAKMobile/Assets.xcassets; sourceTree = "<group>"; };
 		D452667B584032AAC6C0C1FB /* PointDropperService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PointDropperService.swift; path = OmniTAKMobile/Features/Drawing/Services/PointDropperService.swift; sourceTree = "<group>"; };
 		D4CBBCEB56FF2843028ECFF3 /* TrackRecordingButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TrackRecordingButton.swift; path = OmniTAKMobile/Shared/UI/Components/TrackRecordingButton.swift; sourceTree = "<group>"; };
+		D537981AECAF93304999FDFA /* DataPackageBootstrap.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DataPackageBootstrap.swift; path = OmniTAKMobile/Features/DataPackages/Services/DataPackageBootstrap.swift; sourceTree = "<group>"; };
 		D73B72E19694F5ADED598A7E /* VideoStreamModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VideoStreamModels.swift; path = OmniTAKMobile/Features/Video/Models/VideoStreamModels.swift; sourceTree = "<group>"; };
 		D7977ED558650BCE30E87178 /* AppStoreScreenshotTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppStoreScreenshotTests.swift; sourceTree = "<group>"; };
 		D8C8003EB0C35D84FCA0AE25 /* OmniTAKMobileUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OmniTAKMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -594,6 +598,7 @@
 				FE5ADEAC186F3A6CC4CB7055 /* DeepLinkHandler.swift */,
 				6CB754FA0C8506C4D22450CE /* ServerValidator.swift */,
 				0FB3C43C07BD913AD8E1337A /* AtakDeepLinkExtensions.swift */,
+				A4A4FE07ABDCCE864090A6B4 /* ConfigBundleFetcher.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -1150,6 +1155,14 @@
 			name = Tracking;
 			sourceTree = "<group>";
 		};
+		540EC37D500E9CA9B8DCAD7E /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				D537981AECAF93304999FDFA /* DataPackageBootstrap.swift */,
+			);
+			name = Services;
+			sourceTree = "<group>";
+		};
 		57BC58F9F6B49D5D9DB2BFEF /* Managers */ = {
 			isa = PBXGroup;
 			children = (
@@ -1585,6 +1598,7 @@
 				1EBFF14344454FC8A68505F9 /* Networking */,
 				9EB54CAC617A5D2943CD8BB2 /* Meshtastic */,
 				81BFD3A696968AC4DCF91091 /* Military */,
+				E0E204EFAA2BDD43C77ED194 /* DataPackages */,
 			);
 			name = Features;
 			sourceTree = "<group>";
@@ -1841,6 +1855,14 @@
 				6AE0BC94C797829D15192516 /* PhotoAttachmentService.swift */,
 			);
 			name = Services;
+			sourceTree = "<group>";
+		};
+		E0E204EFAA2BDD43C77ED194 /* DataPackages */ = {
+			isa = PBXGroup;
+			children = (
+				540EC37D500E9CA9B8DCAD7E /* Services */,
+			);
+			name = DataPackages;
 			sourceTree = "<group>";
 		};
 		E3665CEB9C344F3FB5C090B4 /* MapLibre */ = {
@@ -2282,6 +2304,8 @@
 				DCDDE37CA3DE6EBC99B2D568 /* BundledPlugins.swift in Sources */,
 				F811343E62E4656C48424269 /* ADSBPlugin.swift in Sources */,
 				069AD09290C602BC867F4224 /* AtakDeepLinkExtensions.swift in Sources */,
+				CF230998BA4E806A779E3DEC /* DataPackageBootstrap.swift in Sources */,
+				947B019EB8C21CCDA18CD894 /* ConfigBundleFetcher.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

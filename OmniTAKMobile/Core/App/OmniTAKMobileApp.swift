@@ -26,6 +26,18 @@ struct OmniTAKMobileApp: App {
 
         // Load bundled OmniTAK plugins (see OmniTAKMobile/Plugins/Core).
         PluginRegistry.shared.loadBundledPlugins()
+
+        // GAP-112 — auto-import bundled demo-package.zip on first run so
+        // closed testers land on tak.engindearing.soy:8089:ssl without
+        // manual server configuration. Idempotent (sentinel file).
+        DataPackageBootstrap.runIfNeeded()
+
+        // GAP-108 — server-driven config pull. If the operator set a
+        // configBundleUrl @AppStorage value (via Settings or a
+        // tak://preference QR), fetch + apply on every launch.
+        Task.detached(priority: .utility) {
+            _ = await ConfigBundleFetcher.runIfConfigured()
+        }
     }
 
     var body: some Scene {
