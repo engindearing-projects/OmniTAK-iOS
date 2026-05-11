@@ -169,6 +169,7 @@ class ServerManager: ObservableObject {
 
     func updateServer(_ server: TAKServer) {
         if let index = servers.firstIndex(where: { $0.id == server.id }) {
+            let prior = servers[index]
             servers[index] = server
 
             // Update active server if it's the one being edited
@@ -181,6 +182,26 @@ class ServerManager: ObservableObject {
             #if DEBUG
             print("✅ Updated server: \(server.displayName)")
             #endif
+
+            // Pair with Android `ServerManager.updateServer`: when the
+            // operator edits host / port / protocol / cert, the existing
+            // socket holds stale credentials and won't reflect the
+            // change. Tear it down and re-open with the new params if
+            // any wire-relevant field changed.
+            let wireChanged =
+                prior.host != server.host ||
+                prior.port != server.port ||
+                prior.protocolType != server.protocolType ||
+                prior.useTLS != server.useTLS ||
+                prior.certificateName != server.certificateName ||
+                prior.certificatePassword != server.certificatePassword ||
+                prior.username != server.username
+            if wireChanged {
+                TAKService.shared.disconnectFromServer(serverId: server.id)
+                if server.enabled {
+                    TAKService.shared.connectToServer(server)
+                }
+            }
         }
     }
 

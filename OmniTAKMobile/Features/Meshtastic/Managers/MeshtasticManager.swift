@@ -677,6 +677,23 @@ public class MeshtasticManager: ObservableObject {
     }
 
     /// GAP-109a — push the operator's draft device config to the connected
+    /// Push just the owner name (long + short) without touching role,
+    /// PLI, channel, or LoRa preset. Used by the callsign auto-sync that
+    /// mirrors the operator's TAK callsign onto the connected mesh node
+    /// — same pattern as Android `MeshtasticManager.pushOwnerName`.
+    /// Returns true if the bytes hit the wire.
+    public func pushOwnerName(longName: String, shortName: String) async -> Bool {
+        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else { return false }
+        let bytes = AdminMessageSerializer.buildSetOwner(longName: longName, shortName: shortName)
+        switch device.connectionType {
+        case .tcp:
+            tcpClient.sendToRadio(bytes)
+            return true
+        case .bluetooth:
+            return bleClient.sendToRadio(bytes)
+        }
+    }
+
     /// radio via portnum-6 (ADMIN_APP) AdminMessage payloads. Returns the
     /// count of messages that landed at the wire layer (0..5).
     public func pushDeviceConfig(_ config: MeshDeviceConfig) async -> Int {

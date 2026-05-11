@@ -38,6 +38,12 @@ struct OmniTAKMobileApp: App {
         Task.detached(priority: .utility) {
             _ = await ConfigBundleFetcher.runIfConfigured()
         }
+
+        // GAP-130 step 1 (iOS pair) — auto-sync TAK callsign to the
+        // connected Meshtastic node's owner name. Solves the
+        // TAK_TRACKER "see yourself twice" duplication when the mesh
+        // node and the client always wear the same callsign.
+        MeshOwnerSync.shared.start()
     }
 
     var body: some Scene {
