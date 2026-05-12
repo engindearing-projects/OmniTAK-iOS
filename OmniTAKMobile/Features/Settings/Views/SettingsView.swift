@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
@@ -25,6 +26,13 @@ struct SettingsView: View {
     @AppStorage("trailColorName") private var trailColorName = "cyan"
 
     @State private var showServersSheet = false
+
+    // MARK: - S2:mission-export STATE BEGIN
+    @State private var missionExportURL: URL?
+    @State private var showMissionShareSheet = false
+    @State private var missionExportError: String?
+    @State private var showMissionExportError = false
+    // MARK: - S2:mission-export STATE END
 
     var body: some View {
         NavigationView {
@@ -182,6 +190,26 @@ struct SettingsView: View {
                     .foregroundColor(.red)
                 }
 
+                // MARK: - S2:mission-export SECTION BEGIN
+                // Bundle every marker + drawing + recorded track into a
+                // single KML and hand it to the system share-sheet. SAR
+                // teams without CalTopo open it directly; ATAK/iTAK users
+                // import it on the receiving end. Closes K9Blue's
+                // "Exporting Missions is not possible from the app".
+                Section("MISSION") {
+                    Button(action: exportMissionAsKML) {
+                        HStack {
+                            Image(systemName: "square.and.arrow.up")
+                                .foregroundColor(Color(hex: "#00C8FF"))
+                                .frame(width: 24)
+                            Text("Export mission as KML")
+                                .foregroundColor(.primary)
+                            Spacer()
+                        }
+                    }
+                }
+                // MARK: - S2:mission-export SECTION END
+
                 // Data Management
                 Section("DATA MANAGEMENT") {
                     NavigationLink(destination: DataPackageImportView()) {
@@ -224,12 +252,67 @@ struct SettingsView: View {
             .sheet(isPresented: $showServersSheet) {
                 ServersView()
             }
+            // MARK: - S2:mission-export SHEET BEGIN
+            .sheet(isPresented: $showMissionShareSheet, onDismiss: {
+                // Tidy up the temp file once the share-sheet closes so
+                // we don't accumulate KMLs in the temp directory.
+                if let url = missionExportURL {
+                    try? FileManager.default.removeItem(at: url)
+                    missionExportURL = nil
+                }
+            }) {
+                if let url = missionExportURL {
+                    MissionShareSheet(activityItems: [url])
+                }
+            }
+            .alert("Export failed", isPresented: $showMissionExportError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(missionExportError ?? "Unknown error")
+            }
+            // MARK: - S2:mission-export SHEET END
             .alert("Cache Cleared", isPresented: $showCacheCleared) {
                 Button("OK", role: .cancel) {}
             }
             .onAppear { refreshCacheSize() }
         }
     }
+
+    // MARK: - S2:mission-export METHOD BEGIN
+    private func exportMissionAsKML() {
+        // Pull a fresh snapshot from each persistence layer rather than
+        // wiring this view into the live map's @StateObjects — Settings
+        // is presented as a sheet over the map, and the underlying data
+        // (PointDropperService is a singleton, DrawingStore and
+        // TrackRecordingService both auto-load from UserDefaults/disk
+        // on init) reflects whatever the user last saved.
+        let drawingStore = DrawingStore()
+        let trackService = TrackRecordingService()
+
+        let kml = MissionExporter.export(
+            pointMarkers: PointDropperService.shared.markers,
+            markerDrawings: drawingStore.markers,
+            lines: drawingStore.lines,
+            circles: drawingStore.circles,
+            polygons: drawingStore.polygons,
+            tracks: trackService.savedTracks
+        )
+
+        let name = MissionExporter.defaultMissionName()
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: ":", with: "-")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(name).kml")
+        do {
+            try kml.write(to: url, atomically: true, encoding: .utf8)
+            missionExportURL = url
+            showMissionShareSheet = true
+        } catch {
+            missionExportError = error.localizedDescription
+            showMissionExportError = true
+        }
+    }
+    // MARK: - S2:mission-export METHOD END
 
     private func refreshCacheSize() {
         let urlBytes = URLCache.shared.currentDiskUsage + URLCache.shared.currentMemoryUsage
@@ -268,3 +351,17 @@ struct SettingsView: View {
         showCacheCleared = true
     }
 }
+
+// MARK: - S2:mission-export SHARE-SHEET WRAPPER BEGIN
+/// Thin UIActivityViewController wrapper. Lives here rather than in a
+/// shared file so the marker-comment block carries the whole feature.
+private struct MissionShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+// MARK: - S2:mission-export SHARE-SHEET WRAPPER END
