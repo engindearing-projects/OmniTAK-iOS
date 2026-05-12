@@ -23,6 +23,7 @@ let package = Package(
         .library(name: "LassoCore", targets: ["LassoCore"]),
         .library(name: "DataPackageBuilderCore", targets: ["DataPackageBuilderCore"]),
         .library(name: "MissionAPIClientKit", targets: ["MissionAPIClientKit"]),
+        .library(name: "FEMACatalogSpec", targets: ["FEMACatalogSpec"]),
     ],
     targets: [
         .target(
@@ -51,6 +52,15 @@ let package = Package(
             name: "MissionAPIClientKitTests",
             dependencies: ["MissionAPIClientKit"],
             path: "Tests/MissionAPIClientKitTests"
+        ),
+        .target(
+            name: "FEMACatalogSpec",
+            path: "Sources/FEMACatalogSpec"
+        ),
+        .testTarget(
+            name: "FEMACatalogSpecTests",
+            dependencies: ["FEMACatalogSpec"],
+            path: "Tests/FEMACatalogSpecTests"
         ),
     ]
 )

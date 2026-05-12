@@ -103,6 +103,46 @@ class PointDropperService: ObservableObject {
         )
     }
 
+    /// Drop a FEMA / Incident Command marker (issue #13). Bypasses the
+    /// affiliation selector — the caller already picked a specific icon
+    /// kind via the FEMA palette.
+    @discardableResult
+    func dropFEMA(
+        kind: FEMAIconCatalog.Kind,
+        at coordinate: CLLocationCoordinate2D,
+        name: String? = nil,
+        remarks: String? = nil,
+        broadcast: Bool = false
+    ) -> PointMarker? {
+        guard let icon = FEMAIconCatalog.icon(for: kind) else { return nil }
+        let markerName = name ?? icon.label
+        let marker = PointMarker(
+            name: markerName,
+            // FEMA markers are friendly civil response — keep affiliation
+            // consistent with the CoT type prefix (a-f-G-I-*).
+            affiliation: .friendly,
+            coordinate: coordinate,
+            remarks: remarks,
+            femaKindRaw: kind.rawValue,
+            isBroadcast: broadcast
+        )
+
+        markers.append(marker)
+        updateRecentMarkers(marker)
+        saveMarkers()
+
+        #if DEBUG
+        print("FEMA marker: \(icon.label) at \(coordinate.latitude),\(coordinate.longitude)")
+        #endif
+
+        if broadcast {
+            broadcastMarker(marker)
+        }
+
+        onEvent?(.markerCreated(marker))
+        return marker
+    }
+
     /// Get marker by ID
     func getMarker(id: UUID) -> PointMarker? {
         return markers.first { $0.id == id }
