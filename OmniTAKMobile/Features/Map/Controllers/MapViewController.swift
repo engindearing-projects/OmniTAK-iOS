@@ -687,6 +687,17 @@ struct ATAKMapView: View {
                 drawingManager.pendingRenameID = drawingId
             }
         }
+        // == S3:drawing-cot-receive BEGIN ==
+        // A peer drew a shape on their map — TAKService.handleReceivedMessage
+        // posted the parsed payload here so it lands in the same DrawingStore
+        // our local drawings live in. Idempotent on UID: an already-known
+        // drawing is replaced rather than duplicated when the sender
+        // re-broadcasts.
+        .onReceive(NotificationCenter.default.publisher(for: .drawingCoTReceived)) { notification in
+            guard let parsed = notification.userInfo?["payload"] as? DrawingCoT.Parsed else { return }
+            ingestIncomingDrawing(parsed)
+        }
+        // == S3:drawing-cot-receive END ==
         // ContactDetailView's "Show on Map" button posts this so the map
         // can recenter on the contact's last-known CoT position. Without
         // an observer the button silently dismissed (#9, sub-3).
@@ -1275,6 +1286,69 @@ struct ATAKMapView: View {
         </event>
         """
     }
+
+    // == S3:drawing-cot-receive BEGIN ==
+    /// Ingest a peer-drawn shape into the local `DrawingStore`. UID
+    /// dedup is via an explicit lookup-and-remove because the existing
+    /// `DrawingStore.add*` calls don't replace on UID collision — a
+    /// retransmitted broadcast would otherwise pile up duplicates.
+    private func ingestIncomingDrawing(_ parsed: DrawingCoT.Parsed) {
+        // Reuse the sender's UUID when possible so the same shape on
+        // both peers shares an id (handy for later edits over the wire).
+        let uuid = UUID(uuidString: parsed.uid) ?? UUID()
+        let label = parsed.callsign.isEmpty ? defaultLabel(for: parsed.kind) : parsed.callsign
+        let color = drawingColor(fromHex: parsed.colorHex)
+        switch parsed.kind {
+        case .line:
+            drawingStore.lines.removeAll { $0.id == uuid }
+            drawingStore.addLine(LineDrawing(
+                id: uuid, name: label, label: label, color: color,
+                coordinates: parsed.points
+            ))
+        case .polygon:
+            drawingStore.polygons.removeAll { $0.id == uuid }
+            drawingStore.addPolygon(PolygonDrawing(
+                id: uuid, name: label, label: label, color: color,
+                coordinates: parsed.points
+            ))
+        case .circle:
+            guard let center = parsed.points.first,
+                  let radius = parsed.radiusM else { return }
+            drawingStore.circles.removeAll { $0.id == uuid }
+            drawingStore.addCircle(CircleDrawing(
+                id: uuid, name: label, label: label, color: color,
+                center: center, radius: radius
+            ))
+        }
+    }
+
+    private func defaultLabel(for kind: DrawingCoT.Parsed.Kind) -> String {
+        switch kind {
+        case .line: return "Line"
+        case .polygon: return "Polygon"
+        case .circle: return "Circle"
+        }
+    }
+
+    /// Inverse of `DrawingToolsManager.hexFor(_:)`. Falls back to green
+    /// when an unrecognised colour arrives — every TAK client uses a
+    /// different palette and we'd rather show the shape than drop it.
+    private func drawingColor(fromHex hex: String) -> DrawingColor {
+        let h = hex.uppercased().replacingOccurrences(of: "#", with: "")
+        let rgb = h.count == 8 ? String(h.suffix(6)) : h
+        switch rgb {
+        case "FF0000": return .red
+        case "1E90FF": return .blue
+        case "4ADE80": return .green
+        case "FFD700": return .yellow
+        case "FFA500": return .orange
+        case "A020F0": return .purple
+        case "00FFFF": return .cyan
+        case "FFFFFF": return .white
+        default: return .green
+        }
+    }
+    // == S3:drawing-cot-receive END ==
 }
 
 // MARK: - ATAK Status Bar

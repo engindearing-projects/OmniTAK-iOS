@@ -92,6 +92,9 @@ class DrawingToolsManager: ObservableObject {
             radius: radius
         )
         drawingStore.addCircle(circle)
+        // == S3:drawing-cot-broadcast BEGIN ==
+        broadcastCircle(circle)
+        // == S3:drawing-cot-broadcast END ==
         pendingRenameID = circle.id
         cancelDrawing()
         print("Created circle with radius: \(radius)m")
@@ -115,6 +118,9 @@ class DrawingToolsManager: ObservableObject {
                     coordinates: temporaryPoints
                 )
                 drawingStore.addLine(line)
+                // == S3:drawing-cot-broadcast BEGIN ==
+                broadcastLine(line)
+                // == S3:drawing-cot-broadcast END ==
                 pendingRenameID = line.id
                 print("Created line with \(temporaryPoints.count) points")
             } else {
@@ -138,6 +144,9 @@ class DrawingToolsManager: ObservableObject {
                     coordinates: temporaryPoints
                 )
                 drawingStore.addPolygon(polygon)
+                // == S3:drawing-cot-broadcast BEGIN ==
+                broadcastPolygon(polygon)
+                // == S3:drawing-cot-broadcast END ==
                 pendingRenameID = polygon.id
                 print("Created polygon with \(temporaryPoints.count) points")
             } else {
@@ -146,6 +155,62 @@ class DrawingToolsManager: ObservableObject {
             cancelDrawing()
         }
     }
+
+    // == S3:drawing-cot-broadcast BEGIN ==
+    /// Fan out a finished line as a `u-d-f` CoT event across every
+    /// connected TAK server. Fire-and-forget; TAKService.sendCoT is
+    /// tolerant of zero connected servers.
+    private func broadcastLine(_ line: LineDrawing) {
+        let xml = DrawingCoT.buildLine(
+            uid: line.id.uuidString,
+            callsign: line.label,
+            points: line.coordinates,
+            closed: false,
+            colorHex: hexFor(line.color),
+            widthPx: 3
+        )
+        _ = TAKService.shared.sendCoT(xml: xml)
+    }
+
+    private func broadcastPolygon(_ polygon: PolygonDrawing) {
+        let xml = DrawingCoT.buildLine(
+            uid: polygon.id.uuidString,
+            callsign: polygon.label,
+            points: polygon.coordinates,
+            closed: true,
+            colorHex: hexFor(polygon.color),
+            widthPx: 3
+        )
+        _ = TAKService.shared.sendCoT(xml: xml)
+    }
+
+    private func broadcastCircle(_ circle: CircleDrawing) {
+        let xml = DrawingCoT.buildCircle(
+            uid: circle.id.uuidString,
+            callsign: circle.label,
+            center: circle.center,
+            radiusM: circle.radius,
+            colorHex: hexFor(circle.color),
+            widthPx: 3
+        )
+        _ = TAKService.shared.sendCoT(xml: xml)
+    }
+
+    /// Map `DrawingColor` enum → "#RRGGBB" so the wire format matches
+    /// what Android's `DrawingCoT.hexToArgbInt` expects.
+    private func hexFor(_ color: DrawingColor) -> String {
+        switch color {
+        case .red: return "#FF0000"
+        case .blue: return "#1E90FF"
+        case .green: return "#4ADE80"
+        case .yellow: return "#FFD700"
+        case .orange: return "#FFA500"
+        case .purple: return "#A020F0"
+        case .cyan: return "#00FFFF"
+        case .white: return "#FFFFFF"
+        }
+    }
+    // == S3:drawing-cot-broadcast END ==
 
     // MARK: - Cancel Drawing
 
