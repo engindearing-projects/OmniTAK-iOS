@@ -1287,6 +1287,22 @@ class TAKService: ObservableObject {
         print("📥 TAKService: Processing message #\(messagesReceived)")
         #endif
 
+        // == S3:drawing-cot-receive BEGIN ==
+        // Peer-drawn shapes (line / polygon / circle / bullseye ring)
+        // arrive as `u-d-*` events. Short-circuit before the marker
+        // parser — these aren't contacts and they aren't chat. The
+        // DrawingStore owner subscribes to `.drawingCoTReceived` and
+        // ingests via add{Line,Polygon,Circle}.
+        if DrawingCoT.isDrawingCoT(xml), let parsed = DrawingCoT.parse(xml) {
+            NotificationCenter.default.post(
+                name: .drawingCoTReceived,
+                object: nil,
+                userInfo: ["payload": parsed]
+            )
+            return
+        }
+        // == S3:drawing-cot-receive END ==
+
         // Parse the message using CoTMessageParser
         if let eventType = CoTMessageParser.parse(xml: xml) {
             #if DEBUG

@@ -151,6 +151,7 @@
 		9008486FE4AD16E831A43BB9 /* RangeRingConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60E8E729DD91882F96747226 /* RangeRingConfigView.swift */; };
 		920333E0E3053D6914F3C368 /* MapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40BFBA51A756BC0EA91C9245 /* MapViewController.swift */; };
 		9283117A5B3461B4491D39CE /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB890E2F2655A343CC461349 /* AboutView.swift */; };
+		92B55E6241794B84FBAB24A2 /* DrawingCoT.swift in Sources */ = {isa = PBXBuildFile; fileRef = 429879F2EB3F0A9E1F0B8035 /* DrawingCoT.swift */; };
 		947B019EB8C21CCDA18CD894 /* ConfigBundleFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4A4FE07ABDCCE864090A6B4 /* ConfigBundleFetcher.swift */; };
 		949B46268C25A2AABBC332A4 /* SimpleEnrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72FA80C978460AFCBAA502D9 /* SimpleEnrollView.swift */; };
 		94D1BA1CC476ADFA211DCD2C /* PluginsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F56D7F0993619ED2315DFFF3 /* PluginsListView.swift */; };
@@ -358,6 +359,7 @@
 		40210ECC988A417364D71247 /* SFGPUCA----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPUCA----.svg"; sourceTree = "<group>"; };
 		40BFBA51A756BC0EA91C9245 /* MapViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MapViewController.swift; path = OmniTAKMobile/Features/Map/Controllers/MapViewController.swift; sourceTree = "<group>"; };
 		4117A74128252722FF170D0E /* MultiServerFederation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MultiServerFederation.swift; path = OmniTAKMobile/Utilities/Network/MultiServerFederation.swift; sourceTree = "<group>"; };
+		429879F2EB3F0A9E1F0B8035 /* DrawingCoT.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingCoT.swift; path = OmniTAKMobile/Features/Drawing/Services/DrawingCoT.swift; sourceTree = "<group>"; };
 		43C20C5734319D533A7C2227 /* OfflineMapsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OfflineMapsView.swift; path = OmniTAKMobile/Features/OfflineMaps/Views/OfflineMapsView.swift; sourceTree = "<group>"; };
 		441D3BF6E34A4ECF34A40AEF /* SFGPEVF----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPEVF----.svg"; sourceTree = "<group>"; };
 		448D0EBEFF3E2A71669016D1 /* ScaleBarView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScaleBarView.swift; path = OmniTAKMobile/Features/Map/Views/ScaleBarView.swift; sourceTree = "<group>"; };
@@ -839,6 +841,7 @@
 			isa = PBXGroup;
 			children = (
 				D452667B584032AAC6C0C1FB /* PointDropperService.swift */,
+				429879F2EB3F0A9E1F0B8035 /* DrawingCoT.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -2314,6 +2317,7 @@
 				947B019EB8C21CCDA18CD894 /* ConfigBundleFetcher.swift in Sources */,
 				7676A3F347E56E37B194A08A /* MeshOwnerNames.swift in Sources */,
 				3A7BBC26EF0C1B5FA80E0266 /* MeshOwnerSync.swift in Sources */,
+				92B55E6241794B84FBAB24A2 /* DrawingCoT.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
