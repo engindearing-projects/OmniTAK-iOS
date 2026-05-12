@@ -592,6 +592,32 @@ struct ATAKMapView: View {
                     }
                     .buttonStyle(.plain)
 
+                    // MARK: - S2:quick-mark BEGIN
+                    // SAR feedback (K9Blue, 5/9/26): "no option for dropping
+                    // a waypoint/marker on your current position" — one-tap
+                    // marker at the operator's current GPS fix, auto-callsign
+                    // with timestamp, broadcasts to every connected server.
+                    Button(action: quickMarkMyPosition) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.black.opacity(0.75))
+                                .frame(width: 44, height: 44)
+
+                            Circle()
+                                .stroke(locationManager.location != nil ? Color.cyan : Color.white.opacity(0.3), lineWidth: 2)
+                                .frame(width: 44, height: 44)
+
+                            Image(systemName: "mappin.and.ellipse")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(locationManager.location != nil ? Color.cyan : .white.opacity(0.5))
+                        }
+                        .shadow(color: .black.opacity(0.4), radius: 4, x: 0, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(locationManager.location == nil)
+                    .accessibilityLabel("Mark my position")
+                    // MARK: - S2:quick-mark END
+
                     // Zoom controls moved to bottom toolbar to match ATAK
                 }
 
@@ -1043,6 +1069,13 @@ struct ATAKMapView: View {
             }
         }
     }
+
+    // MARK: - S2:quick-mark METHOD BEGIN
+    private func quickMarkMyPosition() {
+        guard let location = locationManager.location else { return }
+        QuickMarkService.shared.markCurrentPosition(at: location)
+    }
+    // MARK: - S2:quick-mark METHOD END
 
     private func sendSelfPosition() {
         guard let location = locationManager.location else { return }
