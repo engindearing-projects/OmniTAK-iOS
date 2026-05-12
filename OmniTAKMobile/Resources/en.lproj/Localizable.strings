@@ -117,9 +117,13 @@
 
 "onboarding.connect.title" = "Connect to a TAK server";
 "onboarding.connect.subtitle" = "Pick whatever's easiest — you can change it later.";
-"onboarding.connect.demo.title" = "Use Demo Server";
-"onboarding.connect.demo.body" = "1-tap. Public OpenTAK server.";
-"onboarding.connect.demo.time" = "< 30 sec";
+"onboarding.connect.demo.title" = "Try a Public Demo Server";
+"onboarding.connect.demo.body" = "Public server hosted by Engindearing. Anyone connected can see your location and callsign. Opt-in only — remove anytime from Settings → Servers.";
+"onboarding.connect.demo.time" = "Public · removable";
+"onboarding.connect.demo.confirm.title" = "Connect to a PUBLIC server?";
+"onboarding.connect.demo.confirm.body" = "You're about to connect to tak.engindearing.soy — a public OpenTAK server Engindearing hosts for community testing. Your live location, callsign, and any markers or chat you send will be visible to everyone else connected.\n\nYou can disconnect or delete this server at any time from Settings → Servers.";
+"onboarding.connect.demo.confirm.cta" = "Connect to public server";
+"onboarding.connect.demo.confirm.cancel" = "Not now";
 "onboarding.connect.qr.title" = "Scan QR code";
 "onboarding.connect.qr.body" = "From your TAK admin or onboarding email.";
 "onboarding.connect.qr.time" = "< 30 sec";

@@ -35,6 +35,10 @@ struct FirstTimeOnboarding: View {
     @State private var showQRScanner = false
     @State private var showImporter = false
     @State private var showReady = false
+    // Public demo server requires an explicit confirmation step — the
+    // tile only opens this sheet; the actual connect happens after the
+    // user confirms they understand it's a public server.
+    @State private var showDemoServerConfirmation = false
     @StateObject private var permissions = PermissionsCoordinator()
 
     // Persistent user choices.
@@ -65,6 +69,29 @@ struct FirstTimeOnboarding: View {
         }
         .fullScreenCover(isPresented: $showReady) {
             ReadyToFlyView { finish() }
+        }
+        .alert(
+            String(localized: "onboarding.connect.demo.confirm.title",
+                   comment: "Demo server confirmation title"),
+            isPresented: $showDemoServerConfirmation
+        ) {
+            Button(
+                String(localized: "onboarding.connect.demo.confirm.cta",
+                       comment: "Demo server confirm CTA"),
+                role: .destructive
+            ) {
+                DemoServerConnector.connect()
+                showReady = true
+            }
+            .accessibilityIdentifier("onboarding.connect.demo.confirm.cta")
+            Button(
+                String(localized: "onboarding.connect.demo.confirm.cancel",
+                       comment: "Demo server confirm cancel"),
+                role: .cancel
+            ) {}
+        } message: {
+            Text(String(localized: "onboarding.connect.demo.confirm.body",
+                        comment: "Demo server confirmation body"))
         }
         .onAppear {
             if userCallsign.isEmpty {
@@ -523,8 +550,10 @@ struct FirstTimeOnboarding: View {
                     time: String(localized: "onboarding.connect.demo.time", comment: "Demo server time"),
                     accessibilityID: "onboarding.connect.demo"
                 ) {
-                    DemoServerConnector.connect()
-                    showReady = true
+                    // Tile tap only opens the disclosure sheet — the
+                    // actual connect requires explicit confirmation
+                    // because tak.engindearing.soy is a PUBLIC server.
+                    showDemoServerConfirmation = true
                 }
 
                 ConnectTile(
