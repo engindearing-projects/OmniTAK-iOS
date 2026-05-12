@@ -34,6 +34,10 @@ struct SettingsView: View {
     @State private var showMissionExportError = false
     // MARK: - S2:mission-export STATE END
 
+    // MARK: - issue-15:data-package-builder STATE BEGIN
+    @State private var showDataPackageBuilder = false
+    // MARK: - issue-15:data-package-builder STATE END
+
     var body: some View {
         NavigationView {
             List {
@@ -207,6 +211,19 @@ struct SettingsView: View {
                             Spacer()
                         }
                     }
+
+                    // MARK: - issue-15:data-package-builder BEGIN
+                    Button(action: { showDataPackageBuilder = true }) {
+                        HStack {
+                            Image(systemName: "shippingbox.and.arrow.backward")
+                                .foregroundColor(Color(hex: "#00C8FF"))
+                                .frame(width: 24)
+                            Text("Build data package…")
+                                .foregroundColor(.primary)
+                            Spacer()
+                        }
+                    }
+                    // MARK: - issue-15:data-package-builder END
                 }
                 // MARK: - S2:mission-export SECTION END
 
@@ -252,6 +269,11 @@ struct SettingsView: View {
             .sheet(isPresented: $showServersSheet) {
                 ServersView()
             }
+            // MARK: - issue-15:data-package-builder SHEET BEGIN
+            .sheet(isPresented: $showDataPackageBuilder) {
+                DataPackageBuilderView()
+            }
+            // MARK: - issue-15:data-package-builder SHEET END
             // MARK: - S2:mission-export SHEET BEGIN
             .sheet(isPresented: $showMissionShareSheet, onDismiss: {
                 // Tidy up the temp file once the share-sheet closes so
