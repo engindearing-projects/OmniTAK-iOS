@@ -651,6 +651,37 @@ struct ATAKMapView: View {
                     .accessibilityLabel("Mark my position")
                     // MARK: - S2:quick-mark END
 
+                    // MARK: - issue-16:lasso-fab BEGIN
+                    // K9Blue feedback (5/11/26): lasso is hidden inside the
+                    // drawing tools panel. Surface as a hot button so users
+                    // discover it. Tap toggles lasso mode on/off; orange
+                    // ring + glyph match the existing DrawingToolButton color.
+                    Button(action: {
+                        if drawingManager.currentMode == .lasso {
+                            drawingManager.cancelDrawing()
+                        } else {
+                            drawingManager.startDrawing(mode: .lasso)
+                        }
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(drawingManager.currentMode == .lasso ? Color.orange.opacity(0.85) : Color.black.opacity(0.75))
+                                .frame(width: 44, height: 44)
+
+                            Circle()
+                                .stroke(drawingManager.currentMode == .lasso ? Color.white : Color.orange.opacity(0.7), lineWidth: 2)
+                                .frame(width: 44, height: 44)
+
+                            Image(systemName: "lasso")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(drawingManager.currentMode == .lasso ? .white : .orange)
+                        }
+                        .shadow(color: .black.opacity(0.4), radius: 4, x: 0, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(drawingManager.currentMode == .lasso ? "Exit lasso" : "Lasso multi-select")
+                    // MARK: - issue-16:lasso-fab END
+
                     // Zoom controls moved to bottom toolbar to match ATAK
                 }
 
