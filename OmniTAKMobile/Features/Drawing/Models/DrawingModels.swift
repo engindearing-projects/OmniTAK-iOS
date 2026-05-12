@@ -22,6 +22,10 @@ enum DrawingMode: String, CaseIterable {
     case line = "Line"
     case circle = "Circle"
     case polygon = "Polygon"
+    // Issue #16 — lasso lives in the drawing-tools cluster alongside
+    // marker / line / circle / polygon. It doesn't *create* a shape;
+    // it selects existing features inside the dragged region.
+    case lasso = "Lasso"
 
     var icon: String {
         switch self {
@@ -29,6 +33,7 @@ enum DrawingMode: String, CaseIterable {
         case .line: return "line.diagonal"
         case .circle: return "circle"
         case .polygon: return "pentagon"
+        case .lasso: return "lasso"
         }
     }
 
@@ -38,6 +43,7 @@ enum DrawingMode: String, CaseIterable {
         case .line: return "Line/Polyline"
         case .circle: return "Circle"
         case .polygon: return "Polygon"
+        case .lasso: return "Lasso (multi-select)"
         }
     }
 }

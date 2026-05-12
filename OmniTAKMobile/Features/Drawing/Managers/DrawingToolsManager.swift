@@ -64,6 +64,12 @@ class DrawingToolsManager: ObservableObject {
         case .polygon:
             temporaryPoints.append(coordinate)
             print("Polygon point added (\(temporaryPoints.count) points)")
+
+        case .lasso:
+            // Lasso is driven by a long-press + drag gesture in the
+            // map view, not by tap. A stray tap with lasso active is
+            // a no-op so the user's map-tap-to-deselect still works.
+            break
         }
     }
 
@@ -152,6 +158,12 @@ class DrawingToolsManager: ObservableObject {
             } else {
                 print("Polygon needs at least 3 points")
             }
+            cancelDrawing()
+
+        case .lasso:
+            // Lasso completion is driven by gesture end, not by the
+            // Drawing panel's "Done" button. Cancel here so the panel
+            // returns to its idle state cleanly.
             cancelDrawing()
         }
     }
@@ -250,6 +262,11 @@ class DrawingToolsManager: ObservableObject {
             if temporaryPoints.count >= 2 {
                 return MKPolyline(coordinates: temporaryPoints, count: temporaryPoints.count)
             }
+
+        case .lasso:
+            // Lasso draws its own overlay via LassoSelectionService —
+            // the DrawingToolsManager doesn't render it.
+            return nil
         }
 
         return nil
@@ -283,6 +300,11 @@ class DrawingToolsManager: ObservableObject {
 
         case .polygon:
             return temporaryPoints.count >= 3
+
+        case .lasso:
+            // Lasso has no "Complete" affordance — it ends on gesture
+            // up. Disable the Done button while lasso is active.
+            return false
         }
     }
 
@@ -332,6 +354,9 @@ class DrawingToolsManager: ObservableObject {
             } else {
                 return "Tap to add points, press Complete when done"
             }
+
+        case .lasso:
+            return "Long-press the map, then drag to enclose features"
         }
     }
 }
