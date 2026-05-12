@@ -38,6 +38,10 @@ struct SettingsView: View {
     @State private var showDataPackageBuilder = false
     // MARK: - issue-15:data-package-builder STATE END
 
+    // MARK: - issue14:mission-create STATE BEGIN
+    @State private var showMissionCreateSheet = false
+    // MARK: - issue14:mission-create STATE END
+
     var body: some View {
         NavigationView {
             List {
@@ -224,6 +228,22 @@ struct SettingsView: View {
                         }
                     }
                     // MARK: - issue-15:data-package-builder END
+
+                    // MARK: - issue14:mission-create BUTTON BEGIN
+                    Button(action: { showMissionCreateSheet = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(Color(hex: "#00C8FF"))
+                                .frame(width: 24)
+                            Text("Create new mission")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text("BETA")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    // MARK: - issue14:mission-create BUTTON END
                 }
                 // MARK: - S2:mission-export SECTION END
 
@@ -293,6 +313,11 @@ struct SettingsView: View {
                 Text(missionExportError ?? "Unknown error")
             }
             // MARK: - S2:mission-export SHEET END
+            // MARK: - issue14:mission-create SHEET BEGIN
+            .sheet(isPresented: $showMissionCreateSheet) {
+                MissionCreateView()
+            }
+            // MARK: - issue14:mission-create SHEET END
             .alert("Cache Cleared", isPresented: $showCacheCleared) {
                 Button("OK", role: .cancel) {}
             }

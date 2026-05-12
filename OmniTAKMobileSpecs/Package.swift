@@ -5,10 +5,11 @@
 //
 // The main OmniTAKMobile.xcodeproj has no PBXNativeTarget for tests
 // (per release notes 2.18.0). Until that's wired up, pure-Foundation
-// modules ship thin source copies here so `swift test` exercises them.
+// modules ship thin source copies or symlinks here so
+// `swift test --package-path OmniTAKMobileSpecs` exercises them.
 //
-// Run with:
-//   cd OmniTAKMobileSpecs && swift test
+// Targets here MUST stay UIKit/SwiftUI-free so they build on the host
+// Mac toolchain.
 //
 import PackageDescription
 
@@ -21,6 +22,7 @@ let package = Package(
     products: [
         .library(name: "LassoCore", targets: ["LassoCore"]),
         .library(name: "DataPackageBuilderCore", targets: ["DataPackageBuilderCore"]),
+        .library(name: "MissionAPIClientKit", targets: ["MissionAPIClientKit"]),
     ],
     targets: [
         .target(
@@ -40,6 +42,15 @@ let package = Package(
             name: "DataPackageBuilderCoreTests",
             dependencies: ["DataPackageBuilderCore"],
             path: "Tests/DataPackageBuilderCoreTests"
+        ),
+        .target(
+            name: "MissionAPIClientKit",
+            path: "Sources/MissionAPIClientKit"
+        ),
+        .testTarget(
+            name: "MissionAPIClientKitTests",
+            dependencies: ["MissionAPIClientKit"],
+            path: "Tests/MissionAPIClientKitTests"
         ),
     ]
 )
