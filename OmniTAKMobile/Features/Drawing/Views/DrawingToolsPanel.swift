@@ -103,6 +103,17 @@ struct DrawingToolsPanel: View {
                 ) {
                     drawingManager.startDrawing(mode: .polygon)
                 }
+
+                // Issue #16 — Lasso tool joins the drawing cluster.
+                // Selects features inside a freehand region instead of
+                // creating a shape. Long-press + drag on the map.
+                DrawingToolButton(
+                    icon: "lasso",
+                    label: "Lasso",
+                    color: .orange
+                ) {
+                    drawingManager.startDrawing(mode: .lasso)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 12)

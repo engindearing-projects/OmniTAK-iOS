@@ -20,6 +20,9 @@ struct ATAKMapView: View {
     @ObservedObject private var adsbService = ADSBTrafficService.shared
     @ObservedObject private var pointDropperService = PointDropperService.shared
     @ObservedObject private var serverManager = ServerManager.shared
+    // Issue #16 — lasso multi-select. Singleton so the pill, ring
+    // renderers, and gesture coordinator all see the same state.
+    @ObservedObject private var lassoService = LassoSelectionService.shared
 
     @State private var mapRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 38.8977, longitude: -77.0365), // Default: DC
@@ -182,6 +185,7 @@ struct ATAKMapView: View {
             routeOverlayCoordinator: routeOverlayCoordinator,
             mapStateManager: mapStateManager,
             measurementManager: measurementManager,
+            lassoService: lassoService,
             onMapTap: handleMapTap
         )
         .ignoresSafeArea()
@@ -452,11 +456,40 @@ struct ATAKMapView: View {
             loadingScreen
             radialMenu
             cursorModeOverlay
+            lassoSelectionPill  // Issue #16
             // overlaySettingsButton - Removed per user request
             // overlaySettingsPanel - Removed per user request
             // mapCenterDisplay - Removed per user request (coords available via radial menu)
         }
     }
+
+    // == Issue #16: lasso selection pill BEGIN ==
+    // Compact floating pill that surfaces the current selection count
+    // and a clear (✕) affordance. Floats next to the radial-menu
+    // anchor with NO grey backplate per feedback_radial_menu_no_backdrop
+    // — the orange tint is the only chrome.
+    @ViewBuilder
+    private var lassoSelectionPill: some View {
+        if !lassoService.current.isEmpty {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    LassoSelectionPill(
+                        count: lassoService.current.totalCount,
+                        onClear: {
+                            lassoService.clear()
+                        }
+                    )
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 200) // above the bottom toolbar
+                }
+            }
+            .zIndex(2000)
+            .transition(.opacity)
+        }
+    }
+    // == Issue #16: lasso selection pill END ==
 
     @ViewBuilder
     private var loadingScreen: some View {
@@ -1889,6 +1922,9 @@ struct TacticalMapView: UIViewRepresentable {
     @ObservedObject var routeOverlayCoordinator: RouteOverlayCoordinator
     @ObservedObject var mapStateManager: MapStateManager
     @ObservedObject var measurementManager: MeasurementManager
+    // Issue #16 — lasso multi-select. Observed so the selection-ring
+    // overlays re-render whenever the selection set changes.
+    @ObservedObject var lassoService: LassoSelectionService = LassoSelectionService.shared
     let onMapTap: (CLLocationCoordinate2D) -> Void
 
     func makeUIView(context: Context) -> MKMapView {
@@ -1925,6 +1961,25 @@ struct TacticalMapView: UIViewRepresentable {
         longPressGesture.minimumPressDuration = 0.5
         longPressGesture.cancelsTouchesInView = false  // Allow pan gestures to work
         mapView.addGestureRecognizer(longPressGesture)
+
+        // == Issue #16: lasso gesture BEGIN ==
+        // A second long-press recognizer dedicated to the lasso. Fires
+        // only while DrawingToolsManager.currentMode == .lasso (the
+        // recognizer's delegate gates `shouldBegin`). When active it
+        // takes precedence over the pan gesture so the user can drag
+        // to enclose features without the map scrolling away. When
+        // inactive the recognizer no-ops and map pan/zoom is intact.
+        let lassoGesture = UILongPressGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleLassoGesture(_:))
+        )
+        lassoGesture.minimumPressDuration = 0.25
+        lassoGesture.allowableMovement = .greatestFiniteMagnitude
+        lassoGesture.cancelsTouchesInView = true  // suppress map-pan during lasso
+        lassoGesture.delegate = context.coordinator
+        mapView.addGestureRecognizer(lassoGesture)
+        context.coordinator.lassoGesture = lassoGesture
+        // == Issue #16: lasso gesture END ==
 
         return mapView
     }
@@ -2286,10 +2341,15 @@ struct TacticalMapView: UIViewRepresentable {
 
     private func updateOverlays(mapView: MKMapView, context: Context) {
         // Remove ONLY drawing/measurement overlays (preserve MGRS grid and other tactical overlays)
+        // Issue #16: also preserve the in-progress lasso polyline and
+        // the per-selection highlight rings — both are short-lived
+        // and driven by state outside the drawing store.
         let overlaysToRemove = mapView.overlays.filter { overlay in
             !(overlay is MGRSGridOverlay) &&
             !(overlay is BreadcrumbTrailPolyline) &&
-            !(overlay is RangeBearingLineOverlay)
+            !(overlay is RangeBearingLineOverlay) &&
+            !(overlay is LassoInProgressPolyline) &&
+            !(overlay is LassoSelectionRing)
         }
         mapView.removeOverlays(overlaysToRemove)
 
@@ -2312,6 +2372,27 @@ struct TacticalMapView: UIViewRepresentable {
             let circle = MKCircle(center: ring.center, radius: ring.radiusMeters)
             mapView.addOverlay(circle)
         }
+
+        // == Issue #16: selection highlight rings BEGIN ==
+        // Rebuild rings on every overlay pass — cheap, and the
+        // selection set is small.
+        let existingRings = mapView.overlays.compactMap { $0 as? LassoSelectionRing }
+        mapView.removeOverlays(existingRings)
+
+        let selection = lassoService.current
+        if !selection.isEmpty {
+            // Marker rings: cot units + dropped points + drawing markers.
+            for cot in markers where selection.markerIDs.contains(cot.uid) {
+                mapView.addOverlay(LassoSelectionRing(center: cot.coordinate, radius: 40))
+            }
+            for pt in pointMarkers where selection.markerIDs.contains(pt.id.uuidString) {
+                mapView.addOverlay(LassoSelectionRing(center: pt.coordinate, radius: 40))
+            }
+            for m in drawingStore.markers where selection.markerIDs.contains(m.id.uuidString) {
+                mapView.addOverlay(LassoSelectionRing(center: m.coordinate, radius: 40))
+            }
+        }
+        // == Issue #16: selection highlight rings END ==
     }
 
     private func mapTypeString(_ type: MKMapType) -> String {
@@ -2326,11 +2407,18 @@ struct TacticalMapView: UIViewRepresentable {
         }
     }
 
-    class Coordinator: NSObject, MKMapViewDelegate {
+    class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: TacticalMapView
         var isUserInteracting = false
         var isProgrammaticUpdate = false
         weak var mapView: MKMapView?
+
+        // Issue #16 — lasso state. The polyline renderer reads its
+        // points live from `parent.lassoService.inProgressPolygon`;
+        // we just need a reference so we can swap renderers in/out
+        // and force-redraw as the user drags.
+        weak var lassoGesture: UILongPressGestureRecognizer?
+        private var lassoOverlay: LassoInProgressPolyline?
 
         // Overlay management
         // NOTE: MGRS Grid is now managed by MapOverlayCoordinator and IntegratedMapView
@@ -2961,6 +3049,24 @@ struct TacticalMapView: UIViewRepresentable {
         // MARK: - Overlay Renderers
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            // MARK: - Lasso in-progress polyline (issue #16)
+            if let lasso = overlay as? LassoInProgressPolyline {
+                let renderer = MKPolylineRenderer(polyline: lasso)
+                renderer.strokeColor = UIColor.systemOrange
+                renderer.lineWidth = 3
+                renderer.lineDashPattern = [6, 4]
+                return renderer
+            }
+
+            // MARK: - Lasso selection ring (issue #16)
+            if let ring = overlay as? LassoSelectionRing {
+                let renderer = MKCircleRenderer(circle: ring)
+                renderer.strokeColor = UIColor.systemOrange
+                renderer.fillColor = UIColor.systemOrange.withAlphaComponent(0.12)
+                renderer.lineWidth = 2.5
+                return renderer
+            }
+
             // MARK: - RoutePolyline Renderer (Navigation Routes)
             if let routePolyline = overlay as? RoutePolyline {
                 return RoutePolylineRenderer(polyline: routePolyline)
@@ -3025,8 +3131,115 @@ struct TacticalMapView: UIViewRepresentable {
 
             return MKOverlayRenderer(overlay: overlay)
         }
+
+        // MARK: - Issue #16: Lasso gesture
+
+        /// Only allow the lasso recognizer to start when the user has
+        /// explicitly entered lasso mode from the drawing tools cluster.
+        /// This is the gate that keeps map pan/zoom intact in every
+        /// other mode — the recognizer simply refuses to begin.
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeginWithFor _: Any? = nil
+        ) -> Bool { true }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            // Never run the lasso simultaneously with anything else —
+            // we want pan suppressed.
+            if gestureRecognizer === lassoGesture { return false }
+            return false
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            if gestureRecognizer === lassoGesture {
+                // Only fire when the user has actively selected the
+                // lasso tool from the drawing cluster.
+                return parent.drawingManager.isDrawingActive &&
+                       parent.drawingManager.currentMode == .lasso
+            }
+            return true
+        }
+
+        @objc func handleLassoGesture(_ gesture: UILongPressGestureRecognizer) {
+            guard let mapView = gesture.view as? MKMapView else { return }
+            let service = parent.lassoService
+
+            switch gesture.state {
+            case .began:
+                let point = gesture.location(in: mapView)
+                let coord = mapView.convert(point, toCoordinateFrom: mapView)
+                service.beginLasso()
+                service.appendVertex(coord)
+                installLassoOverlay(on: mapView)
+
+            case .changed:
+                let point = gesture.location(in: mapView)
+                let coord = mapView.convert(point, toCoordinateFrom: mapView)
+                service.appendVertex(coord)
+                refreshLassoOverlay(on: mapView)
+
+            case .ended, .cancelled, .failed:
+                // Collect the populations to test against. Pulled
+                // from the current `parent` so we don't have to
+                // mirror them into the coordinator.
+                let markers: [LassoMarker] =
+                    parent.markers.map(LassoMarker.init(cot:)) +
+                    parent.pointMarkers.map(LassoMarker.init(point:)) +
+                    parent.drawingStore.markers.map(LassoMarker.init(marker:))
+
+                let drawings: [LassoDrawing] =
+                    parent.drawingStore.lines.map { LassoDrawing(id: $0.id, coordinates: $0.coordinates) } +
+                    parent.drawingStore.polygons.map { LassoDrawing(id: $0.id, coordinates: $0.coordinates) } +
+                    parent.drawingStore.circles.map { LassoDrawing(id: $0.id, coordinates: [$0.center]) }
+
+                _ = service.endLasso(markers: markers, drawings: drawings)
+                removeLassoOverlay(on: mapView)
+
+                // Exit lasso mode after one selection so the panel
+                // returns to idle and downstream UI (selection pill,
+                // highlight rings) takes over.
+                parent.drawingManager.cancelDrawing()
+
+            default:
+                break
+            }
+        }
+
+        private func installLassoOverlay(on mapView: MKMapView) {
+            removeLassoOverlay(on: mapView)
+            let coords = parent.lassoService.inProgressPolygon
+            var working = coords
+            let polyline = LassoInProgressPolyline(coordinates: &working, count: working.count)
+            mapView.addOverlay(polyline)
+            lassoOverlay = polyline
+        }
+
+        private func refreshLassoOverlay(on mapView: MKMapView) {
+            // MKPolyline is immutable — to "update" we swap a new one
+            // in. This is acceptable at 60 Hz for short lasso strokes.
+            installLassoOverlay(on: mapView)
+        }
+
+        private func removeLassoOverlay(on mapView: MKMapView) {
+            if let o = lassoOverlay {
+                mapView.removeOverlay(o)
+                lassoOverlay = nil
+            }
+        }
     }
 }
+
+// MARK: - Lasso in-progress polyline marker class
+// Subclass exists purely so `rendererFor overlay:` can distinguish
+// the lasso outline from saved drawing polylines (different style).
+final class LassoInProgressPolyline: MKPolyline {}
+
+// MARK: - Lasso selection highlight ring (issue #16)
+/// Thin orange ring drawn around every marker currently in the lasso
+/// selection set. Sized in meters so it scales naturally with map
+/// zoom (small at city scale, generous at country scale).
+final class LassoSelectionRing: MKCircle {}
 
 // MARK: - Drawing Marker Annotation
 
