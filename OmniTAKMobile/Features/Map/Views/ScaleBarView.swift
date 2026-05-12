@@ -30,7 +30,10 @@ struct ScaleBarView: View {
                     Spacer()
                 }
                 .padding(.leading, 16)
-                .padding(.bottom, 225)
+                // 285pt clears the 3-FAB left-side cluster (GPS lock +
+                // Mark-My-Position + Lasso, each 44pt with 8pt spacing,
+                // anchored at .bottom 90).
+                .padding(.bottom, 285)
             }
         }
     }

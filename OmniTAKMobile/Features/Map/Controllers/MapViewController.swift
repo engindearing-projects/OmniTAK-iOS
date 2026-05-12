@@ -1545,7 +1545,12 @@ struct ATAKBottomToolbar: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Zoom Controls only - Draw/Drawings accessible via radial menu long-press
+            Spacer()
+
+            // Zoom Controls — anchored RIGHT so they don't collide with
+            // the left-side FAB cluster (GPS / Mark / Lasso). Draw and
+            // Drawings buttons removed; accessible via radial menu
+            // (long-press on map).
             VStack(spacing: 4) {
                 MapToolButton(icon: "plus", label: "", compact: true) {
                     onZoomIn()
@@ -1554,10 +1559,6 @@ struct ATAKBottomToolbar: View {
                     onZoomOut()
                 }
             }
-
-            Spacer()
-
-            // Draw and Drawings buttons removed - accessible via radial menu (long-press on map)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
