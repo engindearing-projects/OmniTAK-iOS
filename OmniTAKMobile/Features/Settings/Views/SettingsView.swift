@@ -27,6 +27,9 @@ struct SettingsView: View {
 
     @State private var showServersSheet = false
 
+    // Issue #17 — map overlays (KML/KMZ today, GeoPDF deferred).
+    @State private var showMapOverlaysSheet = false
+
     // MARK: - S2:mission-export STATE BEGIN
     @State private var missionExportURL: URL?
     @State private var showMissionShareSheet = false
@@ -136,6 +139,23 @@ struct SettingsView: View {
                             .foregroundColor(.secondary)
                             .padding(.top, 4)
                     }
+
+                    // Issue #17 — user-imported map overlays (KML/KMZ today,
+                    // GeoPDF deferred). Sheet, not panel — full-screen map
+                    // is sacred.
+                    Button {
+                        showMapOverlaysSheet = true
+                    } label: {
+                        HStack {
+                            Label("User Overlays (KML/KMZ)",
+                                  systemImage: "square.stack.3d.up")
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .foregroundColor(.primary)
                 }
 
                 // Trail Settings
@@ -251,6 +271,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showServersSheet) {
                 ServersView()
+            }
+            .sheet(isPresented: $showMapOverlaysSheet) {
+                MapOverlaysListView()
             }
             // MARK: - S2:mission-export SHEET BEGIN
             .sheet(isPresented: $showMissionShareSheet, onDismiss: {
