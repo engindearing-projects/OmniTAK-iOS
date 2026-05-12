@@ -28,13 +28,25 @@ class MarkerCoTGenerator {
         // Convert hex color to ARGB signed integer
         let argbColor = hexToARGB(marker.affiliation.hexColor)
 
+        // FEMA / IC markers swap in the FEMA usericon set so peers with the
+        // catalog installed render the right glyph; everyone else falls
+        // through to the friendly-ground-installation default (#13).
+        let iconsetPath: String = {
+            if let raw = marker.femaKindRaw,
+               let kind = FEMAIconCatalog.Kind(rawValue: raw),
+               let icon = FEMAIconCatalog.icon(for: kind) {
+                return icon.iconsetPath
+            }
+            return "COT_MAPPING_SPOTMAP/\(marker.affiliation.rawValue.lowercased())_point"
+        }()
+
         var xml = """
         <?xml version="1.0" encoding="UTF-8"?>
         <event version="2.0" uid="\(marker.uid)" type="\(marker.cotType)" time="\(dateFormatter.string(from: now))" start="\(dateFormatter.string(from: now))" stale="\(dateFormatter.string(from: stale))" how="h-g-i-g-o">
             <point lat="\(lat)" lon="\(lon)" hae="\(hae)" ce="10.0" le="10.0"/>
             <detail>
                 <contact callsign="\(escapeXML(marker.name))"/>
-                <usericon iconsetpath="COT_MAPPING_SPOTMAP/\(marker.affiliation.rawValue.lowercased())_point"/>
+                <usericon iconsetpath="\(iconsetPath)"/>
                 <color argb="\(argbColor)"/>
                 <affiliation value="\(marker.affiliation.rawValue)"/>
         """

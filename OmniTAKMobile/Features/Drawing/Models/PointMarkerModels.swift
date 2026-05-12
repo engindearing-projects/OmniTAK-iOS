@@ -37,6 +37,12 @@ struct PointMarker: Identifiable, Codable, Equatable {
     var cotType: String
     var iconName: String
 
+    /// Optional FEMA / Incident Command icon (issue #13). When set, the
+    /// CoT emitter swaps in the FEMA `iconsetpath` + matching `cotType`
+    /// so peers with the FEMA icon set render the right glyph and others
+    /// fall through to the friendly-installation default.
+    var femaKindRaw: String?
+
     // Sharing
     var isBroadcast: Bool
 
@@ -49,6 +55,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         remarks: String? = nil,
         saluteReport: SALUTEReport? = nil,
         createdBy: String? = nil,
+        femaKindRaw: String? = nil,
         isBroadcast: Bool = false
     ) {
         self.id = id
@@ -62,8 +69,16 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.saluteReport = saluteReport
         self.createdBy = createdBy
         self.uid = "marker-\(id.uuidString)"
-        self.cotType = affiliation.cotType
-        self.iconName = affiliation.iconName
+        self.femaKindRaw = femaKindRaw
+        if let raw = femaKindRaw,
+           let kind = FEMAIconCatalog.Kind(rawValue: raw),
+           let icon = FEMAIconCatalog.icon(for: kind) {
+            self.cotType = icon.cotType
+            self.iconName = icon.symbolName
+        } else {
+            self.cotType = affiliation.cotType
+            self.iconName = affiliation.iconName
+        }
         self.isBroadcast = isBroadcast
     }
 
@@ -72,7 +87,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, name, affiliation, latitude, longitude, altitude
         case timestamp, modifiedAt, remarks, createdBy, saluteReport
-        case uid, cotType, iconName, isBroadcast
+        case uid, cotType, iconName, isBroadcast, femaKindRaw
     }
 
     init(from decoder: Decoder) throws {
@@ -94,6 +109,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         uid = try container.decode(String.self, forKey: .uid)
         cotType = try container.decode(String.self, forKey: .cotType)
         iconName = try container.decode(String.self, forKey: .iconName)
+        femaKindRaw = try container.decodeIfPresent(String.self, forKey: .femaKindRaw)
         isBroadcast = try container.decode(Bool.self, forKey: .isBroadcast)
     }
 
@@ -113,6 +129,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         try container.encode(uid, forKey: .uid)
         try container.encode(cotType, forKey: .cotType)
         try container.encode(iconName, forKey: .iconName)
+        try container.encodeIfPresent(femaKindRaw, forKey: .femaKindRaw)
         try container.encode(isBroadcast, forKey: .isBroadcast)
     }
 

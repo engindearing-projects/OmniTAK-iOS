@@ -24,6 +24,7 @@ struct PointDropperView: View {
     @State private var broadcastImmediately: Bool = false
     @State private var showSALUTEReport: Bool = false
     @State private var showMarkerList: Bool = false
+    @State private var showFEMAPalette: Bool = false
     @State private var selectedMarkerForSALUTE: PointMarker?
 
     var body: some View {
@@ -36,6 +37,9 @@ struct PointDropperView: View {
                     VStack(spacing: 16) {
                         // Quick Drop Section
                         quickDropSection
+
+                        // FEMA / IC Palette entry (issue #13)
+                        femaPaletteEntry
 
                         // Affiliation Selector
                         affiliationSelector
@@ -104,6 +108,63 @@ struct PointDropperView: View {
         .sheet(isPresented: $showMarkerList) {
             MarkerListView(service: service)
         }
+        .sheet(isPresented: $showFEMAPalette) {
+            FEMAMarkerPaletteView(
+                isPresented: $showFEMAPalette,
+                onSelect: handleFEMASelection
+            )
+        }
+    }
+
+    // MARK: - FEMA Palette Entry
+
+    /// Compact entry point that opens the FEMA / IC modal sheet — kept as
+    /// a row in the drawer so the full-screen map is never compressed.
+    private var femaPaletteEntry: some View {
+        Button(action: { showFEMAPalette = true }) {
+            HStack(spacing: 12) {
+                Image(systemName: "cross.case.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.red)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("FEMA / IC MARKERS")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("SAR command, medical, LZ, vehicles, support")
+                        .font(.system(size: 10))
+                        .foregroundColor(.gray)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+            }
+            .padding()
+            .background(Color.black.opacity(0.3))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.red.opacity(0.4), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func handleFEMASelection(_ selection: FEMAMarkerSelection) {
+        guard let location = currentLocation ?? mapCenter else { return }
+        _ = service.dropFEMA(
+            kind: selection.icon.kind,
+            at: location,
+            name: selection.name,
+            remarks: selection.remarks,
+            broadcast: broadcastImmediately
+        )
+
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
     }
 
     // MARK: - Quick Drop Section

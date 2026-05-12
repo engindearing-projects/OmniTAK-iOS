@@ -29,6 +29,7 @@
 		1A2B3C4D5E6F70801A2B3C4D /* SelfPositionMarkerImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F70801A2B3C4E /* SelfPositionMarkerImage.swift */; };
 		1BE25DA5B44BA5AD28D90C82 /* RadialMenuMapCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628B317671CF6452847569CB /* RadialMenuMapCoordinator.swift */; };
 		1C19F979C95BE9B5CB8C75E2 /* demo-package.zip in Resources */ = {isa = PBXBuildFile; fileRef = 6CD96D4C13C8FF8B3F53B240 /* demo-package.zip */; };
+		2051E5BD105C01009ED13071 /* FEMAMarkerPaletteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DBE755BAFBDDC7231C50361 /* FEMAMarkerPaletteView.swift */; };
 		20CAAB4409715F7431C1DEAB /* AppPreviewRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786486F562966ED005A6E978 /* AppPreviewRecordingTests.swift */; };
 		21F8CB94928A130D0CC47B88 /* CompassOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B7C9A85F883C8B6FBEDC4EA /* CompassOverlay.swift */; };
 		225E69B4E6B06F8CFCCC70CD /* DataPackageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5A282FADB8ACF4795AB133B /* DataPackageModels.swift */; };
@@ -181,6 +182,7 @@
 		A6CEA9E02F31C917002D96E2 /* MapLibre in Frameworks */ = {isa = PBXBuildFile; productRef = 7D6348C4CBB3428FBD5FF5CC /* MapLibre */; };
 		A7AC00010000000000B00001 /* ATAKPluginParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AC00010000000000A00001 /* ATAKPluginParser.swift */; };
 		A7AC00010000000000B00002 /* ATAKPluginSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AC00010000000000A00002 /* ATAKPluginSerializer.swift */; };
+		A8A9B8A4A5BD78248F290DCA /* FEMAIconCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = E111E46C08EC3F84BB2CBC1C /* FEMAIconCatalog.swift */; };
 		A9321E0EC74569E8473691D6 /* CompassOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D240A72682F8C0E3253BA1F /* CompassOverlayView.swift */; };
 		A9C171AE7DA5913A5B2D5C9C /* MGRSGridToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A92EDCFDBF0D0ECD7A414CE6 /* MGRSGridToggleView.swift */; };
 		AA0554C2EB313E2B73BE40C0 /* DrawingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA5EECEC92A0D864B030870 /* DrawingModels.swift */; };
@@ -361,8 +363,8 @@
 		40210ECC988A417364D71247 /* SFGPUCA----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPUCA----.svg"; sourceTree = "<group>"; };
 		40BFBA51A756BC0EA91C9245 /* MapViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MapViewController.swift; path = OmniTAKMobile/Features/Map/Controllers/MapViewController.swift; sourceTree = "<group>"; };
 		4117A74128252722FF170D0E /* MultiServerFederation.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MultiServerFederation.swift; path = OmniTAKMobile/Utilities/Network/MultiServerFederation.swift; sourceTree = "<group>"; };
-		43235D80953F6C3559DA9620 /* QuickMarkService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickMarkService.swift; path = OmniTAKMobile/Features/Map/Services/QuickMarkService.swift; sourceTree = "<group>"; };
 		429879F2EB3F0A9E1F0B8035 /* DrawingCoT.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingCoT.swift; path = OmniTAKMobile/Features/Drawing/Services/DrawingCoT.swift; sourceTree = "<group>"; };
+		43235D80953F6C3559DA9620 /* QuickMarkService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickMarkService.swift; path = OmniTAKMobile/Features/Map/Services/QuickMarkService.swift; sourceTree = "<group>"; };
 		43C20C5734319D533A7C2227 /* OfflineMapsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OfflineMapsView.swift; path = OmniTAKMobile/Features/OfflineMaps/Views/OfflineMapsView.swift; sourceTree = "<group>"; };
 		441D3BF6E34A4ECF34A40AEF /* SFGPEVF----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPEVF----.svg"; sourceTree = "<group>"; };
 		448D0EBEFF3E2A71669016D1 /* ScaleBarView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScaleBarView.swift; path = OmniTAKMobile/Features/Map/Views/ScaleBarView.swift; sourceTree = "<group>"; };
@@ -414,6 +416,7 @@
 		6CB754FA0C8506C4D22450CE /* ServerValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ServerValidator.swift; path = OmniTAKMobile/Features/Networking/Services/ServerValidator.swift; sourceTree = "<group>"; };
 		6CD96D4C13C8FF8B3F53B240 /* demo-package.zip */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = archive.zip; name = "demo-package.zip"; path = "OmniTAKMobile/Resources/demo-package.zip"; sourceTree = "<group>"; };
 		6D15E6FD65F0D6C4467F8C3D /* ConversationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConversationView.swift; path = OmniTAKMobile/Features/Chat/Views/ConversationView.swift; sourceTree = "<group>"; };
+		6DBE755BAFBDDC7231C50361 /* FEMAMarkerPaletteView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FEMAMarkerPaletteView.swift; path = OmniTAKMobile/Features/Drawing/Views/FEMAMarkerPaletteView.swift; sourceTree = "<group>"; };
 		6DF4CA147B5220C0A776A48B /* TurnByTurnNavigationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TurnByTurnNavigationService.swift; path = OmniTAKMobile/Features/Navigation/Services/TurnByTurnNavigationService.swift; sourceTree = "<group>"; };
 		6FBC2615A833D70CD96C5723 /* RadialMenuModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RadialMenuModels.swift; path = OmniTAKMobile/Shared/UI/RadialMenu/RadialMenuModels.swift; sourceTree = "<group>"; };
 		72FA80C978460AFCBAA502D9 /* SimpleEnrollView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SimpleEnrollView.swift; path = OmniTAKMobile/Features/Networking/Views/SimpleEnrollView.swift; sourceTree = "<group>"; };
@@ -543,6 +546,7 @@
 		DFA957EC8A75AEFBCCFF253A /* GeofenceModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GeofenceModels.swift; path = OmniTAKMobile/Features/Geofencing/Models/GeofenceModels.swift; sourceTree = "<group>"; };
 		E0EA95D7747A65CF9F1E5368 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E0F8125D0B514F0BD09467A8 /* ChatModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChatModels.swift; path = OmniTAKMobile/Features/Chat/Models/ChatModels.swift; sourceTree = "<group>"; };
+		E111E46C08EC3F84BB2CBC1C /* FEMAIconCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FEMAIconCatalog.swift; path = OmniTAKMobile/Shared/Services/FEMAIconCatalog.swift; sourceTree = "<group>"; };
 		E1F2A3B4C5D6E7F809182931 /* PointMarkerEditView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PointMarkerEditView.swift; path = OmniTAKMobile/Features/Drawing/Views/PointMarkerEditView.swift; sourceTree = "<group>"; };
 		E23A94C1C9FE550D90660BD6 /* SUGPUCI----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUGPUCI----.svg"; sourceTree = "<group>"; };
 		E438B334DFC6353E3C21C7DD /* AircraftIcons.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AircraftIcons.swift; path = "plugins/example-adsb-plugin/Sources/ADSBPlugin/Models/AircraftIcons.swift"; sourceTree = SOURCE_ROOT; };
@@ -761,6 +765,7 @@
 			children = (
 				BB82A68BE625612A8B0E94DC /* PluginSettingsManager.swift */,
 				1119873F4EBB6AC92B2157E0 /* MilStdIconService.swift */,
+				E111E46C08EC3F84BB2CBC1C /* FEMAIconCatalog.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -782,6 +787,14 @@
 				270B8A7F33083294B3208250 /* TAKAware */,
 			);
 			path = Vendor;
+			sourceTree = "<group>";
+		};
+		1AE1A0E24FC88C962253289B /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				6DBE755BAFBDDC7231C50361 /* FEMAMarkerPaletteView.swift */,
+			);
+			name = Views;
 			sourceTree = "<group>";
 		};
 		1BC72CA255E660735100D4F5 /* Services */ = {
@@ -1164,6 +1177,14 @@
 				D1103C5349FE3EE31708711A /* KMZHandler.swift */,
 			);
 			name = Parsers;
+			sourceTree = "<group>";
+		};
+		5242EF06373AE44B18226274 /* Drawing */ = {
+			isa = PBXGroup;
+			children = (
+				1AE1A0E24FC88C962253289B /* Views */,
+			);
+			name = Drawing;
 			sourceTree = "<group>";
 		};
 		52893199B61305DFA84E8FE7 /* Tracking */ = {
@@ -1630,6 +1651,7 @@
 				E0E204EFAA2BDD43C77ED194 /* DataPackages */,
 				283609875719BCFCCAC20860 /* Map */,
 				C11C0AC3E3F21F783B3B55A3 /* Mission */,
+				5242EF06373AE44B18226274 /* Drawing */,
 			);
 			name = Features;
 			sourceTree = "<group>";
@@ -2350,6 +2372,8 @@
 				83173DE79C8B269543AA2AB0 /* QuickMarkService.swift in Sources */,
 				5BBDAB61BC54993C40E9C5C4 /* MissionExporter.swift in Sources */,
 				92B55E6241794B84FBAB24A2 /* DrawingCoT.swift in Sources */,
+				A8A9B8A4A5BD78248F290DCA /* FEMAIconCatalog.swift in Sources */,
+				2051E5BD105C01009ED13071 /* FEMAMarkerPaletteView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
