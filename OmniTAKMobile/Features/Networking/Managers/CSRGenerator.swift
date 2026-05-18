@@ -38,7 +38,7 @@ struct CSRConfiguration {
     let commonName: String              // CN - typically username
     let organization: String            // O - organization name
     let organizationalUnit: String      // OU - unit/department
-    let country: String                 // C - two-letter country code
+    let country: String?                // C - two-letter country code; only emitted if non-nil (BBN CertManagerService rejects CSRs with RDNs the server's nameEntries policy doesn't permit)
     let email: String?                  // Optional email
     let domainComponents: [String]      // DC - domain components (from TAK server)
 
@@ -50,7 +50,7 @@ struct CSRConfiguration {
         commonName: String,
         organization: String = "OmniTAK",
         organizationalUnit: String = "Mobile",
-        country: String = "US",
+        country: String? = nil,
         email: String? = nil,
         domainComponents: [String] = [],
         keyTag: String? = nil
@@ -189,12 +189,19 @@ class CSRGenerator {
     // MARK: - Subject DN Building
 
     private func buildSubjectDN(config: CSRConfiguration) -> [String: String] {
+        // Only emit RDNs whose values are present. BBN's CertManagerService.signClient
+        // rejects CSRs that include any RDN the server's <nameEntries> policy did not
+        // declare. Server-returned O/OU + the auth-username CN are the typical safe set;
+        // C is omitted unless the caller (after consulting /Marti/api/tls/config) opted in.
         var dn: [String: String] = [
             "CN": config.commonName,
             "O": config.organization,
-            "OU": config.organizationalUnit,
-            "C": config.country
+            "OU": config.organizationalUnit
         ]
+
+        if let country = config.country, !country.isEmpty {
+            dn["C"] = country
+        }
 
         if let email = config.email {
             dn["emailAddress"] = email
@@ -518,8 +525,8 @@ class CSRGenerator {
             throw CSRGenerationError.invalidParameters("Organization (O) is required")
         }
 
-        guard config.country.count == 2 else {
-            throw CSRGenerationError.invalidParameters("Country (C) must be 2-letter code")
+        if let country = config.country, !country.isEmpty, country.count != 2 {
+            throw CSRGenerationError.invalidParameters("Country (C) must be a 2-letter code when provided")
         }
 
         guard [2048, 4096].contains(config.keySize) else {
@@ -537,8 +544,10 @@ extension CSRGenerator {
         let config = CSRConfiguration(
             commonName: username,
             organization: "OmniTAK",
-            organizationalUnit: "Mobile Client",
-            country: "US"
+            organizationalUnit: "Mobile Client"
+            // country intentionally omitted: BBN's CertManagerService rejects RDNs
+            // not declared in the server's <nameEntries>, and most TAK Server configs
+            // only declare O + OU.
         )
 
         try validateConfiguration(config)
@@ -551,15 +560,17 @@ extension CSRGenerator {
     ///   - caConfig: CA configuration from server with DN components
     ///   - keyTag: Optional custom key tag (defaults to standard format if nil)
     func generateCSR(username: String, caConfig: CAConfiguration, keyTag: String? = nil) throws -> CSRResult {
-        // Use DN components from server, or defaults if not provided
+        // Use DN components from server, or sensible defaults if not provided.
         let organization = caConfig.organizationNames.first ?? "TAK"
         let organizationalUnit = caConfig.organizationalUnitNames.first ?? "TAK"
+        // Only honor C if the server explicitly listed one in its nameEntries.
+        let country = caConfig.countryNames.first
 
         let config = CSRConfiguration(
             commonName: username,
             organization: organization,
             organizationalUnit: organizationalUnit,
-            country: "US",
+            country: country,
             domainComponents: caConfig.domainComponents,
             keyTag: keyTag  // Pass through custom key tag
         )

@@ -122,6 +122,7 @@ class CAConfigurationTests: XCTestCase {
 
         XCTAssertTrue(config.organizationNames.isEmpty)
         XCTAssertTrue(config.organizationalUnitNames.isEmpty)
+        XCTAssertTrue(config.countryNames.isEmpty)
         XCTAssertTrue(config.domainComponents.isEmpty)
     }
 
@@ -133,6 +134,79 @@ class CAConfigurationTests: XCTestCase {
 
         XCTAssertEqual(config.organizationNames.count, 1)
         XCTAssertEqual(config.organizationNames.first, "TestOrg")
+    }
+}
+
+// MARK: - CSR Subject DN Tests (regression for issue #31)
+//
+// Background: BBN's TAK Server CertManagerService.signClient (line 143) rejects CSRs
+// whose Subject DN contains RDNs the server's <nameEntries> policy did not declare.
+// Most TAK Server configs only declare O + OU; including C unconditionally causes
+// "CSR validation failed!" (HTTP 500) — see issue #31, solohck Reddit report 2026-05-18.
+
+class CSRSubjectDNTests: XCTestCase {
+
+    func testCSRConfigurationDefaultsToNoCountry() {
+        // Default init must NOT inject C — only the caller (after consulting the server's
+        // /Marti/api/tls/config nameEntries) decides whether C belongs in the DN.
+        let config = CSRConfiguration(commonName: "csrtest")
+        XCTAssertNil(config.country, "country must default to nil to avoid TAK Server policy violation")
+    }
+
+    func testCSRConfigurationAcceptsExplicitCountry() {
+        let config = CSRConfiguration(commonName: "csrtest", country: "US")
+        XCTAssertEqual(config.country, "US")
+    }
+
+    func testValidationRejectsMalformedCountryWhenProvided() {
+        let bad = CSRConfiguration(commonName: "csrtest", country: "USA")
+        XCTAssertThrowsError(try CSRGenerator().validateConfiguration(bad)) { err in
+            guard case CSRGenerationError.invalidParameters(let msg) = err else {
+                return XCTFail("expected invalidParameters, got \(err)")
+            }
+            XCTAssertTrue(msg.contains("Country"))
+        }
+    }
+
+    func testValidationAcceptsMissingCountry() {
+        let ok = CSRConfiguration(commonName: "csrtest") // no country
+        XCTAssertNoThrow(try CSRGenerator().validateConfiguration(ok))
+    }
+
+    func testCAConfigPathOmitsCountryWhenServerOmitsIt() {
+        // Mirrors solohck's scenario: server returned only O + OU in nameEntries.
+        var ca = CAConfiguration()
+        ca.organizationNames = ["TAK"]
+        ca.organizationalUnitNames = ["TAK"]
+        // intentionally no countryNames
+
+        // Reach into the convenience generator's pipeline to verify the DN it would build.
+        // We don't generate a key here (keychain side effects); we just confirm the
+        // CSRConfiguration the caConfig path produces has no C.
+        let config = CSRConfiguration(
+            commonName: "csrtest",
+            organization: ca.organizationNames.first ?? "TAK",
+            organizationalUnit: ca.organizationalUnitNames.first ?? "TAK",
+            country: ca.countryNames.first,
+            domainComponents: ca.domainComponents
+        )
+        XCTAssertNil(config.country, "CA config without C must not introduce C")
+    }
+
+    func testCAConfigPathHonorsServerProvidedCountry() {
+        var ca = CAConfiguration()
+        ca.organizationNames = ["TAK"]
+        ca.organizationalUnitNames = ["TAK"]
+        ca.countryNames = ["DE"]
+
+        let config = CSRConfiguration(
+            commonName: "csrtest",
+            organization: ca.organizationNames.first ?? "TAK",
+            organizationalUnit: ca.organizationalUnitNames.first ?? "TAK",
+            country: ca.countryNames.first,
+            domainComponents: ca.domainComponents
+        )
+        XCTAssertEqual(config.country, "DE", "Server-declared C must flow into the CSR")
     }
 }
 

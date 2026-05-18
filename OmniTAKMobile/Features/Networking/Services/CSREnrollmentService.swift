@@ -137,6 +137,7 @@ struct CSREnrollmentConfiguration {
 struct CAConfiguration {
     var organizationNames: [String] = []
     var organizationalUnitNames: [String] = []
+    var countryNames: [String] = []
     var domainComponents: [String] = []
 }
 
@@ -386,6 +387,9 @@ class CSREnrollmentService {
             case "OU":
                 caConfig.organizationalUnitNames.append(value)
                 print("[CSREnroll] Found OU: \(value)")
+            case "C":
+                caConfig.countryNames.append(value)
+                print("[CSREnroll] Found C: \(value)")
             case "DC":
                 caConfig.domainComponents.append(value)
                 print("[CSREnroll] Found DC: \(value)")
