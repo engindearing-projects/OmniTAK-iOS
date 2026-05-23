@@ -1072,6 +1072,9 @@ struct ATAKMapView: View {
                 // Follow mode parity with the 2D map — when on, Cesium keeps
                 // the camera centered on the operator as their GPS updates.
                 isFollowing: trackingMode == .follow,
+                // Lasso multi-select — lock the globe camera and capture the
+                // freehand drag when the operator is in lasso mode.
+                lassoActive: drawingManager.currentMode == .lasso && drawingManager.isDrawingActive,
                 selfCallsign: userCallsign,
                 // Phase 3b — saved distance / area measurements mirrored
                 // through the Cesium bridge as dashed polylines + segment
@@ -1598,6 +1601,23 @@ struct ATAKMapView: View {
                     menuType: .markerContext
                 )
             }
+        case .lasso:
+            // The globe posted the freehand selection polygon. Run the exact
+            // same point-in-polygon selection the 2D Mapbox lasso uses, then
+            // exit lasso mode (which flips setLassoMode off on the bridge).
+            defer { drawingManager.cancelDrawing() }
+            guard let poly = event.polygon, poly.count >= 3 else { return }
+            lassoService.beginLasso()
+            for c in poly { lassoService.appendVertex(c) }
+            let markers: [LassoMarker] =
+                cotMarkers.map(LassoMarker.init(cot:)) +
+                pointDropperService.markers.map(LassoMarker.init(point:)) +
+                drawingStore.markers.map(LassoMarker.init(marker:))
+            let drawings: [LassoDrawing] =
+                drawingStore.lines.map { LassoDrawing(id: $0.id, coordinates: $0.coordinates) } +
+                drawingStore.polygons.map { LassoDrawing(id: $0.id, coordinates: $0.coordinates) } +
+                drawingStore.circles.map { LassoDrawing(id: $0.id, coordinates: [$0.center]) }
+            _ = lassoService.endLasso(markers: markers, drawings: drawings)
         }
     }
 
@@ -4040,7 +4060,7 @@ struct OverlayToggleButton: View {
 /// struct so the SwiftUI shell can drive the radial menu and contact
 /// edit flows the same way the 2D Mapbox path does.
 struct CesiumMapEvent {
-    enum Kind { case tap, longpress, cameraChanged }
+    enum Kind { case tap, longpress, cameraChanged, lasso }
     let kind: Kind
     let coordinate: CLLocationCoordinate2D
     let screenPoint: CGPoint
@@ -4053,6 +4073,8 @@ struct CesiumMapEvent {
     /// Globe point under the screen center (aim crosshair) on
     /// `.cameraChanged` — the correct point-drop / region center when tilted.
     let centerCoordinate: CLLocationCoordinate2D?
+    /// Freehand lasso polygon (lat/lon vertices) for a `.lasso` event.
+    let polygon: [CLLocationCoordinate2D]?
 
     struct CameraState {
         let height: Double      // metres above ellipsoid
@@ -4084,6 +4106,9 @@ struct CesiumMainMap: UIViewRepresentable {
     /// When true (GPS follow mode), keep the Cesium camera centered on the
     /// operator as `selfLocation` updates, preserving current zoom/tilt/heading.
     var isFollowing: Bool = false
+    /// When true (lasso mode), lock the globe camera and capture a freehand
+    /// drag for multi-select; the polygon is posted back as a `.lasso` event.
+    var lassoActive: Bool = false
     let selfCallsign: String
     // Phase 3b — measurement sessions to mirror as dashed polylines with
     // per-segment distance labels. Sourced from `MeasurementManager`.
@@ -4172,6 +4197,12 @@ struct CesiumMainMap: UIViewRepresentable {
                 }
                 context.coordinator.lastFollowKey = nil
             }
+
+            // Lasso mode toggle — push to the bridge on transitions only.
+            if lassoActive != context.coordinator.lassoWasActive {
+                context.coordinator.lassoWasActive = lassoActive
+                webView.evaluateJavaScript("window.OmniBridge.setLassoMode({on:\(lassoActive)});", completionHandler: nil)
+            }
         }
     }
 
@@ -4189,6 +4220,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var lastFollowKey: String?
         /// Whether follow was active last render (to release lookAt on exit).
         var wasFollowing = false
+        /// Whether lasso mode was active last render (to toggle on transition).
+        var lassoWasActive = false
         /// Observer token for toolbar zoom commands forwarded to the bridge.
         var zoomObserver: NSObjectProtocol?
 
@@ -4278,6 +4311,7 @@ struct CesiumMainMap: UIViewRepresentable {
                 case "tap": kind = .tap
                 case "longpress": kind = .longpress
                 case "camerachanged": kind = .cameraChanged
+                case "lasso": kind = .lasso
                 default: return
                 }
                 let cameraState: CesiumMapEvent.CameraState?
@@ -4294,13 +4328,17 @@ struct CesiumMainMap: UIViewRepresentable {
                 } else {
                     centerCoord = nil
                 }
+                let polygon: [CLLocationCoordinate2D]? = payload.polygon?.compactMap {
+                    $0.count == 2 ? CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) : nil
+                }
                 let event = CesiumMapEvent(
                     kind: kind,
                     coordinate: CLLocationCoordinate2D(latitude: payload.lat, longitude: payload.lon),
                     screenPoint: CGPoint(x: payload.screenX ?? 0, y: payload.screenY ?? 0),
                     entityUid: payload.uid,
                     camera: cameraState,
-                    centerCoordinate: centerCoord
+                    centerCoordinate: centerCoord,
+                    polygon: polygon
                 )
                 parent.onMapEvent?(event)
             default:
@@ -4329,6 +4367,8 @@ struct CesiumMainMap: UIViewRepresentable {
             // camerachanged — the correct point-drop / region center.
             let centerLat: Double?
             let centerLon: Double?
+            // Freehand lasso polygon as [[lat,lon],...] for a 'lasso' event.
+            let polygon: [[Double]]?
         }
     }
 
@@ -4697,11 +4737,18 @@ struct CesiumMainMap: UIViewRepresentable {
         </style></head><body>
         <div id=\"loading\"><span class=\"dot\"></span><span class=\"dot\"></span><span class=\"dot\"></span><div class=\"label\">Loading 3D world…</div></div>
         <div id=\"cesiumContainer\"></div>
+        <canvas id=\"lassoCanvas\" style=\"position:fixed;top:0;left:0;pointer-events:none;z-index:20;display:none\"></canvas>
         <script src=\"https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Cesium.js\"></script>
         <script src=\"https://unpkg.com/milsymbol@2.2.0/dist/milsymbol.js\"></script>
         <script>
           Cesium.Ion.defaultAccessToken='\(cesiumIonToken)';
-          const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),trails:new Map(),billboardCache:new Map()};
+          const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),trails:new Map(),billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null}};
+          // Lasso multi-select drag (issue #16, 3D parity). Camera pan is
+          // disabled while the lasso is enabled; the freehand path is drawn on
+          // a 2D overlay canvas and the screen points are picked to lat/lon on
+          // release, posted to native as {event:'lasso',polygon:[[lat,lon]...]}.
+          function _drawLasso(){const cv=document.getElementById('lassoCanvas');if(!cv)return;const ctx=cv.getContext('2d');if(!ctx)return;ctx.clearRect(0,0,cv.width,cv.height);const pts=_state.lasso.pts;if(pts.length<2)return;ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.lineWidth=3;ctx.setLineDash([6,4]);ctx.strokeStyle='#FF9500';ctx.stroke();ctx.fillStyle='rgba(255,149,0,0.10)';ctx.fill();}
+          function _finishLasso(){const v=_state.viewer;if(!v)return;_state.lasso.dragging=false;const pts=_state.lasso.pts.slice();const poly=[];for(const p of pts){const c=_cartoFor(v,new Cesium.Cartesian2(p[0],p[1]));if(c)poly.push([c.lat,c.lon]);}const cv=document.getElementById('lassoCanvas');if(cv){const ctx=cv.getContext('2d');ctx&&ctx.clearRect(0,0,cv.width,cv.height);}const f=poly.length?poly[0]:[0,0];_postMapEvent({event:'lasso',polygon:poly,lat:f[0],lon:f[1]});}
           function _drawColor(hex,a){try{const c=Cesium.Color.fromCssColorString(hex||'#4ADE80');return a!==undefined?c.withAlpha(a):c}catch(e){return Cesium.Color.CYAN}}
           function _havDist(a,b){const R=6371000,lat1=a[1]*Math.PI/180,lat2=b[1]*Math.PI/180,dLat=(b[1]-a[1])*Math.PI/180,dLon=(b[0]-a[0])*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.min(1,Math.sqrt(s)))}
           function _fitViewport(){
@@ -4817,6 +4864,28 @@ struct CesiumMainMap: UIViewRepresentable {
               const h=v.camera.positionCartographic.height;const amount=Math.abs(h-h*f);
               if(amount<1)return;
               if(f<1)v.camera.zoomIn(amount);else v.camera.zoomOut(amount);
+            },
+            // Lasso multi-select mode. While on, the camera is locked and a
+            // single-finger drag draws the freehand selection polygon.
+            setLassoMode(arg){const e=_parse(arg);const on=!!(e&&e.on);const v=_state.viewer;if(!v)return;
+              const cv=document.getElementById('lassoCanvas');
+              if(on){
+                _state.lasso.enabled=true;_state.lasso.dragging=false;_state.lasso.pts=[];
+                v.scene.screenSpaceCameraController.enableInputs=false;
+                if(cv){cv.width=window.innerWidth;cv.height=window.innerHeight;cv.style.display='block';}
+                if(!_state.lasso.handler){
+                  const h=new Cesium.ScreenSpaceEventHandler(v.scene.canvas);
+                  h.setInputAction(function(ev){if(!_state.lasso.enabled)return;_state.lasso.dragging=true;_state.lasso.pts=[[ev.position.x,ev.position.y]];_drawLasso();},Cesium.ScreenSpaceEventType.LEFT_DOWN);
+                  h.setInputAction(function(ev){if(!_state.lasso.enabled||!_state.lasso.dragging)return;_state.lasso.pts.push([ev.endPosition.x,ev.endPosition.y]);_drawLasso();},Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+                  h.setInputAction(function(ev){if(!_state.lasso.enabled||!_state.lasso.dragging)return;_finishLasso();},Cesium.ScreenSpaceEventType.LEFT_UP);
+                  _state.lasso.handler=h;
+                }
+              }else{
+                _state.lasso.enabled=false;_state.lasso.dragging=false;_state.lasso.pts=[];
+                v.scene.screenSpaceCameraController.enableInputs=true;
+                if(_state.lasso.handler){_state.lasso.handler.destroy();_state.lasso.handler=null;}
+                if(cv){const ctx=cv.getContext('2d');ctx&&ctx.clearRect(0,0,cv.width,cv.height);cv.style.display='none';}
+              }
             },
             ping(){return _state.ready?'pong':'loading'},
             upsertDrawing(arg){const d=_parse(arg);if(!d||!d.uid||!d.kind||!Array.isArray(d.coords)||d.coords.length===0)return;const v=_state.viewer;if(!v)return;
