@@ -7,6 +7,7 @@ Thanks for your interest in contributing.
 - For small fixes (typos, obvious bugs), open a PR directly.
 - For new features or larger changes, open an issue first so we can align on scope.
 - Security issues — see [SECURITY.md](SECURITY.md), do not file public issues.
+- Translating OmniTAK into your language? No coding needed — see [TRANSLATING.md](TRANSLATING.md).
 
 ## Development setup
 
