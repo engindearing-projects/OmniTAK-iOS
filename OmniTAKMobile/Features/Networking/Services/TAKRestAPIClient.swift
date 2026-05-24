@@ -711,81 +711,17 @@ class TAKAPIURLSessionDelegate: NSObject, URLSessionDelegate {
     }
 
     /// Resolve the client SecIdentity the same way the streaming path
-    /// (DirectTCPSender.loadCSREnrolledIdentity) does. CSR-enrolled identities
-    /// live in the keychain under a label = `certificateName` and are NOT in
-    /// CertificateManager. The label query alone is unreliable, so we mirror
-    /// the streaming path's three methods: label → issuer+serial → match by
-    /// certificate data across all identities. CertificateManager is the
-    /// fallback for imported .p12 certs it owns.
+    /// (DirectTCPSender.loadCSREnrolledIdentity) does, by delegating to the
+    /// single shared resolver `resolveCSREnrolledSecIdentity(label:)`.
+    /// Imported .p12 certs tracked by CertificateManager take priority via
+    /// `certificateId`; CSR-enrolled (easy-connect) identities live in the
+    /// keychain under a label = `certificateName` and are resolved by name.
     private func resolveClientIdentity() -> SecIdentity? {
         // Imported .p12 certs tracked by CertificateManager.
         if let certId = certificateId, let identity = try? CertificateManager.shared.getIdentity(for: certId) {
             return identity
         }
         guard let name = certificateName, !name.isEmpty else { return nil }
-
-        // Confirm a CSR-enrolled cert exists under this label and grab its
-        // attributes for the fallback lookups.
-        var certItem: CFTypeRef?
-        let certStatus = SecItemCopyMatching([
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: name,
-            kSecReturnRef as String: true,
-            kSecReturnAttributes as String: true
-        ] as CFDictionary, &certItem)
-        guard certStatus == errSecSuccess else { return nil }
-
-        // 1) Identity by label.
-        var byLabel: CFTypeRef?
-        if SecItemCopyMatching([
-            kSecClass as String: kSecClassIdentity,
-            kSecAttrLabel as String: name,
-            kSecReturnRef as String: true
-        ] as CFDictionary, &byLabel) == errSecSuccess, let r = byLabel {
-            return (r as! SecIdentity)
-        }
-
-        // 2) Identity by issuer + serial.
-        if let dict = certItem as? [String: Any],
-           let issuer = dict[kSecAttrIssuer as String] as? Data,
-           let serial = dict[kSecAttrSerialNumber as String] as? Data {
-            var byIS: CFTypeRef?
-            if SecItemCopyMatching([
-                kSecClass as String: kSecClassIdentity,
-                kSecAttrIssuer as String: issuer,
-                kSecAttrSerialNumber as String: serial,
-                kSecReturnRef as String: true
-            ] as CFDictionary, &byIS) == errSecSuccess, let r = byIS {
-                return (r as! SecIdentity)
-            }
-        }
-
-        // 3) Match by certificate data across all identities.
-        var all: CFTypeRef?
-        if SecItemCopyMatching([
-            kSecClass as String: kSecClassIdentity,
-            kSecReturnRef as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll
-        ] as CFDictionary, &all) == errSecSuccess, let identities = all as? [SecIdentity] {
-            let target: SecCertificate?
-            if CFGetTypeID(certItem as CFTypeRef) == SecCertificateGetTypeID() {
-                target = (certItem as! SecCertificate)
-            } else if let dict = certItem as? [String: Any], let cr = dict[kSecValueRef as String] {
-                target = (cr as! SecCertificate)
-            } else {
-                target = nil
-            }
-            if let target = target {
-                let targetData = SecCertificateCopyData(target)
-                for identity in identities {
-                    var c: SecCertificate?
-                    if SecIdentityCopyCertificate(identity, &c) == errSecSuccess, let cc = c,
-                       SecCertificateCopyData(cc) == targetData {
-                        return identity
-                    }
-                }
-            }
-        }
-        return nil
+        return resolveCSREnrolledSecIdentity(label: name)
     }
 }

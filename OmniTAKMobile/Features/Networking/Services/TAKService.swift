@@ -16,6 +16,185 @@ enum ConnectionProtocol {
     case tls
 }
 
+/// Shared CSR-enrolled client identity resolver.
+///
+/// CSR-enrolled (easy-connect) identities live in the keychain under a label
+/// equal to the cert's name and are NOT tracked by `CertificateManager`. Both
+/// the streaming path (`DirectTCPSender.loadCSREnrolledIdentity`) and the REST
+/// mTLS path (`TAKAPIURLSessionDelegate.resolveClientIdentity`) must resolve
+/// them identically, so this is the single source of truth.
+///
+/// Tries three lookups in order:
+///   1. Identity by `kSecAttrLabel` = name (fastest)
+///   2. Identity by issuer + serial number from the cert's attributes
+///   3. Match by certificate data across all keychain identities (slowest)
+///
+/// Returns the raw `SecIdentity`. Callers that need a `sec_identity_t` for
+/// Network.framework should wrap with `sec_identity_create`.
+func resolveCSREnrolledSecIdentity(label name: String) -> SecIdentity? {
+    #if DEBUG
+    print("🔐 Looking for CSR-enrolled identity with label: \(name)")
+    #endif
+
+    // First check if we have a certificate with this label (confirms CSR enrollment was done)
+    let certQuery: [String: Any] = [
+        kSecClass as String: kSecClassCertificate,
+        kSecAttrLabel as String: name,
+        kSecReturnRef as String: true,
+        kSecReturnAttributes as String: true
+    ]
+
+    var certItem: CFTypeRef?
+    let certStatus = SecItemCopyMatching(certQuery as CFDictionary, &certItem)
+
+    guard certStatus == errSecSuccess else {
+        #if DEBUG
+        print("🔍 No CSR-enrolled certificate found for: \(name) (status: \(certStatus))")
+        #endif
+        Logger.takNetwork.error("CSR identity resolve: no identity for \(name, privacy: .public)")
+        return nil
+    }
+
+    #if DEBUG
+    print("📜 Found certificate with label: \(name)")
+    if let certDict = certItem as? [String: Any] {
+        print("📜 Certificate attributes: \(certDict.keys.joined(separator: ", "))")
+    }
+    #endif
+
+    // Method 1: Try to find identity directly by label (fastest)
+    let identityByLabelQuery: [String: Any] = [
+        kSecClass as String: kSecClassIdentity,
+        kSecAttrLabel as String: name,
+        kSecReturnRef as String: true
+    ]
+
+    var identityRef: CFTypeRef?
+    let identityByLabelStatus = SecItemCopyMatching(identityByLabelQuery as CFDictionary, &identityRef)
+
+    if identityByLabelStatus == errSecSuccess, identityRef != nil {
+        let identity = identityRef as! SecIdentity
+        #if DEBUG
+        print("✅ Found SecIdentity by label: \(name)")
+
+        // Validate the identity
+        var cert: SecCertificate?
+        var key: SecKey?
+        if SecIdentityCopyCertificate(identity, &cert) == errSecSuccess &&
+           SecIdentityCopyPrivateKey(identity, &key) == errSecSuccess {
+            print("✅ Identity validated: both certificate and private key accessible")
+        } else {
+            print("⚠️ Identity incomplete, but returning identity from label match")
+        }
+        #endif
+        Logger.takNetwork.info("CSR identity resolve: matched via label for \(name, privacy: .public)")
+        return identity
+    }
+
+    #if DEBUG
+    print("⚠️ Identity not found by label (status: \(identityByLabelStatus))")
+    #endif
+
+    // Method 2: Query by issuer + serial number (if available in cert attributes)
+    if let certDict = certItem as? [String: Any],
+       let issuer = certDict[kSecAttrIssuer as String] as? Data,
+       let serialNumber = certDict[kSecAttrSerialNumber as String] as? Data {
+
+        #if DEBUG
+        print("🔍 Trying identity lookup by issuer + serial...")
+        #endif
+
+        let identityByIssuerSerialQuery: [String: Any] = [
+            kSecClass as String: kSecClassIdentity,
+            kSecAttrIssuer as String: issuer,
+            kSecAttrSerialNumber as String: serialNumber,
+            kSecReturnRef as String: true
+        ]
+
+        var identityByIssuerSerial: CFTypeRef?
+        let issuerSerialStatus = SecItemCopyMatching(identityByIssuerSerialQuery as CFDictionary, &identityByIssuerSerial)
+
+        if issuerSerialStatus == errSecSuccess, identityByIssuerSerial != nil {
+            let identity = identityByIssuerSerial as! SecIdentity
+            #if DEBUG
+            print("✅ Found SecIdentity by issuer + serial")
+            #endif
+            Logger.takNetwork.info("CSR identity resolve: matched via issuerSerial for \(name, privacy: .public)")
+            return identity
+        }
+
+        #if DEBUG
+        print("⚠️ Identity not found by issuer + serial (status: \(issuerSerialStatus))")
+        #endif
+    }
+
+    // Method 3: Fallback - Query all identities and find the one matching our certificate
+    #if DEBUG
+    print("🔍 Trying certificate data matching (slowest method)...")
+    #endif
+
+    let allIdentitiesQuery: [String: Any] = [
+        kSecClass as String: kSecClassIdentity,
+        kSecReturnRef as String: true,
+        kSecMatchLimit as String: kSecMatchLimitAll
+    ]
+
+    var identityItems: CFTypeRef?
+    let allIdentitiesStatus = SecItemCopyMatching(allIdentitiesQuery as CFDictionary, &identityItems)
+
+    if allIdentitiesStatus == errSecSuccess, let identities = identityItems as? [SecIdentity] {
+        // Extract target certificate for comparison
+        let targetCert: SecCertificate
+        // certItem can be SecCertificate directly or a dictionary with kSecValueRef
+        if CFGetTypeID(certItem as CFTypeRef) == SecCertificateGetTypeID() {
+            targetCert = certItem as! SecCertificate
+        } else if let certDict = certItem as? [String: Any],
+                  let certRef = certDict[kSecValueRef as String] {
+            targetCert = certRef as! SecCertificate
+        } else {
+            #if DEBUG
+            print("❌ Could not extract certificate for comparison")
+            #endif
+            Logger.takNetwork.error("CSR identity resolve: no identity for \(name, privacy: .public)")
+            return nil
+        }
+
+        let targetCertData = SecCertificateCopyData(targetCert)
+
+        for identity in identities {
+            var identityCert: SecCertificate?
+            if SecIdentityCopyCertificate(identity, &identityCert) == errSecSuccess,
+               let cert = identityCert {
+                let identityCertData = SecCertificateCopyData(cert)
+                if targetCertData == identityCertData {
+                    #if DEBUG
+                    print("✅ Found matching SecIdentity by certificate data comparison")
+                    #endif
+                    Logger.takNetwork.info("CSR identity resolve: matched via certData for \(name, privacy: .public)")
+                    return identity
+                }
+            }
+        }
+
+        #if DEBUG
+        print("⚠️ No matching identity found among \(identities.count) identities")
+        #endif
+    } else {
+        #if DEBUG
+        print("⚠️ Failed to query all identities (status: \(allIdentitiesStatus))")
+        #endif
+    }
+
+    print("❌ Could not find identity for CSR-enrolled certificate: \(name)")
+    print("❌ This means the certificate and private key are not properly linked")
+    print("❌ Possible causes:")
+    print("   1. Private key was not stored with same label as certificate")
+    print("   2. Certificate public key doesn't match private key")
+    print("   3. iOS keychain did not auto-create the identity")
+    Logger.takNetwork.error("CSR identity resolve: no identity for \(name, privacy: .public)")
+    return nil
+}
+
 /// Direct network sender for CoT messages
 /// Supports TCP, UDP, and TLS protocols
 class DirectTCPSender {
@@ -571,161 +750,8 @@ class DirectTCPSender {
 
     /// Load identity from CSR-enrolled certificate (TAKaware approach - query by label)
     private func loadCSREnrolledIdentity(name: String) -> sec_identity_t? {
-        #if DEBUG
-        print("🔐 Looking for CSR-enrolled identity with label: \(name)")
-        #endif
-
-        // First check if we have a certificate with this label (confirms CSR enrollment was done)
-        let certQuery: [String: Any] = [
-            kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: name,
-            kSecReturnRef as String: true,
-            kSecReturnAttributes as String: true
-        ]
-
-        var certItem: CFTypeRef?
-        let certStatus = SecItemCopyMatching(certQuery as CFDictionary, &certItem)
-
-        guard certStatus == errSecSuccess else {
-            #if DEBUG
-            print("🔍 No CSR-enrolled certificate found for: \(name) (status: \(certStatus))")
-            #endif
-            return nil
-        }
-
-        #if DEBUG
-        print("📜 Found certificate with label: \(name)")
-        if let certDict = certItem as? [String: Any] {
-            print("📜 Certificate attributes: \(certDict.keys.joined(separator: ", "))")
-        }
-        #endif
-
-        // Method 1: Try to find identity directly by label (fastest)
-        let identityByLabelQuery: [String: Any] = [
-            kSecClass as String: kSecClassIdentity,
-            kSecAttrLabel as String: name,
-            kSecReturnRef as String: true
-        ]
-
-        var identityRef: CFTypeRef?
-        let identityByLabelStatus = SecItemCopyMatching(identityByLabelQuery as CFDictionary, &identityRef)
-
-        if identityByLabelStatus == errSecSuccess, identityRef != nil {
-            let identity = identityRef as! SecIdentity
-            #if DEBUG
-            print("✅ Found SecIdentity by label: \(name)")
-
-            // Validate the identity
-            var cert: SecCertificate?
-            var key: SecKey?
-            if SecIdentityCopyCertificate(identity, &cert) == errSecSuccess &&
-               SecIdentityCopyPrivateKey(identity, &key) == errSecSuccess {
-                print("✅ Identity validated: both certificate and private key accessible")
-                return sec_identity_create(identity)
-            } else {
-                print("⚠️ Identity incomplete, will try alternative methods")
-            }
-            #endif
-        }
-
-        #if DEBUG
-        print("⚠️ Identity not found by label (status: \(identityByLabelStatus))")
-        #endif
-
-        // Method 2: Query by issuer + serial number (if available in cert attributes)
-        if let certDict = certItem as? [String: Any],
-           let issuer = certDict[kSecAttrIssuer as String] as? Data,
-           let serialNumber = certDict[kSecAttrSerialNumber as String] as? Data {
-
-            #if DEBUG
-            print("🔍 Trying identity lookup by issuer + serial...")
-            #endif
-
-            let identityByIssuerSerialQuery: [String: Any] = [
-                kSecClass as String: kSecClassIdentity,
-                kSecAttrIssuer as String: issuer,
-                kSecAttrSerialNumber as String: serialNumber,
-                kSecReturnRef as String: true
-            ]
-
-            var identityByIssuerSerial: CFTypeRef?
-            let issuerSerialStatus = SecItemCopyMatching(identityByIssuerSerialQuery as CFDictionary, &identityByIssuerSerial)
-
-            if issuerSerialStatus == errSecSuccess, identityByIssuerSerial != nil {
-                let identity = identityByIssuerSerial as! SecIdentity
-                #if DEBUG
-                print("✅ Found SecIdentity by issuer + serial")
-                #endif
-                return sec_identity_create(identity)
-            }
-
-            #if DEBUG
-            print("⚠️ Identity not found by issuer + serial (status: \(issuerSerialStatus))")
-            #endif
-        }
-
-        // Method 3: Fallback - Query all identities and find the one matching our certificate
-        #if DEBUG
-        print("🔍 Trying certificate data matching (slowest method)...")
-        #endif
-
-        let allIdentitiesQuery: [String: Any] = [
-            kSecClass as String: kSecClassIdentity,
-            kSecReturnRef as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll
-        ]
-
-        var identityItems: CFTypeRef?
-        let allIdentitiesStatus = SecItemCopyMatching(allIdentitiesQuery as CFDictionary, &identityItems)
-
-        if allIdentitiesStatus == errSecSuccess, let identities = identityItems as? [SecIdentity] {
-            // Extract target certificate for comparison
-            let targetCert: SecCertificate
-            // certItem can be SecCertificate directly or a dictionary with kSecValueRef
-            if CFGetTypeID(certItem as CFTypeRef) == SecCertificateGetTypeID() {
-                targetCert = certItem as! SecCertificate
-            } else if let certDict = certItem as? [String: Any],
-                      let certRef = certDict[kSecValueRef as String] {
-                targetCert = certRef as! SecCertificate
-            } else {
-                #if DEBUG
-                print("❌ Could not extract certificate for comparison")
-                #endif
-                return nil
-            }
-
-            let targetCertData = SecCertificateCopyData(targetCert)
-
-            for identity in identities {
-                var identityCert: SecCertificate?
-                if SecIdentityCopyCertificate(identity, &identityCert) == errSecSuccess,
-                   let cert = identityCert {
-                    let identityCertData = SecCertificateCopyData(cert)
-                    if targetCertData == identityCertData {
-                        #if DEBUG
-                        print("✅ Found matching SecIdentity by certificate data comparison")
-                        #endif
-                        return sec_identity_create(identity)
-                    }
-                }
-            }
-
-            #if DEBUG
-            print("⚠️ No matching identity found among \(identities.count) identities")
-            #endif
-        } else {
-            #if DEBUG
-            print("⚠️ Failed to query all identities (status: \(allIdentitiesStatus))")
-            #endif
-        }
-
-        print("❌ Could not find identity for CSR-enrolled certificate: \(name)")
-        print("❌ This means the certificate and private key are not properly linked")
-        print("❌ Possible causes:")
-        print("   1. Private key was not stored with same label as certificate")
-        print("   2. Certificate public key doesn't match private key")
-        print("   3. iOS keychain did not auto-create the identity")
-        return nil
+        guard let id = resolveCSREnrolledSecIdentity(label: name) else { return nil }
+        return sec_identity_create(id)
     }
 
     private func loadP12Identity(from url: URL, password: String) -> sec_identity_t? {
