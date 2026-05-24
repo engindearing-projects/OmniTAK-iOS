@@ -75,13 +75,16 @@ struct ChatParticipant: Identifiable, Codable, Equatable, Hashable {
     var endpoint: String? // IP:port:protocol for direct messages
     var lastSeen: Date
     var isOnline: Bool
+    /// The TAK server this contact was most recently seen on (multi-server).
+    var serverId: UUID?
 
-    init(id: String, callsign: String, endpoint: String? = nil, lastSeen: Date = Date(), isOnline: Bool = true) {
+    init(id: String, callsign: String, endpoint: String? = nil, lastSeen: Date = Date(), isOnline: Bool = true, serverId: UUID? = nil) {
         self.id = id
         self.callsign = callsign
         self.endpoint = endpoint
         self.lastSeen = lastSeen
         self.isOnline = isOnline
+        self.serverId = serverId
     }
 
     static func == (lhs: ChatParticipant, rhs: ChatParticipant) -> Bool {
@@ -97,7 +100,7 @@ struct ChatParticipant: Identifiable, Codable, Equatable, Hashable {
 
 struct ChatMessage: Identifiable, Codable, Equatable {
     let id: String // Message UID
-    let conversationId: String
+    var conversationId: String   // var: receive path re-scopes DMs per server
     let senderId: String // Sender UID
     let senderCallsign: String
     var recipientId: String? // nil for group messages
@@ -109,6 +112,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var isFromSelf: Bool
     var attachmentType: AttachmentType
     var imageAttachment: ImageAttachment?
+    /// Source server (received) or target server (sent). nil = broadcast/all-chat.
+    var serverId: UUID?
 
     init(
         id: String = UUID().uuidString,
@@ -123,10 +128,12 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         type: ChatMessageType = .geochat,
         isFromSelf: Bool = false,
         attachmentType: AttachmentType = .none,
-        imageAttachment: ImageAttachment? = nil
+        imageAttachment: ImageAttachment? = nil,
+        serverId: UUID? = nil
     ) {
         self.id = id
         self.conversationId = conversationId
+        self.serverId = serverId
         self.senderId = senderId
         self.senderCallsign = senderCallsign
         self.recipientId = recipientId
@@ -164,6 +171,9 @@ struct Conversation: Identifiable, Codable, Equatable {
     var unreadCount: Int
     var isGroupChat: Bool
     var lastActivity: Date
+    /// The TAK server this conversation is scoped to. DMs are per-server;
+    /// nil = spans all servers (e.g. the merged All Chat Users room).
+    var serverId: UUID?
 
     init(
         id: String = UUID().uuidString,
@@ -172,7 +182,8 @@ struct Conversation: Identifiable, Codable, Equatable {
         lastMessage: ChatMessage? = nil,
         unreadCount: Int = 0,
         isGroupChat: Bool = false,
-        lastActivity: Date = Date()
+        lastActivity: Date = Date(),
+        serverId: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -181,6 +192,7 @@ struct Conversation: Identifiable, Codable, Equatable {
         self.unreadCount = unreadCount
         self.isGroupChat = isGroupChat
         self.lastActivity = lastActivity
+        self.serverId = serverId
     }
 
     // Get the display title for the conversation

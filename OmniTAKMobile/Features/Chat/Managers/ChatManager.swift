@@ -83,7 +83,8 @@ class ChatManager: ObservableObject {
             timestamp: Date(),
             status: .sending,
             type: .geochat,
-            isFromSelf: true
+            isFromSelf: true,
+            serverId: conversation.serverId
         )
 
         // Add to messages array
@@ -114,7 +115,7 @@ class ChatManager: ObservableObject {
             #if DEBUG
             print("📤 [CHAT DEBUG] TAKService available, attempting to send...")
             #endif
-            let success = takService.sendCoT(xml: xml)
+            let success = takService.sendCoT(xml: xml, toServerId: conversation.serverId)
             if success {
                 // Update message status to sent
                 if let index = messages.firstIndex(where: { $0.id == message.id }) {
@@ -157,7 +158,8 @@ class ChatManager: ObservableObject {
             type: .geochat,
             isFromSelf: true,
             attachmentType: .image,
-            imageAttachment: imageAttachment
+            imageAttachment: imageAttachment,
+            serverId: conversation.serverId
         )
 
         // Add to messages array
@@ -179,7 +181,7 @@ class ChatManager: ObservableObject {
 
         // Send via TAK service
         if let takService = takService {
-            let success = takService.sendCoT(xml: xml)
+            let success = takService.sendCoT(xml: xml, toServerId: conversation.serverId)
             if success {
                 // Update message status to sent
                 if let index = messages.firstIndex(where: { $0.id == message.id }) {
@@ -203,34 +205,48 @@ class ChatManager: ObservableObject {
 
     // MARK: - Receive Message
 
-    func receiveMessage(_ message: ChatMessage) {
+    func receiveMessage(_ message: ChatMessage, serverId: UUID? = nil) {
         // Check if message already exists
         guard !messages.contains(where: { $0.id == message.id }) else {
             print("Duplicate message ignored: \(message.id)")
             return
         }
 
+        // Attribute to the source server, and re-scope DMs per server so the
+        // same contact on two servers stays in separate threads. The merged
+        // All Chat room keeps its id (messages carry a per-message server badge).
+        var msg = message
+        msg.serverId = serverId
+        let isGroup = message.recipientId == nil
+            || message.conversationId == ChatRoom.allUsersId
+            || message.conversationId == ChatRoom.broadcastId
+        if !isGroup, let sid = serverId {
+            msg.conversationId = createDirectConversationId(uid1: currentUserId, uid2: message.senderId, serverId: sid)
+        }
+
         // Add message
-        messages.append(message)
+        messages.append(msg)
         saveMessages()
 
         // Update or create conversation
-        if conversations.first(where: { $0.id == message.conversationId }) != nil {
-            updateConversation(conversationId: message.conversationId, with: message)
+        if conversations.first(where: { $0.id == msg.conversationId }) != nil {
+            updateConversation(conversationId: msg.conversationId, with: msg)
         } else {
-            createConversation(from: message)
+            createConversation(from: msg)
         }
 
-        print("Received chat message from \(message.senderCallsign): \(message.messageText)")
+        print("Received chat message from \(msg.senderCallsign) on server \(serverId?.uuidString ?? "—"): \(msg.messageText)")
     }
 
     // MARK: - Conversation Management
 
-    func getOrCreateDirectConversation(with participant: ChatParticipant) -> Conversation {
-        // Create conversation ID
+    func getOrCreateDirectConversation(with participant: ChatParticipant, serverId: UUID? = nil) -> Conversation {
+        // Scope the DM to the server the contact is on (multi-server).
+        let sid = serverId ?? participant.serverId
         let conversationId = createDirectConversationId(
             uid1: currentUserId,
-            uid2: participant.id
+            uid2: participant.id,
+            serverId: sid
         )
 
         // Check if conversation exists
@@ -239,11 +255,14 @@ class ChatManager: ObservableObject {
         }
 
         // Create new conversation
+        var scopedParticipant = participant
+        scopedParticipant.serverId = sid
         let conversation = Conversation(
             id: conversationId,
             title: participant.callsign,
-            participants: [participant],
-            isGroupChat: false
+            participants: [scopedParticipant],
+            isGroupChat: false,
+            serverId: sid
         )
 
         conversations.append(conversation)
@@ -254,10 +273,11 @@ class ChatManager: ObservableObject {
     }
 
     private func createConversation(from message: ChatMessage) {
-        // Create participant for sender
+        // Create participant for sender, scoped to the source server.
         let sender = ChatParticipant(
             id: message.senderId,
-            callsign: message.senderCallsign
+            callsign: message.senderCallsign,
+            serverId: message.serverId
         )
 
         // Add to participants if not already present
@@ -274,7 +294,8 @@ class ChatManager: ObservableObject {
             lastMessage: message,
             unreadCount: 1,
             isGroupChat: message.recipientId == nil,
-            lastActivity: message.timestamp
+            lastActivity: message.timestamp,
+            serverId: message.serverId
         )
 
         conversations.append(conversation)
@@ -468,8 +489,13 @@ class ChatManager: ObservableObject {
 
     // MARK: - Helpers
 
-    private func createDirectConversationId(uid1: String, uid2: String) -> String {
+    private func createDirectConversationId(uid1: String, uid2: String, serverId: UUID? = nil) -> String {
         let sorted = [uid1, uid2].sorted()
+        // Scope DM threads per server so the same callsign/UID on two servers
+        // are distinct conversations (multi-server). Legacy (nil) keeps old id.
+        if let sid = serverId {
+            return "DM-\(sid.uuidString)-\(sorted[0])-\(sorted[1])"
+        }
         return "DM-\(sorted[0])-\(sorted[1])"
     }
 

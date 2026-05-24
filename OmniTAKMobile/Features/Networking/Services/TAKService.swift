@@ -1139,9 +1139,10 @@ class TAKService: ObservableObject {
         serverConnections[server.id] = connectionState
         connectionsLock.unlock()
 
-        // Setup handlers for this server's connection
+        // Setup handlers for this server's connection. Capture the server id so
+        // received messages can be attributed to their source server (multi-server).
         sender.onMessageReceived = { [weak self] xml in
-            self?.handleReceivedMessage(xml)
+            self?.handleReceivedMessage(xml, fromServerId: server.id)
         }
 
         sender.onConnectionStateChanged = { [weak self] connected in
@@ -1296,7 +1297,7 @@ class TAKService: ObservableObject {
         bytesReceived = totalBytes
     }
 
-    private func handleReceivedMessage(_ xml: String) {
+    private func handleReceivedMessage(_ xml: String, fromServerId serverId: UUID? = nil) {
         messagesReceived += 1
         lastMessage = xml
 
@@ -1330,7 +1331,7 @@ class TAKService: ObservableObject {
             #endif
 
             // Route to event handler
-            eventHandler.handle(event: eventType)
+            eventHandler.handle(event: eventType, serverId: serverId)
 
             #if DEBUG
             // Verify cotEvents was updated
@@ -1504,14 +1505,19 @@ class TAKService: ObservableObject {
         }
     }
 
-    func sendCoT(xml: String) -> Bool {
+    /// Send a CoT. When `toServerId` is non-nil, sends ONLY to that server
+    /// (used for per-server direct-message routing); nil broadcasts to every
+    /// connected server (group / all-chat / position).
+    func sendCoT(xml: String, toServerId: UUID? = nil) -> Bool {
         // Send to all connected servers
         // IMPORTANT: Check actual sender.isConnected (NWConnection state) not cached state
         // The cached ServerConnectionState.isConnected can get out of sync
         connectionsLock.lock()
         let allConnections = Array(serverConnections.values)
-        // Filter by actual connection state, not cached state
-        let connectedSenders = allConnections.filter { $0.sender.isConnected }.map { $0.sender }
+        // Filter by actual connection state, and by target server when routing a DM.
+        let connectedSenders = allConnections
+            .filter { $0.sender.isConnected && (toServerId == nil || $0.serverId == toServerId) }
+            .map { $0.sender }
         let totalConnections = allConnections.count
         let connectedCount = connectedSenders.count
 
@@ -1535,6 +1541,12 @@ class TAKService: ObservableObject {
         #endif
 
         guard !connectedSenders.isEmpty else {
+            // A DM targeted a specific server that isn't connected — don't
+            // silently fall back to the legacy connection (wrong server).
+            if toServerId != nil {
+                Logger.takNetwork.error("sendCoT: target server not connected; DM not sent")
+                return false
+            }
             // Fallback to legacy connection
             #if DEBUG
             print("📤 [SEND] No multi-server connections, trying legacy connection...")

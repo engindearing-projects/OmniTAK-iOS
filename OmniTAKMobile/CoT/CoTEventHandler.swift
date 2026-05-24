@@ -98,7 +98,7 @@ class CoTEventHandler: ObservableObject {
     // MARK: - Event Routing
 
     /// Handle a parsed CoT event and route to appropriate handlers
-    func handle(event: CoTEventType) {
+    func handle(event: CoTEventType, serverId: UUID? = nil) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
@@ -110,7 +110,7 @@ class CoTEventHandler: ObservableObject {
                 self.handlePositionUpdate(cotEvent)
 
             case .chatMessage(let message):
-                self.handleChatMessage(message)
+                self.handleChatMessage(message, serverId: serverId)
 
             case .emergencyAlert(let alert):
                 self.handleEmergencyAlert(alert)
@@ -197,13 +197,13 @@ class CoTEventHandler: ObservableObject {
 
     // MARK: - Chat Message Handler
 
-    private func handleChatMessage(_ message: ChatMessage) {
+    private func handleChatMessage(_ message: ChatMessage, serverId: UUID? = nil) {
         print("CoTEventHandler: Chat message from \(message.senderCallsign): \(message.messageText)")
 
         latestChatMessage = message
 
-        // Forward to ChatManager
-        chatManager?.receiveMessage(message)
+        // Forward to ChatManager with the source server for multi-server attribution
+        chatManager?.receiveMessage(message, serverId: serverId)
 
         // Update sender's last seen
         chatManager?.updateParticipantLastSeen(id: message.senderId)

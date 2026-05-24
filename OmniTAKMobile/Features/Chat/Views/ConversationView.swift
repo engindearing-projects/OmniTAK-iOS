@@ -211,12 +211,16 @@ struct MessageBubble: View {
             }
 
             VStack(alignment: isFromSelf ? .trailing : .leading, spacing: 4) {
-                // Sender name (only for received messages)
+                // Sender name + source-server badge (only for received messages).
+                // The badge lets you tell servers apart in the merged All Chat room.
                 if !isFromSelf {
-                    Text(message.senderCallsign)
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .padding(.leading, 12)
+                    HStack(spacing: 6) {
+                        Text(message.senderCallsign)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        ChatServerBadge(serverId: message.serverId)
+                    }
+                    .padding(.leading, 12)
                 }
 
                 // Message bubble with optional image
@@ -402,6 +406,40 @@ struct ConversationView_Previews: PreviewProvider {
 
         NavigationView {
             ConversationView(chatManager: chatManager, conversation: conversation)
+        }
+    }
+}
+
+// MARK: - Multi-server chat badge
+
+/// Small colored chip showing which TAK server a message / conversation /
+/// contact belongs to. Renders nothing when serverId is nil (single-server
+/// or broadcast). Defined here so both ConversationView and ChatView use it.
+enum ChatServerStyle {
+    static func name(for serverId: UUID?) -> String? {
+        guard let id = serverId else { return nil }
+        return ServerManager.shared.servers.first(where: { $0.id == id })?.name
+    }
+
+    static func color(for serverId: UUID?) -> Color {
+        guard let id = serverId else { return .gray }
+        let palette: [Color] = [.cyan, .green, .orange, .purple, .pink, .blue, .mint, .indigo]
+        return palette[abs(id.uuidString.hashValue) % palette.count]
+    }
+}
+
+struct ChatServerBadge: View {
+    let serverId: UUID?
+    var body: some View {
+        if let name = ChatServerStyle.name(for: serverId) {
+            Text(name)
+                .font(.system(size: 9, weight: .semibold))
+                .lineLimit(1)
+                .foregroundColor(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(ChatServerStyle.color(for: serverId))
+                .clipShape(Capsule())
         }
     }
 }

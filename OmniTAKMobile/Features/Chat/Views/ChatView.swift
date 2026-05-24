@@ -106,6 +106,9 @@ struct ConversationRow: View {
                         .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
 
+                    // Which server this (per-server) DM thread belongs to.
+                    ChatServerBadge(serverId: conversation.serverId)
+
                     Spacer()
 
                     if let lastMessage = conversation.lastMessage {
