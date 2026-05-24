@@ -226,8 +226,11 @@ struct NewChatView: View {
                                     }
 
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(participant.callsign)
-                                            .foregroundColor(.primary)
+                                        HStack(spacing: 6) {
+                                            Text(participant.callsign)
+                                                .foregroundColor(.primary)
+                                            ChatServerBadge(serverId: participant.serverId)
+                                        }
                                         if participant.isOnline {
                                             Text("Online")
                                                 .font(.caption)

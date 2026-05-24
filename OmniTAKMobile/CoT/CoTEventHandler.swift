@@ -107,7 +107,7 @@ class CoTEventHandler: ObservableObject {
 
             switch event {
             case .positionUpdate(let cotEvent):
-                self.handlePositionUpdate(cotEvent)
+                self.handlePositionUpdate(cotEvent, serverId: serverId)
 
             case .chatMessage(let message):
                 self.handleChatMessage(message, serverId: serverId)
@@ -126,7 +126,7 @@ class CoTEventHandler: ObservableObject {
 
     // MARK: - Position Update Handler
 
-    private func handlePositionUpdate(_ event: CoTEvent) {
+    private func handlePositionUpdate(_ event: CoTEvent, serverId: UUID? = nil) {
         print("CoTEventHandler: Position update from \(event.detail.callsign) at (\(event.point.lat), \(event.point.lon))")
 
         latestPositionUpdate = event
@@ -166,8 +166,10 @@ class CoTEventHandler: ObservableObject {
             #endif
         }
 
-        // Update participant info for chat
-        if let participant = ChatXMLParser.parseParticipantFromPresence(xml: createPresenceXML(from: event)) {
+        // Update participant info for chat, tagged with the source server so
+        // the contact list + DM routing are server-aware (multi-server).
+        if var participant = ChatXMLParser.parseParticipantFromPresence(xml: createPresenceXML(from: event)) {
+            participant.serverId = serverId
             chatManager?.updateParticipant(participant)
             chatManager?.updateParticipantLastSeen(id: participant.id)
         } else {
@@ -176,7 +178,8 @@ class CoTEventHandler: ObservableObject {
                 id: event.uid,
                 callsign: event.detail.callsign,
                 lastSeen: event.time,
-                isOnline: true
+                isOnline: true,
+                serverId: serverId
             )
             chatManager?.updateParticipant(participant)
         }
