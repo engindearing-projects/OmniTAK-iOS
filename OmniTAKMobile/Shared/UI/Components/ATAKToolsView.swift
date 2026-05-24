@@ -171,7 +171,7 @@ struct ATAKToolsView: View {
             PositionBroadcastView()
         }
         .sheet(isPresented: $showMissionSync) {
-            MissionPackageSyncView()
+            MissionSyncView()
         }
         .sheet(isPresented: $showElevationProfile) {
             ElevationProfileView()

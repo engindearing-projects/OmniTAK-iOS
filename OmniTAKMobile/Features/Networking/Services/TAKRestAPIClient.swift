@@ -16,21 +16,29 @@ struct TAKAPIConfiguration {
     let serverURL: String
     let secureAPIPort: Int
     let certificateId: UUID?
+    /// Keychain alias of the client cert (= TAKServer.certificateName). CSR-
+    /// enrolled identities live in the keychain under this label and are NOT
+    /// tracked by CertificateManager, so the REST mTLS path must resolve them
+    /// by name — same as the streaming path (DirectTCPSender). certificateId
+    /// remains as a fallback for imported .p12 certs CertificateManager owns.
+    let certificateName: String?
     var timeout: TimeInterval = 30
 
     var baseURL: String {
         "https://\(serverURL):\(secureAPIPort)"
     }
 
-    init(serverURL: String, secureAPIPort: Int = 8443, certificateId: UUID? = nil) {
+    init(serverURL: String, secureAPIPort: Int = 8443, certificateId: UUID? = nil, certificateName: String? = nil) {
         self.serverURL = serverURL
         self.secureAPIPort = secureAPIPort
         self.certificateId = certificateId
+        self.certificateName = certificateName
     }
 
     init(from server: TAKServer) {
         self.serverURL = server.host
         self.secureAPIPort = 8443  // Default TAK API port
+        self.certificateName = server.certificateName
         if let certName = server.certificateName,
            let cert = CertificateManager.shared.certificates.first(where: { $0.name == certName }) {
             self.certificateId = cert.id
@@ -271,7 +279,7 @@ class TAKRestAPIClient: ObservableObject {
         sessionConfig.timeoutIntervalForRequest = config.timeout
         sessionConfig.timeoutIntervalForResource = config.timeout * 4
 
-        let delegate = TAKAPIURLSessionDelegate(certificateId: config.certificateId)
+        let delegate = TAKAPIURLSessionDelegate(certificateId: config.certificateId, certificateName: config.certificateName)
         urlSession = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
 
         isConnected = true
@@ -473,6 +481,16 @@ class TAKRestAPIClient: ObservableObject {
         return try await get(endpoint: "/Marti/api/config")
     }
 
+    /// Lightweight reachability + auth probe used by MissionSyncManager.
+    /// `/Marti/api/version/config` is the one endpoint that returns 200 across
+    /// every dialect we test (TAK Server 5.7, OpenTAKServer, taky) — unlike
+    /// `/Marti/api/version`, which OpenTAKServer 404s. mTLS failures, bad certs,
+    /// or unreachable hosts surface as a thrown error here.
+    @discardableResult
+    func checkReachability() async throws -> Data {
+        return try await get(endpoint: "/Marti/api/version/config")
+    }
+
     // MARK: - HTTP Methods
 
     private func get(endpoint: String, headers: [String: String]? = nil) async throws -> Data {
@@ -662,9 +680,11 @@ struct TAKAPIResponse<T: Codable>: Codable {
 
 class TAKAPIURLSessionDelegate: NSObject, URLSessionDelegate {
     let certificateId: UUID?
+    let certificateName: String?
 
-    init(certificateId: UUID?) {
+    init(certificateId: UUID?, certificateName: String? = nil) {
         self.certificateId = certificateId
+        self.certificateName = certificateName
     }
 
     func urlSession(
@@ -678,26 +698,94 @@ class TAKAPIURLSessionDelegate: NSObject, URLSessionDelegate {
             let credential = URLCredential(trust: serverTrust)
             completionHandler(.useCredential, credential)
         } else if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodClientCertificate {
-            // Provide client certificate
-            if let certId = certificateId {
-                do {
-                    let identity = try CertificateManager.shared.getIdentity(for: certId)
-                    let credential = URLCredential(
-                        identity: identity,
-                        certificates: nil,
-                        persistence: .forSession
-                    )
-                    completionHandler(.useCredential, credential)
-                } catch {
-                    let errStr = "\(error)"
-                    Logger.takNetwork.error("Failed to load client certificate: \(errStr, privacy: .public)")
-                    completionHandler(.performDefaultHandling, nil)
-                }
+            if let identity = resolveClientIdentity() {
+                let credential = URLCredential(identity: identity, certificates: nil, persistence: .forSession)
+                completionHandler(.useCredential, credential)
             } else {
+                Logger.takNetwork.error("REST mTLS: no client identity for name=\(self.certificateName ?? "nil", privacy: .public)")
                 completionHandler(.performDefaultHandling, nil)
             }
         } else {
             completionHandler(.performDefaultHandling, nil)
         }
+    }
+
+    /// Resolve the client SecIdentity the same way the streaming path
+    /// (DirectTCPSender.loadCSREnrolledIdentity) does. CSR-enrolled identities
+    /// live in the keychain under a label = `certificateName` and are NOT in
+    /// CertificateManager. The label query alone is unreliable, so we mirror
+    /// the streaming path's three methods: label → issuer+serial → match by
+    /// certificate data across all identities. CertificateManager is the
+    /// fallback for imported .p12 certs it owns.
+    private func resolveClientIdentity() -> SecIdentity? {
+        // Imported .p12 certs tracked by CertificateManager.
+        if let certId = certificateId, let identity = try? CertificateManager.shared.getIdentity(for: certId) {
+            return identity
+        }
+        guard let name = certificateName, !name.isEmpty else { return nil }
+
+        // Confirm a CSR-enrolled cert exists under this label and grab its
+        // attributes for the fallback lookups.
+        var certItem: CFTypeRef?
+        let certStatus = SecItemCopyMatching([
+            kSecClass as String: kSecClassCertificate,
+            kSecAttrLabel as String: name,
+            kSecReturnRef as String: true,
+            kSecReturnAttributes as String: true
+        ] as CFDictionary, &certItem)
+        guard certStatus == errSecSuccess else { return nil }
+
+        // 1) Identity by label.
+        var byLabel: CFTypeRef?
+        if SecItemCopyMatching([
+            kSecClass as String: kSecClassIdentity,
+            kSecAttrLabel as String: name,
+            kSecReturnRef as String: true
+        ] as CFDictionary, &byLabel) == errSecSuccess, let r = byLabel {
+            return (r as! SecIdentity)
+        }
+
+        // 2) Identity by issuer + serial.
+        if let dict = certItem as? [String: Any],
+           let issuer = dict[kSecAttrIssuer as String] as? Data,
+           let serial = dict[kSecAttrSerialNumber as String] as? Data {
+            var byIS: CFTypeRef?
+            if SecItemCopyMatching([
+                kSecClass as String: kSecClassIdentity,
+                kSecAttrIssuer as String: issuer,
+                kSecAttrSerialNumber as String: serial,
+                kSecReturnRef as String: true
+            ] as CFDictionary, &byIS) == errSecSuccess, let r = byIS {
+                return (r as! SecIdentity)
+            }
+        }
+
+        // 3) Match by certificate data across all identities.
+        var all: CFTypeRef?
+        if SecItemCopyMatching([
+            kSecClass as String: kSecClassIdentity,
+            kSecReturnRef as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ] as CFDictionary, &all) == errSecSuccess, let identities = all as? [SecIdentity] {
+            let target: SecCertificate?
+            if CFGetTypeID(certItem as CFTypeRef) == SecCertificateGetTypeID() {
+                target = (certItem as! SecCertificate)
+            } else if let dict = certItem as? [String: Any], let cr = dict[kSecValueRef as String] {
+                target = (cr as! SecCertificate)
+            } else {
+                target = nil
+            }
+            if let target = target {
+                let targetData = SecCertificateCopyData(target)
+                for identity in identities {
+                    var c: SecCertificate?
+                    if SecIdentityCopyCertificate(identity, &c) == errSecSuccess, let cc = c,
+                       SecCertificateCopyData(cc) == targetData {
+                        return identity
+                    }
+                }
+            }
+        }
+        return nil
     }
 }

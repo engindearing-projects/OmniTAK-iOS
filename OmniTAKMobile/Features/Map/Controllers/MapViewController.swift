@@ -250,6 +250,9 @@ struct ATAKMapView: View {
                 messagesSent: takService.messagesSent,
                 gpsAccuracy: locationManager.accuracy,
                 serverName: serverManager.activeServer?.name ?? "Offline",
+                serverConnectedFlags: serverManager.servers
+                    .filter { $0.enabled }
+                    .map { takService.connectedServerIds.contains($0.id) },
                 onServerTap: { showServerConfig = true },
                 onMenuTap: {
                     withAnimation(.easeInOut(duration: 0.3)) {
@@ -257,7 +260,7 @@ struct ATAKMapView: View {
                     }
                 }
             )
-            .id("statusbar-\(takService.isConnected)-\(takService.messagesReceived)-\(takService.messagesSent)")
+            .id("statusbar-\(takService.isConnected)-\(takService.connectedServerIds.count)-\(takService.messagesReceived)-\(takService.messagesSent)")
 
             Spacer()
 
@@ -1293,7 +1296,7 @@ struct ATAKMapView: View {
                 EchelonHierarchyView()
             }
             .sheet(isPresented: $showMissionSync) {
-                MissionPackageSyncView()
+                MissionSyncView()
             }
     }
 
@@ -1942,6 +1945,9 @@ struct ATAKStatusBar: View {
     let messagesSent: Int
     let gpsAccuracy: Double
     let serverName: String?
+    /// Per-enabled-server connection state, in display order. Drives the
+    /// multi-server indicator when more than one server is enabled.
+    var serverConnectedFlags: [Bool] = []
     let onServerTap: () -> Void
     let onMenuTap: () -> Void
 
@@ -1977,16 +1983,37 @@ struct ATAKStatusBar: View {
                 }
             }
 
-            // Server Name Button (compact)
+            // Server Button (compact) — single server shows its name;
+            // multiple enabled servers show "connected/total" + a dot per
+            // server so the operator can see every link's state at a glance.
             Button(action: onServerTap) {
-                HStack(spacing: 2) {
-                    Image(systemName: "server.rack")
-                        .font(.system(size: 9))
-                    Text(serverName ?? "Offi...")
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
+                if serverConnectedFlags.count > 1 {
+                    let connected = serverConnectedFlags.filter { $0 }.count
+                    let total = serverConnectedFlags.count
+                    HStack(spacing: 4) {
+                        Image(systemName: "server.rack").font(.system(size: 9))
+                        Text("\(connected)/\(total)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 2) {
+                            ForEach(Array(serverConnectedFlags.enumerated()), id: \.offset) { _, up in
+                                Circle()
+                                    .fill(up ? Color.green : Color.gray.opacity(0.6))
+                                    .frame(width: 5, height: 5)
+                            }
+                        }
+                    }
+                    .foregroundColor(connected == total ? .green : (connected > 0 ? .yellow : .gray))
+                } else {
+                    HStack(spacing: 2) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 9))
+                        Text(serverName ?? "Offi...")
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundColor(isConnected ? .green : .gray)
                 }
-                .foregroundColor(isConnected ? .green : .gray)
             }
 
             // Messages (compact) — text arrows match Android ATAKStatusBar

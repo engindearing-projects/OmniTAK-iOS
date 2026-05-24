@@ -47,7 +47,7 @@ struct ToolSheetHost: ViewModifier {
         case "selfsa":       PositionBroadcastView()
         case "elevation":    ElevationProfileView()
         case "los":          LineOfSightView()
-        case "missionsync":  MissionPackageSyncView()
+        case "missionsync":  MissionSyncView()
         case "plugins":      PluginsListView()
         case "kml":          KMLOverlaysPanel()
         case "pointer":
