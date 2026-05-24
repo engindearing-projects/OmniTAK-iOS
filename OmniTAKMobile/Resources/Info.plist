@@ -21,6 +21,8 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>tak</string>
+				<string>atak</string>
+				<string>omnitak</string>
 			</array>
 		</dict>
 	</array>

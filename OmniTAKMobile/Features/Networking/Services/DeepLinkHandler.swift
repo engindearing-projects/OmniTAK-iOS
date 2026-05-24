@@ -13,20 +13,36 @@ import Combine
 
 enum TAKDeepLink {
     case enrollment(EnrollmentDeepLink)
+    case passwordEnrollment(PasswordEnrollmentDeepLink)
     case connect(ConnectDeepLink)
     case unknown(URL)
 
     static func parse(url: URL) -> TAKDeepLink? {
-        guard url.scheme?.lowercased() == "tak" else { return nil }
+        // Accept tak:// (our scheme), plus atak:// / omnitak:// so a single
+        // QR/link onboards both iOS and Android (Android registers atak/omnitak).
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "tak" || scheme == "atak" || scheme == "omnitak" else { return nil }
 
         let path = url.path.lowercased()
         let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         let hasToken = queryItems.contains { $0.name.lowercased() == "token" && $0.value != nil }
+        let hasPassword = queryItems.contains {
+            ($0.name.lowercased() == "password" || $0.name.lowercased() == "pw") && !($0.value ?? "").isEmpty
+        }
 
-        // If path contains "enroll" AND has a token, it's enrollment
+        // If path contains "enroll" AND has a token, it's token enrollment (OpenTAKServer)
         if path.contains("enroll") && hasToken {
             if let enrollment = EnrollmentDeepLink.parse(url: url) {
                 return .enrollment(enrollment)
+            }
+        }
+
+        // Username + password → CSR auto-enroll (standard TAK Server quick connect).
+        // This is the "easy connect" path for username/password servers: scan a QR
+        // and the app enrolls a client cert, then connects — no manual form.
+        if hasPassword {
+            if let pwEnroll = PasswordEnrollmentDeepLink.parse(url: url) {
+                return .passwordEnrollment(pwEnroll)
             }
         }
 
@@ -130,6 +146,61 @@ struct EnrollmentDeepLink {
     }
 }
 
+// MARK: - Password Enrollment Deep Link (standard TAK CSR auto-enroll)
+
+struct PasswordEnrollmentDeepLink {
+    let host: String
+    let username: String
+    let password: String
+    let port: Int?            // streaming port, default 8089
+    let enrollmentPort: Int?  // CSR enrollment port, default 8446
+    let trustSelfSigned: Bool // default true (accepts any cert during enrollment)
+    let name: String?
+
+    static func parse(url: URL) -> PasswordEnrollmentDeepLink? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        var params: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            if let value = item.value {
+                params[item.name.lowercased()] = value
+            }
+        }
+
+        guard let host = params["host"],
+              let username = params["username"] ?? params["user"],
+              let password = params["password"] ?? params["pw"],
+              !host.isEmpty, !username.isEmpty, !password.isEmpty else {
+            print("[DeepLink] Password enroll: missing host, username, or password")
+            return nil
+        }
+
+        let port = (params["port"]).flatMap { Int($0) }
+        let enrollmentPort = (params["enrollmentport"] ?? params["enrollport"]).flatMap { Int($0) }
+        // Default to trust-all during enrollment so it works for both
+        // self-signed and publicly-trusted (Let's Encrypt) endpoints.
+        // Override with trust=ca / trustselfsigned=false for strict CA validation.
+        let trustRaw = (params["trustselfsigned"] ?? params["trust"])?.lowercased()
+        let trustSelfSigned: Bool
+        switch trustRaw {
+        case "false", "ca", "system", "0", "no": trustSelfSigned = false
+        default: trustSelfSigned = true
+        }
+
+        return PasswordEnrollmentDeepLink(
+            host: host,
+            username: username,
+            password: password,
+            port: port,
+            enrollmentPort: enrollmentPort,
+            trustSelfSigned: trustSelfSigned,
+            name: params["name"]
+        )
+    }
+}
+
 // MARK: - Deep Link Handler
 
 class DeepLinkHandler: ObservableObject {
@@ -172,11 +243,64 @@ class DeepLinkHandler: ObservableObject {
             Task {
                 await processEnrollment(enrollmentLink)
             }
+        case .passwordEnrollment(let pwLink):
+            Task {
+                await processPasswordEnrollment(pwLink)
+            }
         case .connect(let connectLink):
             processSimpleConnect(connectLink)
         case .unknown(let unknownURL):
             print("[DeepLink] Unknown deep link type: \(unknownURL)")
             lastError = "Unknown link type"
+        }
+    }
+
+    // MARK: - Password CSR Enrollment (standard TAK quick connect)
+
+    private func processPasswordEnrollment(_ link: PasswordEnrollmentDeepLink) async {
+        await MainActor.run {
+            isProcessing = true
+            lastError = nil
+        }
+
+        print("[DeepLink] Starting password CSR enrollment for \(link.username)@\(link.host)")
+
+        let config = CSREnrollmentConfiguration(
+            serverHost: link.host,
+            serverPort: link.port ?? 8089,
+            enrollmentPort: link.enrollmentPort ?? 8446,
+            username: link.username,
+            password: link.password,
+            useSSL: true,
+            trustSelfSignedCerts: link.trustSelfSigned
+        )
+
+        do {
+            // enrollWithCSR performs the full CSR flow and registers the
+            // server with ServerManager. We then connect using the stored cert.
+            let server = try await csrEnrollmentService.enrollWithCSR(config: config)
+
+            await MainActor.run {
+                ServerManager.shared.setActiveServer(server)
+                TAKService.shared.connect(
+                    host: server.host,
+                    port: server.port,
+                    protocolType: server.protocolType,
+                    useTLS: server.useTLS,
+                    certificateName: server.certificateName,
+                    certificatePassword: server.certificatePassword
+                )
+                isProcessing = false
+                enrolledServerName = server.name
+                showEnrollmentSuccess = true
+                print("[DeepLink] ✅ Password enrollment successful: \(server.name)")
+            }
+        } catch {
+            await MainActor.run {
+                isProcessing = false
+                lastError = error.localizedDescription
+                print("[DeepLink] ❌ Password enrollment failed: \(error)")
+            }
         }
     }
 
