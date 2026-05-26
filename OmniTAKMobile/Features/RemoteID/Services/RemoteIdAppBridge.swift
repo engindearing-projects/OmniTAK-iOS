@@ -35,8 +35,19 @@ final class RemoteIdAppBridge: ObservableObject {
     private init() {
         self.scanner = RemoteIdScanner()
         self.markerStore = PointDropperService.shared
+        // The scanner contract says it calls onTrackUpdate on main, and
+        // the BLE delegate sites honor that (queue: .main). The stale-
+        // purge Timer adds to whichever run loop start() was called from
+        // and, under heavy 3D-globe interaction, can fire when main
+        // isn't in its default mode — observed in syslog as SwiftUICore
+        // `Publishing changes from background threads is not allowed`.
+        // Hop to main explicitly so any future contract drift can't
+        // crash the app the way the prior PPLI off-main publish did
+        // (commit 7e41060). Pattern matches that fix verbatim.
         self.scanner.onTrackUpdate = { [weak self] update in
-            self?.applyUpdate(update)
+            DispatchQueue.main.async { [weak self] in
+                self?.applyUpdate(update)
+            }
         }
     }
 
@@ -54,6 +65,12 @@ final class RemoteIdAppBridge: ObservableObject {
     // MARK: - Marker synchronization
 
     private func applyUpdate(_ update: RemoteIdTrackUpdate) {
+        // Belt-and-suspenders: applyUpdate mutates `markerStore.markers`
+        // which is @Published. SwiftUI observers crash if mutations
+        // arrive off-main. Any future call site that forgets to hop
+        // will trip this assertion in debug instead of corrupting
+        // observers in release.
+        dispatchPrecondition(condition: .onQueue(.main))
         for uasId in update.changedUasIds {
             if let track = scanner.tracks.first(where: { $0.uasId == uasId }) {
                 upsertMarker(for: track)
