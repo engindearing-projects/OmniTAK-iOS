@@ -47,7 +47,12 @@ struct MissionSyncView: View {
 
     @ViewBuilder
     private var content: some View {
-        if manager.enabledCount == 0 {
+        // During the very first refresh (sessions empty + isRefreshing), show a
+        // loading indicator instead of the "No servers enabled" empty-state.
+        // This eliminates the blank-page flash on first open (iOS #10 sub-issue 2).
+        if manager.isRefreshing && manager.enabledCount == 0 {
+            initialLoadingView
+        } else if manager.enabledCount == 0 {
             emptyState
         } else {
             List {
@@ -57,6 +62,17 @@ struct MissionSyncView: View {
             }
             .listStyle(.insetGrouped)
             .refreshable { await manager.refreshAll() }
+        }
+    }
+
+    private var initialLoadingView: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .tint(accent)
+                .scaleEffect(1.4)
+            Text("Checking servers…")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary)
         }
     }
 
