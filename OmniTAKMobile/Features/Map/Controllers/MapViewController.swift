@@ -1486,6 +1486,15 @@ struct ATAKMapView: View {
                     span: MKCoordinateSpan(latitudeDelta: latSpan, longitudeDelta: lonSpan)
                 )
             }
+            // Bug #9: Contact actions from ContactDetailView ("Show on Map" /
+            // "Navigate to Contact"). Previously these notifications had no
+            // subscriber — sheet just dismissed and dropped user back on list.
+            .onReceive(NotificationCenter.default.publisher(for: .centerMapOnContact)) { note in
+                handleCenterMapOnContact(note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .startNavigationToContact)) { note in
+                handleStartNavigationToContact(note)
+            }
             .sheet(isPresented: $showAppModePicker) {
                 AppModePickerView()
             }
@@ -1933,6 +1942,64 @@ struct ATAKMapView: View {
             </detail>
         </event>
         """
+    }
+
+    // MARK: - Contact Detail Actions (Bug #9)
+    //
+    // Subscribers for ContactDetailView's "Show on Map" / "Navigate to Contact"
+    // notifications. Posting was already wired on the Teams side; until this
+    // fix there was no receiver, so tapping either button just dismissed the
+    // sheet and dropped the user back on the contact list with no visible
+    // change.
+
+    private func handleCenterMapOnContact(_ note: Notification) {
+        guard let uid = note.userInfo?["uid"] as? String else { return }
+        guard let event = takService.cotEvents.first(where: { $0.uid == uid }) else { return }
+        let target = CLLocationCoordinate2D(latitude: event.point.lat, longitude: event.point.lon)
+        showContacts = false
+        withAnimation {
+            mapRegion = MKCoordinateRegion(
+                center: target,
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+            )
+        }
+        NotificationCenter.default.post(
+            name: Notification.Name("cesiumCenterOn"),
+            object: nil,
+            userInfo: ["lat": target.latitude, "lon": target.longitude]
+        )
+    }
+
+    private func handleStartNavigationToContact(_ note: Notification) {
+        guard let uid = note.userInfo?["uid"] as? String,
+              let event = takService.cotEvents.first(where: { $0.uid == uid }) else { return }
+        let target = CLLocationCoordinate2D(latitude: event.point.lat, longitude: event.point.lon)
+        let name = event.detail.callsign
+        showContacts = false
+        guard let here = locationManager.location?.coordinate else {
+            NotificationCenter.default.post(
+                name: .radialMenuNavigationStarted,
+                object: nil,
+                userInfo: ["destination": target, "destinationName": name]
+            )
+            return
+        }
+        let start = RouteWaypoint(coordinate: here, name: "Current Location",
+                                  order: 0, instruction: "Start navigation")
+        let end = RouteWaypoint(coordinate: target, name: name,
+                                order: 1, instruction: "Arrive at \(name)")
+        let route = routeService.createRoute(
+            name: "Navigate to \(name)",
+            waypoints: [start, end],
+            color: "#4CAF50",
+            lineStyle: .solid,
+            lineOpacity: 0.9,
+            lineWidth: 5.0,
+            waypointIconStyle: .numbered,
+            waypointPrefix: "",
+            showDirectionArrows: true
+        )
+        routeService.startNavigation(for: route)
     }
 }
 
@@ -2772,6 +2839,22 @@ struct TacticalMapView: UIViewRepresentable {
         private var rangeRingManager: PolygonAnnotationManager?
         private var lassoSelectionRingManager: PolygonAnnotationManager?
 
+        // Annotation signature cache — `refreshAll()` runs on every
+        // SwiftUI `updateUIView` *and* every camera tick (because
+        // `handleCameraChanged` re-publishes `parent.region`). Without
+        // this guard each refresh re-assigns `manager.annotations`,
+        // and Mapbox treats every assignment as a fresh symbol layer
+        // which produces visible flicker on labels + markers. We hash
+        // the stable inputs (id + coordinate + text + color) per
+        // layer and short-circuit the assignment when nothing
+        // material has changed.
+        private var annotationSignatures: [String: Int] = [:]
+        private func shouldPublish(layer: String, signature: Int) -> Bool {
+            if annotationSignatures[layer] == signature { return false }
+            annotationSignatures[layer] = signature
+            return true
+        }
+
         // Lasso — same CAShapeLayer approach the MKMapView version
         // used, just attached to the Mapbox MapView's layer. Cheaper
         // and flicker-free vs. churning annotations on every touch.
@@ -3151,6 +3234,14 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshPointMarkers() {
             guard let manager = ensurePoint(\.pointMarkerManager) else { return }
+            var sigHasher = Hasher()
+            sigHasher.combine(parent.pointMarkers.count)
+            for pm in parent.pointMarkers {
+                sigHasher.combine(pm.id); sigHasher.combine(pm.name)
+                sigHasher.combine(pm.coordinate.latitude); sigHasher.combine(pm.coordinate.longitude)
+                sigHasher.combine(pm.affiliation.rawValue)
+            }
+            guard shouldPublish(layer: "pointMarkers", signature: sigHasher.finalize()) else { return }
             var fresh: [PointAnnotation] = []
             fresh.reserveCapacity(parent.pointMarkers.count)
             for pm in parent.pointMarkers {
@@ -3257,6 +3348,15 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshDrawingMarkers() {
             guard let manager = ensurePoint(\.drawingMarkerManager) else { return }
+            var sigHasher = Hasher()
+            sigHasher.combine(parent.drawingStore.markers.count)
+            for m in parent.drawingStore.markers {
+                sigHasher.combine(m.id)
+                sigHasher.combine(m.coordinate.latitude)
+                sigHasher.combine(m.coordinate.longitude)
+                sigHasher.combine(m.color.rawValue)
+            }
+            guard shouldPublish(layer: "drawingMarkers", signature: sigHasher.finalize()) else { return }
             var fresh: [PointAnnotation] = []
             for m in parent.drawingStore.markers {
                 let img = drawingMarkerImage(color: m.color.uiColor)
@@ -3287,6 +3387,21 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshDrawingLabels() {
             guard let manager = ensurePoint(\.drawingLabelManager) else { return }
+            var sigHasher = Hasher()
+            for c in parent.drawingStore.circles {
+                sigHasher.combine(c.id); sigHasher.combine(c.label)
+                sigHasher.combine(c.center.latitude); sigHasher.combine(c.center.longitude)
+                sigHasher.combine(c.color.rawValue)
+            }
+            for p in parent.drawingStore.polygons {
+                sigHasher.combine(p.id); sigHasher.combine(p.label)
+                sigHasher.combine(p.coordinates.count); sigHasher.combine(p.color.rawValue)
+            }
+            for l in parent.drawingStore.lines {
+                sigHasher.combine(l.id); sigHasher.combine(l.label)
+                sigHasher.combine(l.coordinates.count); sigHasher.combine(l.color.rawValue)
+            }
+            guard shouldPublish(layer: "drawingLabels", signature: sigHasher.finalize()) else { return }
             var fresh: [PointAnnotation] = []
             for c in parent.drawingStore.circles {
                 fresh.append(labelAnnotation(id: "lbl-c-\(c.id.uuidString)", coordinate: c.center, text: c.label, color: c.color.uiColor))
@@ -3324,6 +3439,13 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshDrawingLines() {
             guard let manager = ensureLine(\.drawingLineManager) else { return }
+            var sigHasher = Hasher()
+            for l in parent.drawingStore.lines {
+                sigHasher.combine(l.id); sigHasher.combine(l.color.rawValue)
+                sigHasher.combine(l.coordinates.count)
+                for c in l.coordinates { sigHasher.combine(c.latitude); sigHasher.combine(c.longitude) }
+            }
+            guard shouldPublish(layer: "drawingLines", signature: sigHasher.finalize()) else { return }
             var fresh: [PolylineAnnotation] = []
             for l in parent.drawingStore.lines where l.coordinates.count >= 2 {
                 var p = PolylineAnnotation(id: "dl-\(l.id.uuidString)", lineCoordinates: l.coordinates)
@@ -3336,6 +3458,13 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshDrawingPolygons() {
             guard let manager = ensurePolygon(\.drawingPolygonManager) else { return }
+            var sigHasher = Hasher()
+            for poly in parent.drawingStore.polygons {
+                sigHasher.combine(poly.id); sigHasher.combine(poly.color.rawValue)
+                sigHasher.combine(poly.coordinates.count)
+                for c in poly.coordinates { sigHasher.combine(c.latitude); sigHasher.combine(c.longitude) }
+            }
+            guard shouldPublish(layer: "drawingPolygons", signature: sigHasher.finalize()) else { return }
             var fresh: [PolygonAnnotation] = []
             for poly in parent.drawingStore.polygons where poly.coordinates.count >= 3 {
                 let ring = Ring(coordinates: poly.coordinates)
@@ -3362,6 +3491,13 @@ struct TacticalMapView: UIViewRepresentable {
                 circlePolygonManager = mapView.annotations.makePolygonAnnotationManager(id: id)
                 circleManagerAttached = true
             }
+            var sigHasher = Hasher()
+            for c in parent.drawingStore.circles {
+                sigHasher.combine(c.id); sigHasher.combine(c.color.rawValue)
+                sigHasher.combine(c.center.latitude); sigHasher.combine(c.center.longitude)
+                sigHasher.combine(c.radius)
+            }
+            guard shouldPublish(layer: "drawingCircles", signature: sigHasher.finalize()) else { return }
             var fresh: [PolygonAnnotation] = []
             for c in parent.drawingStore.circles {
                 let coords = Self.circleCoordinates(center: c.center, radiusMeters: c.radius, segments: 64)
@@ -3409,6 +3545,20 @@ struct TacticalMapView: UIViewRepresentable {
         private func refreshDrawingTempOverlay() {
             guard let lineManager = ensureLine(\.drawingTempLineManager) else { return }
             let dm = parent.drawingManager
+
+            // Bug #3: dedup so the in-progress shape only repaints when the
+            // user adds/removes a point, not on every camera tick. Otherwise
+            // the temp vertices visibly flicker during pan/zoom.
+            var sigHasher = Hasher()
+            sigHasher.combine("drawingTemp")
+            sigHasher.combine(dm.isDrawingActive)
+            if dm.isDrawingActive {
+                for c in dm.getTemporaryAnnotations().map({ $0.coordinate }) {
+                    sigHasher.combine(c.latitude); sigHasher.combine(c.longitude)
+                }
+            }
+            guard shouldPublish(layer: "drawingTemp", signature: sigHasher.finalize()) else { return }
+
             var lines: [PolylineAnnotation] = []
             var verts: [PointAnnotation] = []
 
@@ -3468,6 +3618,25 @@ struct TacticalMapView: UIViewRepresentable {
         private func refreshMeasurementOverlay() {
             guard let lineManager = ensureLine(\.measurementLineManager) else { return }
             let mm = parent.measurementManager
+
+            // Bug #3: dedup so yellow waypoints + range rings only repaint
+            // when the underlying measurement changes, not on every camera
+            // tick. Without this the static temp-vertex image re-uploads
+            // every frame and the operator sees yellow flicker.
+            var sigHasher = Hasher()
+            sigHasher.combine("measurement")
+            sigHasher.combine(mm.isActive)
+            if mm.isActive {
+                for c in mm.getTemporaryAnnotations().map({ $0.coordinate }) {
+                    sigHasher.combine(c.latitude); sigHasher.combine(c.longitude)
+                }
+            }
+            for ring in mm.rangeRings {
+                sigHasher.combine(ring.center.latitude); sigHasher.combine(ring.center.longitude)
+                sigHasher.combine(ring.radiusMeters); sigHasher.combine(ring.isVisible)
+            }
+            guard shouldPublish(layer: "measurement", signature: sigHasher.finalize()) else { return }
+
             var lines: [PolylineAnnotation] = []
             var rings: [PolygonAnnotation] = []
             var verts: [PointAnnotation] = []
@@ -3617,6 +3786,26 @@ struct TacticalMapView: UIViewRepresentable {
             guard let mapView = mapView else { return }
             let point = gesture.location(in: mapView)
             let coordinate = mapView.mapboxMap.coordinate(for: point)
+
+            // Bug #1: tap (not just long-press) on a marker / shape body or
+            // its floating name label should open the radial context menu.
+            // Only when no drawing/measurement tool is active — otherwise the
+            // tap must reach the tool for placement.
+            if !parent.drawingManager.isDrawingActive && !parent.measurementManager.isActive {
+                if let pm = nearestPointMarker(to: point, in: mapView) {
+                    parent.radialMenuCoordinator.showPointMarkerMenu(at: point, coordinate: coordinate, marker: pm)
+                    return
+                }
+                if let dm = nearestDrawingMarker(to: point, in: mapView) {
+                    parent.radialMenuCoordinator.showContextMenu(at: point, for: coordinate, menuType: .markerContext, drawingId: dm.id, drawingType: .marker)
+                    return
+                }
+                if let hit = drawingShapeHit(at: coordinate) ?? drawingShapeLabelHit(at: point, in: mapView) {
+                    parent.radialMenuCoordinator.showContextMenu(at: point, for: coordinate, menuType: .markerContext, drawingId: hit.id, drawingType: hit.type)
+                    return
+                }
+            }
+
             parent.onMapTap(coordinate)
         }
 
@@ -3654,8 +3843,11 @@ struct TacticalMapView: UIViewRepresentable {
                 return
             }
 
-            // 3) Drawing shapes (lines, polygons, circles)
-            if let hit = drawingShapeHit(at: coordinate) {
+            // 3) Drawing shapes (lines, polygons, circles) — geometry
+            // hit first, then label rect (so the floating centroid /
+            // midpoint name label is also a valid selection target).
+            if let hit = drawingShapeHit(at: coordinate)
+                ?? drawingShapeLabelHit(at: screenPoint, in: mapView) {
                 parent.radialMenuCoordinator.showContextMenu(
                     at: screenPoint,
                     for: coordinate,
@@ -3679,7 +3871,21 @@ struct TacticalMapView: UIViewRepresentable {
             var best: (PointMarker, CGFloat)?
             for pm in parent.pointMarkers {
                 let p = mapView.mapboxMap.point(for: pm.coordinate)
-                let d = hypot(p.x - screenPoint.x, p.y - screenPoint.y)
+                let dIcon = hypot(p.x - screenPoint.x, p.y - screenPoint.y)
+                // Label hit-region — refreshPointMarkers anchors the
+                // text at `.top` with `textOffset = [0, 1.2]` em (≈16px
+                // at textSize 11). Approximate the label rect above
+                // the icon so long-press on the name resolves the same
+                // marker the icon would. Without this the floating
+                // text label is dead — only the dot itself reacts.
+                let labelCenter = CGPoint(x: p.x, y: p.y + 18)
+                let nameWidth = max(40, min(180, CGFloat(pm.name.count) * 7))
+                let labelRect = CGRect(x: labelCenter.x - nameWidth / 2,
+                                       y: labelCenter.y - 10,
+                                       width: nameWidth,
+                                       height: 20).insetBy(dx: -8, dy: -6)
+                let dLabel: CGFloat = labelRect.contains(screenPoint) ? 0 : .greatestFiniteMagnitude
+                let d = min(dIcon, dLabel)
                 if d < radius, best == nil || d < best!.1 {
                     best = (pm, d)
                 }
@@ -3728,6 +3934,37 @@ struct TacticalMapView: UIViewRepresentable {
                     if Self.distance(from: coordinate, toSegmentFrom: line.coordinates[i], to: line.coordinates[i + 1]) <= tolerance {
                         return DrawingShapeHit(id: line.id, type: .line)
                     }
+                }
+            }
+            return nil
+        }
+
+        /// Screen-space hit-test against the floating drawing labels
+        /// (circle center, polygon centroid, line midpoint). Mirrors
+        /// the positions emitted by `refreshDrawingLabels` so a
+        /// long-press on the name text resolves the underlying shape
+        /// even when the shape itself is small or far from the label.
+        private func drawingShapeLabelHit(at screenPoint: CGPoint, in mapView: MapView) -> DrawingShapeHit? {
+            func labelRect(at coord: CLLocationCoordinate2D, textLength: Int) -> CGRect {
+                let p = mapView.mapboxMap.point(for: coord)
+                let w = max(40, min(180, CGFloat(textLength) * 7))
+                return CGRect(x: p.x - w / 2, y: p.y - 10, width: w, height: 20).insetBy(dx: -8, dy: -6)
+            }
+            for c in parent.drawingStore.circles {
+                if labelRect(at: c.center, textLength: c.label.count).contains(screenPoint) {
+                    return DrawingShapeHit(id: c.id, type: .circle)
+                }
+            }
+            for p in parent.drawingStore.polygons {
+                if let centroid = Self.centroid(of: p.coordinates),
+                   labelRect(at: centroid, textLength: p.label.count).contains(screenPoint) {
+                    return DrawingShapeHit(id: p.id, type: .polygon)
+                }
+            }
+            for l in parent.drawingStore.lines where l.coordinates.count >= 2 {
+                let mid = l.coordinates[l.coordinates.count / 2]
+                if labelRect(at: mid, textLength: l.label.count).contains(screenPoint) {
+                    return DrawingShapeHit(id: l.id, type: .line)
                 }
             }
             return nil

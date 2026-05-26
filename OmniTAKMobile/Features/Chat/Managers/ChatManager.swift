@@ -24,8 +24,23 @@ class ChatManager: ObservableObject {
     private var locationManager: LocationManager?
 
     private init() {
-        loadData()
-        setupDefaultConversations()
+        // Perform file I/O on a background queue so the first access to
+        // ChatManager.shared (e.g. from ContactListView) doesn't block the
+        // main thread for 6–26 seconds while JSON is decoded from disk.
+        // @Published mutations are dispatched back to main via DispatchQueue.main.async.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let loadedConversations = self.persistence.loadConversations()
+            let loadedMessages      = self.persistence.loadMessages()
+            let loadedParticipants  = self.persistence.loadParticipants()
+            DispatchQueue.main.async {
+                self.conversations = loadedConversations
+                self.messages      = loadedMessages
+                self.participants  = loadedParticipants
+                print("ChatManager loaded: \(loadedConversations.count) conversations, \(loadedMessages.count) messages, \(loadedParticipants.count) participants")
+                self.setupDefaultConversations()
+            }
+        }
     }
 
     // MARK: - Setup
@@ -40,14 +55,6 @@ class ChatManager: ObservableObject {
         #if DEBUG
         print("📡 ChatManager: TAKService set")
         #endif
-    }
-
-    private func loadData() {
-        conversations = persistence.loadConversations()
-        messages = persistence.loadMessages()
-        participants = persistence.loadParticipants()
-
-        print("ChatManager loaded: \(conversations.count) conversations, \(messages.count) messages, \(participants.count) participants")
     }
 
     private func setupDefaultConversations() {

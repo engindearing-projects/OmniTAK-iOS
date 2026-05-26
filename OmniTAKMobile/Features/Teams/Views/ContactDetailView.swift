@@ -15,11 +15,20 @@ extension Notification.Name {
     static let startNavigationToContact = Notification.Name("startNavigationToContact")
 }
 
+/// Lightweight Identifiable wrapper around a conversation id so `.sheet(item:)`
+/// can rebuild ConversationView when the user opens a different DM.
+private struct ConversationRef: Identifiable, Equatable {
+    let id: String
+}
+
 struct ContactDetailView: View {
     let contact: ChatParticipant
     @ObservedObject var chatManager: ChatManager
     @Environment(\.dismiss) var dismiss
-    @State private var showChat = false
+    /// Direct conversation to present. Identifiable item so the sheet is
+    /// bound to a specific conversation (not the first one whose participants
+    /// happen to contain this contact — that's "All Chat Users" for everyone).
+    @State private var activeConversation: ConversationRef?
     @State private var mapRegion: MKCoordinateRegion
     @State private var showShareSheet = false
 
@@ -283,10 +292,9 @@ struct ContactDetailView: View {
                 }
             )
             .preferredColorScheme(.dark)
-            .sheet(isPresented: $showChat) {
-                if let conversation = chatManager.conversations.first(where: {
-                    $0.participants.contains(where: { $0.id == contact.id })
-                }) {
+            .sheet(item: $activeConversation) { ref in
+                // Re-fetch by id so we always get the live conversation object.
+                if let conversation = chatManager.conversations.first(where: { $0.id == ref.id }) {
                     ConversationView(chatManager: chatManager, conversation: conversation)
                 }
             }
@@ -301,8 +309,12 @@ struct ContactDetailView: View {
     }
 
     private func startChat() {
-        _ = chatManager.getOrCreateDirectConversation(with: contact)
-        showChat = true
+        // Get or create the per-server DM for THIS contact and present it by id.
+        // Previously: showChat=true + `conversations.first { $0.participants.contains contact }`
+        // — that match also returns "All Chat Users" (every contact is a participant),
+        // which is why "Send Message" was dumping users into the broadcast room.
+        let conv = chatManager.getOrCreateDirectConversation(with: contact)
+        activeConversation = ConversationRef(id: conv.id)
     }
 
     private func formatDate(_ date: Date) -> String {

@@ -13,7 +13,6 @@ struct ContactListView: View {
     @Environment(\.dismiss) var dismiss
     @State private var searchText = ""
     @State private var selectedContact: ChatParticipant?
-    @State private var showContactDetail = false
     @State private var sortOption: ContactSortOption = .lastSeen
 
     enum ContactSortOption: String, CaseIterable {
@@ -162,7 +161,6 @@ struct ContactListView: View {
                                     ContactRow(contact: contact)
                                         .onTapGesture {
                                             selectedContact = contact
-                                            showContactDetail = true
                                         }
 
                                     Divider()
@@ -204,10 +202,14 @@ struct ContactListView: View {
                 }
             }
             .preferredColorScheme(.dark)
-            .sheet(isPresented: $showContactDetail) {
-                if let contact = selectedContact {
-                    ContactDetailView(contact: contact, chatManager: chatManager)
-                }
+            // Use `.sheet(item:)` so the contact is captured at sheet-build time.
+            // The `.sheet(isPresented:)` + `if let` pattern presents an empty
+            // sheet on the first tap (SwiftUI captures body state before the
+            // adjacent @State write commits) — that's the 6–26s "blank Contact
+            // Details" first-load symptom; subsequent opens look fast because
+            // `selectedContact` is non-nil by then.
+            .sheet(item: $selectedContact) { contact in
+                ContactDetailView(contact: contact, chatManager: chatManager)
             }
         }
     }
