@@ -4459,8 +4459,19 @@ struct CesiumMainMap: UIViewRepresentable {
         context.coordinator.lastTrailsSnapshot = trailsJSON
         if context.coordinator.isReady {
             webView.evaluateJavaScript("window.OmniBridge.setEntities(\(entities));", completionHandler: nil)
-            webView.evaluateJavaScript("window.OmniBridge.setDrawings(\(drawings));", completionHandler: nil)
-            webView.evaluateJavaScript("window.OmniBridge.setMeasurements(\(measurementsJSON));", completionHandler: nil)
+            // Dedup drawings + measurements bridge calls — `updateUIView`
+            // fires on every SwiftUI re-render, which a camera tick triggers
+            // via published region updates. Without this guard the WKWebView
+            // re-applies identical drawing/measurement payloads on every
+            // pan/zoom frame, which causes visible label + waypoint flicker
+            // on the 3D globe — same anti-pattern fixed on the 2D path via
+            // `shouldPublish(layer:signature:)` in commit c9855f0.
+            if context.coordinator.shouldPublishBridge(call: "setDrawings", signature: drawings.hashValue) {
+                webView.evaluateJavaScript("window.OmniBridge.setDrawings(\(drawings));", completionHandler: nil)
+            }
+            if context.coordinator.shouldPublishBridge(call: "setMeasurements", signature: measurementsJSON.hashValue) {
+                webView.evaluateJavaScript("window.OmniBridge.setMeasurements(\(measurementsJSON));", completionHandler: nil)
+            }
             webView.evaluateJavaScript("window.OmniBridge.setTrails(\(trailsJSON));", completionHandler: nil)
 
             // GPS follow mode — recenter the camera on the operator. `follow`
@@ -4522,6 +4533,18 @@ struct CesiumMainMap: UIViewRepresentable {
         var lastBaseLayer = "satellite"
         /// Observer token for toolbar zoom commands forwarded to the bridge.
         var zoomObserver: NSObjectProtocol?
+
+        /// Per-bridge-call payload hash cache. `updateUIView` runs on every
+        /// SwiftUI re-render (including camera ticks), so we hash the JSON
+        /// payload going to each `OmniBridge` call and short-circuit when
+        /// the content is identical — mirrors the 2D path's
+        /// `shouldPublish(layer:signature:)` dedup.
+        private var bridgePayloadHashes: [String: Int] = [:]
+        func shouldPublishBridge(call: String, signature: Int) -> Bool {
+            if bridgePayloadHashes[call] == signature { return false }
+            bridgePayloadHashes[call] = signature
+            return true
+        }
 
         deinit {
             if let zoomObserver { NotificationCenter.default.removeObserver(zoomObserver) }
