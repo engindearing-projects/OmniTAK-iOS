@@ -1964,7 +1964,7 @@ struct ATAKMapView: View {
             )
         }
         NotificationCenter.default.post(
-            name: Notification.Name("cesiumCenterOn"),
+            name: .cesiumCenterOn,
             object: nil,
             userInfo: ["lat": target.latitude, "lon": target.longitude]
         )
@@ -4376,6 +4376,10 @@ extension Notification.Name {
     /// Posted by the toolbar zoom buttons so the Cesium coordinator can zoom
     /// the globe's camera (mapRegion can't drive it). userInfo["factor"]: Double.
     static let cesiumZoom = Notification.Name("cesiumZoom")
+    /// Posted by `handleCenterMapOnContact` so the Cesium coordinator can fly
+    /// the globe's camera to a contact's position (mapRegion only drives the
+    /// 2D engine). userInfo["lat"]: Double, userInfo["lon"]: Double.
+    static let cesiumCenterOn = Notification.Name("cesiumCenterOn")
 }
 
 struct CesiumMainMap: UIViewRepresentable {
@@ -4441,6 +4445,23 @@ struct CesiumMainMap: UIViewRepresentable {
             guard let coordinator, coordinator.isReady, let wv = coordinator.webView else { return }
             let factor = (note.userInfo?["factor"] as? Double) ?? 1.0
             wv.evaluateJavaScript("window.OmniBridge.zoomBy({factor:\(factor)});", completionHandler: nil)
+        }
+
+        // Bridge "Show on Map" from the Contacts list to the Cesium camera.
+        // The 2D path sets `mapRegion`; on 3D we need to fly the globe camera
+        // explicitly. `OmniBridge.flyTo` defaults the range to 5000m at -30°
+        // pitch, which keeps the target framed without losing situational
+        // context.
+        context.coordinator.centerOnObserver = NotificationCenter.default.addObserver(
+            forName: .cesiumCenterOn, object: nil, queue: .main
+        ) { [weak coordinator = context.coordinator] note in
+            guard let coordinator, coordinator.isReady, let wv = coordinator.webView else { return }
+            guard let lat = note.userInfo?["lat"] as? Double,
+                  let lon = note.userInfo?["lon"] as? Double else { return }
+            wv.evaluateJavaScript(
+                "window.OmniBridge.flyTo({lat:\(lat),lon:\(lon),range:5000});",
+                completionHandler: nil
+            )
         }
 
         webView.loadHTMLString(CesiumMainMap.html, baseURL: URL(string: "https://cesium.com/"))
@@ -4533,6 +4554,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var lastBaseLayer = "satellite"
         /// Observer token for toolbar zoom commands forwarded to the bridge.
         var zoomObserver: NSObjectProtocol?
+        /// Observer token for "Show on Map" (contact-centering) commands.
+        var centerOnObserver: NSObjectProtocol?
 
         /// Per-bridge-call payload hash cache. `updateUIView` runs on every
         /// SwiftUI re-render (including camera ticks), so we hash the JSON
@@ -4548,6 +4571,7 @@ struct CesiumMainMap: UIViewRepresentable {
 
         deinit {
             if let zoomObserver { NotificationCenter.default.removeObserver(zoomObserver) }
+            if let centerOnObserver { NotificationCenter.default.removeObserver(centerOnObserver) }
         }
 
         init(_ parent: CesiumMainMap) {
