@@ -102,7 +102,9 @@ final class MissionSyncManager: ObservableObject {
 
     /// Enrolled, enabled, TLS servers from the single source of truth.
     /// (A server with no client cert can't do mutual-TLS mission sync.)
-    private func enabledServers() -> [TAKServer] {
+    /// Public so the mission-creation flow (and any future writer) can reuse
+    /// the same filter rather than re-deriving it from ServerManager.
+    func enabledServers() -> [TAKServer] {
         ServerManager.shared.servers.filter { $0.enabled && $0.useTLS && $0.certificateName != nil }
     }
 

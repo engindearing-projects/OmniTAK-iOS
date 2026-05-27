@@ -33,6 +33,7 @@ struct SettingsView: View {
     @AppStorage("remoteIdScanEnabled") private var remoteIdScanEnabled = false
 
     @State private var showServersSheet = false
+    @State private var showMissionCreationSheet = false
 
     var body: some View {
         NavigationView {
@@ -258,6 +259,25 @@ struct SettingsView: View {
                     .foregroundColor(.red)
                 }
 
+                // Mission — entry point for issue #14 MVP. Sits above Data
+                // Management because creating a mission is the prerequisite
+                // for the data-package flows that live there.
+                Section("MISSION") {
+                    Button(action: { showMissionCreationSheet = true }) {
+                        HStack {
+                            Image(systemName: "flag.checkered")
+                                .foregroundColor(Color(hex: "#00BCD4"))
+                                .frame(width: 24)
+                            Text("Create new mission")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 14))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+
                 // Data Management
                 Section(loc.t("settings.section.dataManagement")) {
                     NavigationLink(destination: DataPackageImportView()) {
@@ -299,6 +319,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showServersSheet) {
                 ServersView()
+            }
+            .sheet(isPresented: $showMissionCreationSheet) {
+                MissionCreationSheet()
             }
             .alert(loc.t("settings.cacheCleared.title"), isPresented: $showCacheCleared) {
                 Button(loc.t("settings.ok"), role: .cancel) {}

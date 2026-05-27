@@ -43,6 +43,12 @@ struct MissionSyncView: View {
             }
         }
         .task { await manager.refreshAll() }
+        // Surface a newly-created mission immediately, without the user
+        // pulling-to-refresh. MissionCreationSheet posts this notification
+        // on success (iOS issue #14 MVP).
+        .onReceive(NotificationCenter.default.publisher(for: .missionCreated)) { _ in
+            Task { await manager.refreshAll() }
+        }
     }
 
     @ViewBuilder

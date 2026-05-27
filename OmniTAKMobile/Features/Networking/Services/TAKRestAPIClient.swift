@@ -333,6 +333,46 @@ class TAKRestAPIClient: ObservableObject {
         throw TAKAPIError.decodingFailed("Cannot decode mission response")
     }
 
+    /// Create a new mission on the server.
+    ///
+    /// Endpoint shape (verified across TAK Server 5.7 + OpenTAKServer):
+    ///   `PUT /Marti/api/missions/{name}?creatorUid={uid}&description={desc}`
+    /// The mission name is encoded into the path; `creatorUid` is required;
+    /// `description` is optional. The server replies with the standard wrapped
+    /// `{ data: [TAKMissionInfo] }` envelope on success.
+    @discardableResult
+    func createMission(name: String, description: String?, creatorUid: String) async throws -> TAKMissionInfo {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw TAKAPIError.invalidConfiguration
+        }
+
+        let encodedName = trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? trimmed
+        var endpoint = "/Marti/api/missions/\(encodedName)?creatorUid=\(creatorUid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? creatorUid)"
+        if let description = description?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty {
+            let encodedDesc = description.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? description
+            endpoint += "&description=\(encodedDesc)"
+        }
+
+        let data = try await put(endpoint: endpoint, body: nil)
+
+        // Server response is the standard wrapped envelope; fall back to a
+        // direct decode, and finally synthesize a minimal row if the body is
+        // empty (some dialects 200 with no payload on create).
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        if let wrapped = try? decoder.decode(TAKAPIResponse<[TAKMissionInfo]>.self, from: data),
+           let mission = wrapped.data?.first {
+            return mission
+        }
+        if let mission = try? decoder.decode(TAKMissionInfo.self, from: data) {
+            return mission
+        }
+        // Empty body on success — re-fetch to confirm and return.
+        return try await getMission(name: trimmed)
+    }
+
     /// Subscribe to a mission
     func subscribeMission(name: String, uid: String, password: String? = nil) async throws {
         var endpoint = "/Marti/api/missions/\(name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name)/subscription"
