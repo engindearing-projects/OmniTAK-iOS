@@ -145,11 +145,22 @@ class PointMarkerAnnotationView: MKAnnotationView {
         let size = CGSize(width: 32, height: 32)
         let renderer = UIGraphicsImageRenderer(size: size)
 
+        // FEMA / IC icon overrides the affiliation tint when present
+        // (issue #13 MVP — see `FemaIconSet.swift`).
+        let bgColor: UIColor
+        let symbolName: String
+        if let fema = marker.femaIcon {
+            bgColor = fema.uiTintColor
+            symbolName = fema.sfSymbolName
+        } else {
+            bgColor = marker.affiliation.uiColor
+            symbolName = marker.iconName
+        }
+
         return renderer.image { context in
             let rect = CGRect(origin: .zero, size: size)
 
             // Draw background circle
-            let bgColor = marker.affiliation.uiColor
             bgColor.setFill()
             let circlePath = UIBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2))
             circlePath.fill()
@@ -161,7 +172,7 @@ class PointMarkerAnnotationView: MKAnnotationView {
 
             // Draw icon
             let iconConfig = UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
-            if let icon = UIImage(systemName: marker.iconName, withConfiguration: iconConfig) {
+            if let icon = UIImage(systemName: symbolName, withConfiguration: iconConfig) {
                 let iconSize = icon.size
                 let iconRect = CGRect(
                     x: (size.width - iconSize.width) / 2,

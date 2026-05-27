@@ -214,6 +214,15 @@ class MarkerCoTGenerator {
         return "\(latDeg)°\(latMin)'\(latSec)\"\(latDir) \(lonDeg)°\(lonMin)'\(lonSec)\"\(lonDir)"
     }
 
+    /// Attempt to recognize a FEMA / IC icon from a CoT type string.
+    /// Used by future inbound-CoT-to-PointMarker code paths so an incoming
+    /// marker that matches one of our MVP type codes (issue #13) renders
+    /// with the FEMA icon instead of falling back to MIL-2525 affiliation
+    /// rendering. See `FemaIconSet.swift` for the speculative-code caveat.
+    static func parseFemaIcon(from cotType: String) -> FemaIcon? {
+        return FemaIcon.from(cotType: cotType)
+    }
+
     /// Parse CoT type to determine affiliation
     static func parseAffiliation(from cotType: String) -> MarkerAffiliation {
         let components = cotType.split(separator: "-")

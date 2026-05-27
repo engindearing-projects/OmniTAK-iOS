@@ -37,6 +37,11 @@ struct PointMarker: Identifiable, Codable, Equatable {
     var cotType: String
     var iconName: String
 
+    // FEMA / IC overlay (issue #13 MVP). When set, marker renders with the
+    // FEMA icon's SF Symbol + tint and emits the icon's CoT type instead of
+    // the affiliation default. See `FemaIconSet.swift` for the MVP caveat.
+    var femaIcon: FemaIcon?
+
     // Sharing
     var isBroadcast: Bool
 
@@ -49,6 +54,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         remarks: String? = nil,
         saluteReport: SALUTEReport? = nil,
         createdBy: String? = nil,
+        femaIcon: FemaIcon? = nil,
         isBroadcast: Bool = false
     ) {
         self.id = id
@@ -62,8 +68,10 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.saluteReport = saluteReport
         self.createdBy = createdBy
         self.uid = "marker-\(id.uuidString)"
-        self.cotType = affiliation.cotType
-        self.iconName = affiliation.iconName
+        // FEMA icon (if any) overrides the affiliation-default CoT type and icon.
+        self.cotType = femaIcon?.cotType ?? affiliation.cotType
+        self.iconName = femaIcon?.sfSymbolName ?? affiliation.iconName
+        self.femaIcon = femaIcon
         self.isBroadcast = isBroadcast
     }
 
@@ -72,7 +80,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, name, affiliation, latitude, longitude, altitude
         case timestamp, modifiedAt, remarks, createdBy, saluteReport
-        case uid, cotType, iconName, isBroadcast
+        case uid, cotType, iconName, isBroadcast, femaIcon
     }
 
     init(from decoder: Decoder) throws {
@@ -95,6 +103,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         cotType = try container.decode(String.self, forKey: .cotType)
         iconName = try container.decode(String.self, forKey: .iconName)
         isBroadcast = try container.decode(Bool.self, forKey: .isBroadcast)
+        femaIcon = try container.decodeIfPresent(FemaIcon.self, forKey: .femaIcon)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -114,6 +123,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         try container.encode(cotType, forKey: .cotType)
         try container.encode(iconName, forKey: .iconName)
         try container.encode(isBroadcast, forKey: .isBroadcast)
+        try container.encodeIfPresent(femaIcon, forKey: .femaIcon)
     }
 
     // MARK: - Equatable

@@ -46,6 +46,9 @@ struct PointDropperView: View {
                         // The one-tap drop row (drops at the crosshair).
                         quickDropSection
 
+                        // FEMA / IC palette (issue #13 MVP, SF Symbols stand-in).
+                        femaPaletteSection
+
                         // Everything else is optional — collapsed by default.
                         Button {
                             withAnimation { showAdvanced.toggle() }
@@ -160,6 +163,35 @@ struct PointDropperView: View {
                         quickDrop(affiliation: .neutral)
                     }
                 )
+            }
+        }
+        .padding()
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(12)
+    }
+
+    // MARK: - FEMA / IC Palette (issue #13 MVP)
+
+    private var femaPaletteSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("FEMA / IC")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+                Text("(MVP — SF Symbols stand-in)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(FemaIcon.allCases) { icon in
+                        FemaIconButton(icon: icon) {
+                            quickDropFema(icon)
+                        }
+                    }
+                }
             }
         }
         .padding()
@@ -439,6 +471,18 @@ struct PointDropperView: View {
 
     // MARK: - Actions
 
+    private func quickDropFema(_ icon: FemaIcon) {
+        guard let location = mapCenter ?? currentLocation else { return }
+        let marker = service.quickDropFema(icon, at: location, broadcast: broadcastImmediately)
+
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+
+        #if DEBUG
+        print("📍 FEMA quick dropped \(icon.displayName) marker: \(marker.name)")
+        #endif
+    }
+
     private func quickDrop(affiliation: MarkerAffiliation) {
         // Drop at the map crosshair (center) the operator aimed; fall back to
         // GPS only if the map center isn't known yet.
@@ -495,6 +539,37 @@ struct PointDropperView: View {
 }
 
 // MARK: - Supporting Views
+
+struct FemaIconButton: View {
+    let icon: FemaIcon
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            let g = UIImpactFeedbackGenerator(style: .light)
+            g.impactOccurred()
+            action()
+        }) {
+            VStack(spacing: 4) {
+                Image(systemName: icon.sfSymbolName)
+                    .font(.system(size: 22))
+                    .foregroundColor(icon.tintColor)
+
+                Text(icon.shortCode)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 64, height: 60)
+            .background(icon.tintColor.opacity(0.18))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(icon.tintColor.opacity(0.55), lineWidth: 1)
+            )
+        }
+        .accessibilityLabel(Text("Drop \(icon.displayName) marker"))
+    }
+}
 
 struct QuickDropButton: View {
     let affiliation: MarkerAffiliation

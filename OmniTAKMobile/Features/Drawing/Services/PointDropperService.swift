@@ -103,6 +103,50 @@ class PointDropperService: ObservableObject {
         )
     }
 
+    /// Quick drop a FEMA / IC marker at location. Issue #13 MVP — see
+    /// `FemaIconSet.swift` for the SF-Symbols-vs-real-FEMA stand-in note.
+    @discardableResult
+    func quickDropFema(
+        _ icon: FemaIcon,
+        at coordinate: CLLocationCoordinate2D,
+        name: String? = nil,
+        broadcast: Bool = false
+    ) -> PointMarker {
+        // FEMA icons aren't friendly/hostile by themselves; default to neutral
+        // affiliation so downstream code that still looks at .affiliation has
+        // something sensible. The femaIcon override drives rendering + CoT.
+        let markerName = name ?? generateFemaMarkerName(for: icon)
+        let marker = PointMarker(
+            name: markerName,
+            affiliation: .neutral,
+            coordinate: coordinate,
+            femaIcon: icon,
+            isBroadcast: broadcast
+        )
+
+        markers.append(marker)
+        updateRecentMarkers(marker)
+        saveMarkers()
+
+        #if DEBUG
+        print("📍 FEMA quick drop: \(icon.displayName) at (\(coordinate.latitude), \(coordinate.longitude))")
+        #endif
+
+        if broadcast {
+            broadcastMarker(marker)
+        }
+
+        onEvent?(.markerCreated(marker))
+        return marker
+    }
+
+    private func generateFemaMarkerName(for icon: FemaIcon) -> String {
+        let count = markers.filter { $0.femaIcon == icon }.count + 1
+        let f = DateFormatter()
+        f.dateFormat = "HHmm"
+        return "\(icon.shortCode)-\(count)-\(f.string(from: Date()))"
+    }
+
     /// Get marker by ID
     func getMarker(id: UUID) -> PointMarker? {
         return markers.first { $0.id == id }

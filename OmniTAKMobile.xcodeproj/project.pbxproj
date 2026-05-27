@@ -99,6 +99,7 @@
 		40746A5EE6624B31B2E44DB4 /* TAKRestAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9540F19EA7E0D4D8F98FC80F /* TAKRestAPIClient.swift */; };
 		408CC6660B98D38BA2A6A39C /* SHGPEVC----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 7D8E2F02A147ACFC3768B6E3 /* SHGPEVC----.svg */; };
 		409D7589A76E63D323F8F8FC /* PointMarkerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84F4DD664BBA1341CE945E50 /* PointMarkerModels.swift */; };
+		FEA13B1110000000FEA13B11 /* FemaIconSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEA13B1110000000FEA13B22 /* FemaIconSet.swift */; };
 		40BCC83669B81473CF4AEAD6 /* MeshtasticCOTBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD37B36A231B559A5C280059 /* MeshtasticCOTBridge.swift */; };
 		40D04307B87189E2E4A15118 /* KMZHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1103C5349FE3EE31708711A /* KMZHandler.swift */; };
 		42B40E22FFA4AE412996AE66 /* ToolbarAddPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CE9342858430C8B11A6138F /* ToolbarAddPalette.swift */; };
@@ -582,6 +583,7 @@
 		833DDF1E94F3AD95C29CF6F9 /* NetworkMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NetworkMonitor.swift; path = OmniTAKMobile/Utilities/Network/NetworkMonitor.swift; sourceTree = "<group>"; };
 		843EB86D341D86B368711751 /* RangeBearingOverlay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RangeBearingOverlay.swift; path = OmniTAKMobile/Features/Map/Overlays/RangeBearingOverlay.swift; sourceTree = "<group>"; };
 		84F4DD664BBA1341CE945E50 /* PointMarkerModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PointMarkerModels.swift; path = OmniTAKMobile/Features/Drawing/Models/PointMarkerModels.swift; sourceTree = "<group>"; };
+		FEA13B1110000000FEA13B22 /* FemaIconSet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FemaIconSet.swift; path = OmniTAKMobile/Features/Drawing/Models/FemaIconSet.swift; sourceTree = "<group>"; };
 		8777844988BE24F80736AF5F /* RoutePlanningView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RoutePlanningView.swift; path = OmniTAKMobile/Features/Navigation/Views/RoutePlanningView.swift; sourceTree = "<group>"; };
 		88EBE224804115CEB6383CEE /* TeamCoTGenerator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TeamCoTGenerator.swift; path = OmniTAKMobile/CoT/Generators/TeamCoTGenerator.swift; sourceTree = "<group>"; };
 		8957F8C862D78CBC8D9A10ED /* NavigationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NavigationSettingsView.swift; path = OmniTAKMobile/Features/Navigation/Views/NavigationSettingsView.swift; sourceTree = "<group>"; };
@@ -2091,6 +2093,7 @@
 			children = (
 				FAA5EECEC92A0D864B030870 /* DrawingModels.swift */,
 				84F4DD664BBA1341CE945E50 /* PointMarkerModels.swift */,
+				FEA13B1110000000FEA13B22 /* FemaIconSet.swift */,
 			);
 			name = Models;
 			sourceTree = "<group>";
@@ -2536,6 +2539,7 @@
 				729AB487769A2B685665B70A /* DrawingToolsManager.swift in Sources */,
 				AA0554C2EB313E2B73BE40C0 /* DrawingModels.swift in Sources */,
 				409D7589A76E63D323F8F8FC /* PointMarkerModels.swift in Sources */,
+				FEA13B1110000000FEA13B11 /* FemaIconSet.swift in Sources */,
 				AB23139DA76395747F6E4C71 /* PointDropperService.swift in Sources */,
 				9D1E97C264F38CD9B0017F5A /* DrawingPropertiesView.swift in Sources */,
 				E1F2A3B4C5D6E7F809182930 /* PointMarkerEditView.swift in Sources */,
