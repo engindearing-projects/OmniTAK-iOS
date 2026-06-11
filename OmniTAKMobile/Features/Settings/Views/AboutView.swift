@@ -20,7 +20,7 @@ struct AboutView: View {
                             .font(.system(size: 60))
                             .foregroundColor(Color(hex: "#FFFC00"))
 
-                        Text("OmniTAK Mobile")
+                        Text("OmniTAK")
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(Color(hex: "#FFFC00"))
 
@@ -36,7 +36,7 @@ struct AboutView: View {
                             .font(.system(size: 18, weight: .bold))
                             .foregroundColor(.white)
 
-                        Text("OmniTAK Mobile is a modern iOS client for TAK (Team Awareness Kit) servers, providing real-time situational awareness and tactical communication capabilities.")
+                        Text("OmniTAK is a modern iOS client for TAK (Team Awareness Kit) servers, providing real-time situational awareness and tactical communication capabilities.")
                             .font(.system(size: 14))
                             .foregroundColor(.gray)
                             .lineSpacing(4)

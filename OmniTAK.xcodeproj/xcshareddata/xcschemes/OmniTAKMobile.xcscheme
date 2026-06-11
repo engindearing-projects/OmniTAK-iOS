@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A11111111111111111111111000000A1"
-               BuildableName = "OmniTAKMobile.app"
-               BlueprintName = "OmniTAKMobile"
-               ReferencedContainer = "container:OmniTAKMobile.xcodeproj">
+               BuildableName = "OmniTAK.app"
+               BlueprintName = "OmniTAK"
+               ReferencedContainer = "container:OmniTAK.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -35,9 +35,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "E78164441D2E27C80677A24D"
-               BuildableName = "OmniTAKMobileTests.xctest"
-               BlueprintName = "OmniTAKMobileTests"
-               ReferencedContainer = "container:OmniTAKMobile.xcodeproj">
+               BuildableName = "OmniTAKTests.xctest"
+               BlueprintName = "OmniTAKTests"
+               ReferencedContainer = "container:OmniTAK.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -57,9 +57,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A11111111111111111111111000000A1"
-            BuildableName = "OmniTAKMobile.app"
-            BlueprintName = "OmniTAKMobile"
-            ReferencedContainer = "container:OmniTAKMobile.xcodeproj">
+            BuildableName = "OmniTAK.app"
+            BlueprintName = "OmniTAK"
+            ReferencedContainer = "container:OmniTAK.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -74,9 +74,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A11111111111111111111111000000A1"
-            BuildableName = "OmniTAKMobile.app"
-            BlueprintName = "OmniTAKMobile"
-            ReferencedContainer = "container:OmniTAKMobile.xcodeproj">
+            BuildableName = "OmniTAK.app"
+            BlueprintName = "OmniTAK"
+            ReferencedContainer = "container:OmniTAK.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
@@ -96,9 +96,9 @@
                   <BuildableReference
                      BuildableIdentifier = "primary"
                      BlueprintIdentifier = "A11111111111111111111111000000A1"
-                     BuildableName = "OmniTAKMobile.app"
-                     BlueprintName = "OmniTAKMobile"
-                     ReferencedContainer = "container:OmniTAKMobile.xcodeproj">
+                     BuildableName = "OmniTAK.app"
+                     BlueprintName = "OmniTAK"
+                     ReferencedContainer = "container:OmniTAK.xcodeproj">
                   </BuildableReference>
                </EnvironmentBuildable>
             </ActionContent>

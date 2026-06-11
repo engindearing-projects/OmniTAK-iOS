@@ -17,9 +17,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "9DDB5041D1F56668B63CC5A2"
-               BuildableName = "OmniTAKMobileUITests.xctest"
-               BlueprintName = "OmniTAKMobileUITests"
-               ReferencedContainer = "container:OmniTAKMobile.xcodeproj">
+               BuildableName = "OmniTAKUITests.xctest"
+               BlueprintName = "OmniTAKUITests"
+               ReferencedContainer = "container:OmniTAK.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>

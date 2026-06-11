@@ -12,7 +12,7 @@
 import XCTest
 import SwiftUI
 import CoreLocation
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 // MARK: - Fake plugin exercising all four hooks
 

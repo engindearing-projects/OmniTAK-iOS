@@ -14,7 +14,7 @@
 
 import XCTest
 import CoreLocation
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 class TAKServiceTests: XCTestCase {
 

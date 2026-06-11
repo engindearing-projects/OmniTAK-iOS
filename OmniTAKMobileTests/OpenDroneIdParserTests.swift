@@ -8,7 +8,7 @@
 //
 
 import XCTest
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 final class OpenDroneIdParserTests: XCTestCase {
 

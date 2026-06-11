@@ -13,7 +13,7 @@
 //
 
 import XCTest
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 class ServerValidatorTests: XCTestCase {
 

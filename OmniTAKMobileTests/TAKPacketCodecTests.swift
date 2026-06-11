@@ -20,7 +20,7 @@
 //
 
 import XCTest
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 // MARK: - XCTest stubs (require linked test target to execute)
 

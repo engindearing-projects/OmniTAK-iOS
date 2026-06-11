@@ -93,4 +93,4 @@ These tests should be run:
 
 Tests use:
 - XCTest framework (built-in)
-- @testable import OmniTAKMobile (requires debug build)
+- @testable import OmniTAK (requires debug build)

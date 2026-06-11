@@ -46,7 +46,7 @@ struct PluginsListView: View {
                 Section {
                     HStack {
                         Spacer()
-                        Text("OmniTAK Mobile v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0")")
+                        Text("OmniTAK v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0")")
                             .font(.system(size: 11))
                             .foregroundColor(.gray)
                         Spacer()

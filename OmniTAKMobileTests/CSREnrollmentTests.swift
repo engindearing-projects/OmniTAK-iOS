@@ -14,7 +14,7 @@
 //
 
 import XCTest
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 class CSREnrollmentConfigurationTests: XCTestCase {
 

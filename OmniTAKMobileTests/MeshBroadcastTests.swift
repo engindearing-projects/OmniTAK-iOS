@@ -29,7 +29,7 @@
 //
 
 import XCTest
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 // MARK: - Mesh Broadcast Unit Tests (stub style — no compiled target yet)
 

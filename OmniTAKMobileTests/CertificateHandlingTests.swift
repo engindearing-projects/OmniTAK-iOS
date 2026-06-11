@@ -14,7 +14,7 @@
 
 import XCTest
 import Security
-@testable import OmniTAKMobile
+@testable import OmniTAK
 
 // MARK: - CSR Generator Tests
 
