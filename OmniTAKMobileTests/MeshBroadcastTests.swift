@@ -110,6 +110,7 @@ final class MeshBroadcastTests: XCTestCase {
             detail: CoTDetail(
                 callsign: "ALPHA-1",
                 team: nil,
+                teamRole: nil,
                 speed: nil,
                 course: nil,
                 remarks: "Hello from mesh",
@@ -142,6 +143,7 @@ final class MeshBroadcastTests: XCTestCase {
             detail: CoTDetail(
                 callsign: "BRAVO-2",
                 team: nil,
+                teamRole: nil,
                 speed: nil,
                 course: nil,
                 remarks: nil,    // no remarks field
@@ -170,6 +172,7 @@ final class MeshBroadcastTests: XCTestCase {
             detail: CoTDetail(
                 callsign: "CHARLIE-3",
                 team: nil,
+                teamRole: nil,
                 speed: nil,
                 course: nil,
                 remarks: "Off-grid test message",
@@ -220,6 +223,7 @@ final class MeshBroadcastTests: XCTestCase {
             detail: CoTDetail(
                 callsign: "DELTA-4",
                 team: "Cyan",
+                teamRole: nil,
                 speed: 2.5,
                 course: 90.0,
                 remarks: nil,

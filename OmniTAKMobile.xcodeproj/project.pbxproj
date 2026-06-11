@@ -242,6 +242,9 @@
 		A6CEA9E02F31C917002D96E2 /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 7D6348C4CBB3428FBD5FF5CC /* MapboxMaps */; };
 		A7AC00010000000000B00001 /* ATAKPluginParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AC00010000000000A00001 /* ATAKPluginParser.swift */; };
 		A7AC00010000000000B00002 /* ATAKPluginSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AC00010000000000A00002 /* ATAKPluginSerializer.swift */; };
+		A7AC00020000000000B00003 /* TAKPacketCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AC00020000000000A00003 /* TAKPacketCodec.swift */; };
+		A7AC00020000000000B00004 /* unishox2.c in Sources */ = {isa = PBXBuildFile; fileRef = A7AC00020000000000A00004 /* unishox2.c */; };
+		A7AC00020000000000B00005 /* unishox2.h in Headers */ = {isa = PBXBuildFile; fileRef = A7AC00020000000000A00005 /* unishox2.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		A9321E0EC74569E8473691D6 /* CompassOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D240A72682F8C0E3253BA1F /* CompassOverlayView.swift */; };
 		A9C171AE7DA5913A5B2D5C9C /* MGRSGridToggleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A92EDCFDBF0D0ECD7A414CE6 /* MGRSGridToggleView.swift */; };
 		A9F13CD1E9534A25ECA3B7A9 /* RasterOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 097DAF0444ABFD1021CA104E /* RasterOverlay.swift */; };
@@ -626,6 +629,10 @@
 		A661FC43B811FD670B9C31AB /* ContactListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactListView.swift; path = OmniTAKMobile/Features/Teams/Views/ContactListView.swift; sourceTree = "<group>"; };
 		A7AC00010000000000A00001 /* ATAKPluginParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ATAKPluginParser.swift; path = OmniTAKMobile/Features/Meshtastic/Services/ATAKPluginParser.swift; sourceTree = "<group>"; };
 		A7AC00010000000000A00002 /* ATAKPluginSerializer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ATAKPluginSerializer.swift; path = OmniTAKMobile/Features/Meshtastic/Services/ATAKPluginSerializer.swift; sourceTree = "<group>"; };
+		A7AC00020000000000A00003 /* TAKPacketCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKPacketCodec.swift; path = OmniTAKMobile/Features/Meshtastic/Services/TAKPacketCodec.swift; sourceTree = "<group>"; };
+		A7AC00020000000000A00004 /* unishox2.c */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.c; name = unishox2.c; path = OmniTAKMobile/ThirdParty/Unishox2/unishox2.c; sourceTree = SOURCE_ROOT; };
+		A7AC00020000000000A00005 /* unishox2.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = unishox2.h; path = OmniTAKMobile/ThirdParty/Unishox2/unishox2.h; sourceTree = SOURCE_ROOT; };
+		A7AC00020000000000A00006 /* unishox2_LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; name = LICENSE; path = OmniTAKMobile/ThirdParty/Unishox2/LICENSE; sourceTree = SOURCE_ROOT; };
 		A82EDDDAEBCE973D79E5F5EE /* RouteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RouteModels.swift; path = OmniTAKMobile/Features/Navigation/Models/RouteModels.swift; sourceTree = "<group>"; };
 		A92EDCFDBF0D0ECD7A414CE6 /* MGRSGridToggleView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MGRSGridToggleView.swift; path = OmniTAKMobile/Features/Map/Views/MGRSGridToggleView.swift; sourceTree = "<group>"; };
 		A9A52CF4DD21759290DD7E0B /* CertificateEnrollmentService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CertificateEnrollmentService.swift; path = OmniTAKMobile/Features/Authentication/Services/CertificateEnrollmentService.swift; sourceTree = "<group>"; };
@@ -1319,8 +1326,27 @@
 				AD37B36A231B559A5C280059 /* MeshtasticCOTBridge.swift */,
 				A7AC00010000000000A00001 /* ATAKPluginParser.swift */,
 				A7AC00010000000000A00002 /* ATAKPluginSerializer.swift */,
+				A7AC00020000000000A00003 /* TAKPacketCodec.swift */,
 			);
 			name = Services;
+			sourceTree = "<group>";
+		};
+		A7AC00030000000000000001 /* ThirdParty */ = {
+			isa = PBXGroup;
+			children = (
+				A7AC00030000000000000002 /* Unishox2 */,
+			);
+			name = ThirdParty;
+			sourceTree = "<group>";
+		};
+		A7AC00030000000000000002 /* Unishox2 */ = {
+			isa = PBXGroup;
+			children = (
+				A7AC00020000000000A00004 /* unishox2.c */,
+				A7AC00020000000000A00005 /* unishox2.h */,
+				A7AC00020000000000A00006 /* unishox2_LICENSE */,
+			);
+			name = Unishox2;
 			sourceTree = "<group>";
 		};
 		4BFE3ADDCD1C1EA45E4E926D /* Drawing */ = {
@@ -1809,6 +1835,7 @@
 				44A4E9877F744AF2D77A2364 /* Storage */,
 				35B3D7692B4C1154C6F3C0AF /* Utilities */,
 				6EABD8C160A6EC47313B0409 /* Resources */,
+				A7AC00030000000000000001 /* ThirdParty */,
 				2508DC9F3697513408E4A231 /* Assets.xcassets */,
 				0F7D455CCA5EFDEC5C816D72 /* Products */,
 				4845AC361AA2A418F02A4E3A /* Frameworks */,
@@ -2289,6 +2316,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B004D2C26FD4F585F7B15E31 /* OmniTAKMobile-Bridging-Header.h in Headers */,
+				A7AC00020000000000B00005 /* unishox2.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2719,6 +2747,8 @@
 				E696090A2C20C65D83CD1F3D /* MeshtasticCoTConverter.swift in Sources */,
 				A7AC00010000000000B00001 /* ATAKPluginParser.swift in Sources */,
 				A7AC00010000000000B00002 /* ATAKPluginSerializer.swift in Sources */,
+				A7AC00020000000000B00003 /* TAKPacketCodec.swift in Sources */,
+				A7AC00020000000000B00004 /* unishox2.c in Sources */,
 				1374EB3089F65B0141A84BC7 /* MeshNodeMapView.swift in Sources */,
 				2C213DD4704CBFF5DCE841C5 /* PluginSettingsManager.swift in Sources */,
 				8AFC6EAFB6BB89E5858B8929 /* ADSBModels.swift in Sources */,
@@ -2984,6 +3014,10 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)",
 				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/OmniTAKMobile/ThirdParty/Unishox2",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OmniTAKMobile/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "OmniTAK Mobile";
@@ -3032,6 +3066,10 @@
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/OmniTAKMobile/ThirdParty/Unishox2",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = OmniTAKMobile/Resources/Info.plist;

@@ -291,6 +291,7 @@ class MeshtasticCoTConverter {
         let detail = CoTDetail(
             callsign: callsign,
             team: "Meshtastic",
+            teamRole: nil,
             speed: nil,
             course: nil,
             remarks: remarks,

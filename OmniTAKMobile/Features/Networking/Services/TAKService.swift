@@ -949,6 +949,9 @@ struct CoTPoint {
 struct CoTDetail {
     let callsign: String
     let team: String?
+    /// Role string from the CoT `<__group role="...">` attribute (e.g. "Team Lead", "TeamMember").
+    /// Nil when absent (encoder will fall back to the TeamMember default).
+    let teamRole: String?
     // Enhanced fields
     let speed: Double?
     let course: Double?
@@ -2048,6 +2051,7 @@ private func parseCoT(xml: String) -> CoTEvent? {
         detail: CoTDetail(
             callsign: callsign,
             team: team,
+            teamRole: nil,
             speed: speed,
             course: course,
             remarks: remarks,

@@ -133,6 +133,7 @@ class TAKServiceTests: XCTestCase {
         let detail = CoTDetail(
             callsign: "TestUnit",
             team: "Blue",
+            teamRole: nil,
             speed: 5.0,
             course: 180.0,
             remarks: "Test remarks",
@@ -170,6 +171,7 @@ class TAKServiceTests: XCTestCase {
         let detail = CoTDetail(
             callsign: "Unit1",
             team: nil,
+            teamRole: nil,
             speed: nil,
             course: nil,
             remarks: nil,

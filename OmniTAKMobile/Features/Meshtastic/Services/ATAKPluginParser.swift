@@ -92,12 +92,69 @@ enum ATAKPluginParser {
             return nil
         }
 
-        // Try protobuf TAKMessage path.
+        // Phase 2: try compact TAKPacket (atak.proto) FIRST.
+        // Accepts if decode yields PLI, chat, or at minimum a contact.
+        // Stock Meshtastic ATAK Plugin, phone-app TAK role, and the gateway
+        // all use this format.
+        if let pkt = TAKPacketCodec.decode(payload),
+           let event = TAKPacketCodec.toCoTEvent(pkt) {
+            let detailXML = buildDetailXMLFromTAKPacket(pkt)
+            let cotXML = renderCoTXML(
+                event: event,
+                how: pkt.hasPLI ? "m-g" : "h-g-i-g-o",
+                sendTime: event.time,
+                startTime: event.time,
+                staleTime: event.time.addingTimeInterval(pkt.hasPLI ? 300 : 60),
+                detailXML: detailXML
+            )
+            return ATAKPluginParsedMessage(event: event, detailXML: detailXML, cotXML: cotXML)
+        }
+
+        // Phase 1 fallback: protobuf TAKMessage{CoTEvent} path.
         if let parsed = parseTAKMessage(payload) {
             return parsed
         }
 
         return nil
+    }
+
+    /// Build a `<detail>` XML fragment from a decoded TAKPacket, equivalent to
+    /// what the TAK_Meshtastic_Gateway generates so downstream ATAK/WinTAK sees
+    /// familiar fields.
+    private static func buildDetailXMLFromTAKPacket(_ pkt: DecodedTAKPacket) -> String {
+        var inner = ""
+        let callsign = pkt.callsign.isEmpty ? pkt.deviceCallsign : pkt.callsign
+
+        if pkt.hasPLI {
+            inner += "<contact callsign=\"\(escape(callsign))\" endpoint=\"0.0.0.0:4242:tcp\"/>"
+            inner += "<uid Droid=\"\(escape(callsign))\"/>"
+            inner += "<precisionlocation altsrc=\"GPS\" geopointsrc=\"GPS\"/>"
+            if pkt.battery > 0 {
+                inner += "<status battery=\"\(pkt.battery)\"/>"
+            }
+            inner += "<takv device=\"Meshtastic\" platform=\"Meshtastic\" os=\"Meshtastic\" version=\"\"/>"
+            let speedStr = pkt.speed.map { String($0) } ?? "0"
+            let courseStr = pkt.course.map { String($0) } ?? "0"
+            inner += "<track course=\"\(courseStr)\" speed=\"\(speedStr)\"/>"
+            if pkt.team != .unspecifiedColor {
+                inner += "<__group name=\"\(escape(pkt.team.displayName))\" role=\"\(escape(pkt.role.displayName))\"/>"
+            }
+        } else if pkt.hasChat {
+            let to = pkt.chatTo ?? "All Chat Rooms"
+            let senderUID = pkt.deviceCallsign.isEmpty ? pkt.callsign : pkt.deviceCallsign
+            inner += "<__chat chatroom=\"\(escape(to))\" groupOwner=\"false\" id=\"\(escape(to))\""
+            inner += " messageId=\"\" parent=\"RootContactGroup\" senderCallsign=\"\(escape(callsign))\">"
+            inner += "<chatgrp id=\"\(escape(to))\" uid0=\"\(escape(senderUID))\" uid1=\"\(escape(to))\"/>"
+            inner += "</__chat>"
+            inner += "<link relation=\"p-p\" type=\"a-f-G-U-C\" uid=\"\(escape(senderUID))\"/>"
+            if let msg = pkt.chatMessage {
+                inner += "<remarks source=\"BAO.F.ATAK.\(escape(senderUID))\" to=\"\(escape(to))\">"
+                inner += escape(msg)
+                inner += "</remarks>"
+            }
+        }
+
+        return "<detail>\(inner)</detail>"
     }
 
     /// Classify a parsed CoTEvent into the correct CoTEventType variant for
@@ -237,6 +294,7 @@ enum ATAKPluginParser {
         let cotDetail = CoTDetail(
             callsign: parsedDetail.callsign ?? resolvedUid,
             team: parsedDetail.groupName,
+            teamRole: nil,
             speed: parsedDetail.speed,
             course: parsedDetail.course,
             remarks: parsedDetail.remarks,

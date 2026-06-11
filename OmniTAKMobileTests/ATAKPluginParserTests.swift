@@ -27,6 +27,7 @@ final class ATAKPluginParserTests: XCTestCase {
             detail: CoTDetail(
                 callsign: "BRAVO-1",
                 team: "Cyan",
+                teamRole: nil,
                 speed: 5.5,
                 course: 270.0,
                 remarks: "Test remark",
@@ -143,7 +144,7 @@ final class ATAKPluginParserTests: XCTestCase {
             type: "a-f-G-U-C",
             time: Date(),
             point: CoTPoint(lat: 0, lon: 0, hae: 0, ce: 0, le: 0),
-            detail: CoTDetail(callsign: "X", team: nil, speed: nil, course: nil, remarks: nil, battery: nil, device: nil, platform: nil)
+            detail: CoTDetail(callsign: "X", team: nil, teamRole: nil, speed: nil, course: nil, remarks: nil, battery: nil, device: nil, platform: nil)
         )
         switch ATAKPluginParser.classify(event) {
         case .positionUpdate: break
@@ -157,7 +158,7 @@ final class ATAKPluginParserTests: XCTestCase {
             type: "b-m-p-w",
             time: Date(),
             point: CoTPoint(lat: 0, lon: 0, hae: 0, ce: 0, le: 0),
-            detail: CoTDetail(callsign: "WP", team: nil, speed: nil, course: nil, remarks: nil, battery: nil, device: nil, platform: nil)
+            detail: CoTDetail(callsign: "WP", team: nil, teamRole: nil, speed: nil, course: nil, remarks: nil, battery: nil, device: nil, platform: nil)
         )
         switch ATAKPluginParser.classify(event) {
         case .waypoint: break

@@ -177,6 +177,7 @@ class ChatManager: ObservableObject {
             let detail = CoTDetail(
                 callsign: meshCallsign,
                 team: nil,
+                teamRole: nil,
                 speed: nil,
                 course: nil,
                 remarks: meshText,
@@ -281,6 +282,7 @@ class ChatManager: ObservableObject {
                 let detail = CoTDetail(
                     callsign: meshCallsign,
                     team: nil,
+                    teamRole: nil,
                     speed: nil,
                     course: nil,
                     remarks: meshText,

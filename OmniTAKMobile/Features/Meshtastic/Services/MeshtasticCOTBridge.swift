@@ -145,6 +145,7 @@ class MeshtasticCOTBridge: ObservableObject {
         let cotDetail = CoTDetail(
             callsign: node.shortName.isEmpty ? "MESH-\(String(format: "%04X", node.id & 0xFFFF))" : node.shortName,
             team: meshtasticTeamColor,
+            teamRole: nil,
             speed: nil,
             course: nil,
             remarks: remarks,
