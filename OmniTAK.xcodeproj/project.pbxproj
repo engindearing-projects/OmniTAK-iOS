@@ -264,6 +264,7 @@
 		B2C3D4E5F60718293A4B5C6D /* MilitaryReportCoT.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F60718293A4B5C6E /* MilitaryReportCoT.swift */; };
 		B31DE0874D24FB971A6F8ACC /* RemoteIdToPointMarkerConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08B18AEA7E422F3C5717BF5B /* RemoteIdToPointMarkerConverter.swift */; };
 		B4862ADC1DD9D4427C0DB504 /* TAKPacketCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D34215C77B2CE923B04AF0F5 /* TAKPacketCodecTests.swift */; };
+		9D878C1238B9495B89C1D5D8 /* CoordinateFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */; };
 		B4930D30352FB62914534BB0 /* TAKService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA0E8333659DB4D3BE2BF699 /* TAKService.swift */; };
 		B6DB49544A68E8CE29BAFEDC /* MissionSyncView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D2FE0C197835A47A6E72903 /* MissionSyncView.swift */; };
 		B70B11FC36F270C4832E614C /* SFGPEV-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 1C073B77D30C122325D6E02D /* SFGPEV-----.svg */; };
@@ -534,6 +535,7 @@
 		6255D6D7C0457143CC3E570B /* SNAP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNAP-------.svg"; sourceTree = "<group>"; };
 		628B317671CF6452847569CB /* RadialMenuMapCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RadialMenuMapCoordinator.swift; path = OmniTAKMobile/Shared/UI/RadialMenu/RadialMenuMapCoordinator.swift; sourceTree = "<group>"; };
 		634644F50DF0B69A944A6048 /* PPLISchedulerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PPLISchedulerTests.swift; path = OmniTAKMobileTests/PPLISchedulerTests.swift; sourceTree = "<group>"; };
+		EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoordinateFormatTests.swift; path = OmniTAKMobileTests/CoordinateFormatTests.swift; sourceTree = "<group>"; };
 		63C4E34598B862901EB54825 /* EchelonService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EchelonService.swift; path = OmniTAKMobile/Features/Teams/Services/EchelonService.swift; sourceTree = "<group>"; };
 		64977A5E2ADECCCF61D023F2 /* OmniTAKMobile-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = "OmniTAKMobile-Bridging-Header.h"; path = "OmniTAKMobile/Core/OmniTAKMobile-Bridging-Header.h"; sourceTree = "<group>"; };
 		6573C607EB2B7E7F82B0B79D /* de */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = de; path = OmniTAKMobile/Resources/de.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -1024,6 +1026,7 @@
 				634644F50DF0B69A944A6048 /* PPLISchedulerTests.swift */,
 				0C8884B98F8B309825903DC6 /* ServerValidatorTests.swift */,
 				D34215C77B2CE923B04AF0F5 /* TAKPacketCodecTests.swift */,
+				EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
 				A99C500AFB1B09E55ABEDBBF /* Info.plist */,
 			);
@@ -2660,6 +2663,7 @@
 				D1E674552E2BFBA766EFA496 /* PPLISchedulerTests.swift in Sources */,
 				1412A35EC6121F54838D6CCA /* ServerValidatorTests.swift in Sources */,
 				B4862ADC1DD9D4427C0DB504 /* TAKPacketCodecTests.swift in Sources */,
+				9D878C1238B9495B89C1D5D8 /* CoordinateFormatTests.swift in Sources */,
 				4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
 			);

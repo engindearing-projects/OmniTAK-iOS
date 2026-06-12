@@ -720,24 +720,16 @@ class RadialMenuActionExecutor {
         return "SAVED-\(dateFormatter.string(from: Date()))"
     }
 
+    /// Format a coordinate using the app-wide selected format.
+    ///
+    /// Reads "coordinateDisplayFormat" from UserDefaults — the same key that
+    /// SettingsView, CoordinateDisplayView (self-position chip, PR #58), and
+    /// MapStateManager all share.  Falls back to DMS when the key is absent or
+    /// unrecognised (first-launch / mid-migration).
     private static func formatCoordinate(_ coord: CLLocationCoordinate2D) -> String {
-        let lat = coord.latitude
-        let lon = coord.longitude
-
-        let latDir = lat >= 0 ? "N" : "S"
-        let lonDir = lon >= 0 ? "E" : "W"
-
-        let latDeg = Int(abs(lat))
-        let latMin = Int((abs(lat) - Double(latDeg)) * 60)
-        let latSec = ((abs(lat) - Double(latDeg)) * 60 - Double(latMin)) * 60
-
-        let lonDeg = Int(abs(lon))
-        let lonMin = Int((abs(lon) - Double(lonDeg)) * 60)
-        let lonSec = ((abs(lon) - Double(lonDeg)) * 60 - Double(lonMin)) * 60
-
-        return String(format: "%d\u{00B0}%d'%.2f\"%@ %d\u{00B0}%d'%.2f\"%@",
-                     latDeg, latMin, latSec, latDir,
-                     lonDeg, lonMin, lonSec, lonDir)
+        let formatString = UserDefaults.standard.string(forKey: "coordinateDisplayFormat") ?? ""
+        let format = CoordinateDisplayFormat(rawValue: formatString) ?? .degreesMinutesSeconds
+        return format.format(coord)
     }
 }
 
