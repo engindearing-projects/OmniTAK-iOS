@@ -24,7 +24,12 @@ struct OmniTAKMobileApp: App {
         // into TAKService at launch. Without this, mesh nodes would only
         // appear on the map after a Meshtastic view is opened.
         _ = MeshtasticManager.shared
-        Logger.meshtastic.info("MeshtasticManager + CoT bridge initialized at launch")
+        // MeshCore is the second mesh framework (companion BLE). Eagerly create
+        // its manager too so its CoT bridge is wired regardless of which
+        // framework the operator has selected; the active framework is chosen
+        // via @AppStorage("selectedMeshFramework").
+        if #available(iOS 13.0, *) { _ = MeshCoreManager.shared }
+        Logger.meshtastic.info("Meshtastic + MeshCore managers initialized at launch")
 
         // Wire the FAA Remote ID scanner. The actual on/off state is
         // pulled from UserDefaults below via `.task` so the @AppStorage
