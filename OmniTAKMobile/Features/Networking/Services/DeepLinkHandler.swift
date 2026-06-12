@@ -15,6 +15,7 @@ enum TAKDeepLink {
     case enrollment(EnrollmentDeepLink)
     case passwordEnrollment(PasswordEnrollmentDeepLink)
     case connect(ConnectDeepLink)
+    case configProfile(ConfigProfile)
     case unknown(URL)
 
     static func parse(url: URL) -> TAKDeepLink? {
@@ -22,6 +23,14 @@ enum TAKDeepLink {
         // QR/link onboards both iOS and Android (Android registers atak/omnitak).
         guard let scheme = url.scheme?.lowercased(),
               scheme == "tak" || scheme == "atak" || scheme == "omnitak" else { return nil }
+
+        // omnitak://profile?d=<payload> — config profile QR
+        if scheme == "omnitak", url.host?.lowercased() == "profile" {
+            if let profile = try? ProfileQRCodec.decode(url: url) {
+                return .configProfile(profile)
+            }
+            return .unknown(url)
+        }
 
         let path = url.path.lowercased()
         let queryItems = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -251,6 +260,8 @@ class DeepLinkHandler: ObservableObject {
             }
         case .connect(let connectLink):
             processSimpleConnect(connectLink)
+        case .configProfile(let profile):
+            processConfigProfile(profile)
         case .unknown(let unknownURL):
             print("[DeepLink] Unknown deep link type: \(unknownURL)")
             lastError = "Unknown link type"
@@ -309,6 +320,23 @@ class DeepLinkHandler: ObservableObject {
                 print("[DeepLink] ❌ Password enrollment failed: \(error)")
             }
         }
+    }
+
+    // MARK: - Config Profile Import
+
+    private func processConfigProfile(_ profile: ConfigProfile) {
+        print("[DeepLink] Importing config profile: \(profile.name)")
+        isProcessing = true
+        lastError = nil
+
+        ProfileStore.shared.addProfile(profile)
+        ProfileStore.shared.apply(profile)
+
+        isProcessing = false
+        enrolledServerName = profile.name
+        showEnrollmentSuccess = true
+
+        print("[DeepLink] ✅ Config profile '\(profile.name)' imported and applied")
     }
 
     // MARK: - Simple TCP/UDP Connect (No Auth)

@@ -374,6 +374,11 @@
 		FD9A668D450BCB86426AEBE1 /* LineOfSightModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD181F0D87FB0E91D14DFE79 /* LineOfSightModels.swift */; };
 		FEA13B1110000000FEA13B11 /* FemaIconSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEA13B1110000000FEA13B22 /* FemaIconSet.swift */; };
 		FED47954389F0EA4DB422DD7 /* LassoSelectionPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF88DFDFB03BF594EB88178A /* LassoSelectionPill.swift */; };
+		CF000001B000000000000001 /* ConfigProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF000001A000000000000001 /* ConfigProfile.swift */; };
+		CF000002B000000000000001 /* ProfileQRCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF000002A000000000000001 /* ProfileQRCodec.swift */; };
+		CF000003B000000000000001 /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF000003A000000000000001 /* ProfileStore.swift */; };
+		CF000004B000000000000001 /* ProfilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF000004A000000000000001 /* ProfilesView.swift */; };
+		CF000005B000000000000001 /* ConfigProfileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF000005A000000000000001 /* ConfigProfileTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -769,6 +774,11 @@
 		FE87E15631B845393B2BA5AD /* SPOTREPModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SPOTREPModels.swift; path = OmniTAKMobile/Features/Military/Models/SPOTREPModels.swift; sourceTree = "<group>"; };
 		FEA13B1110000000FEA13B22 /* FemaIconSet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FemaIconSet.swift; path = OmniTAKMobile/Features/Drawing/Models/FemaIconSet.swift; sourceTree = "<group>"; };
 		FEDA4D79535AD84B80DECADB /* SUGPEVM----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUGPEVM----.svg"; sourceTree = "<group>"; };
+		CF000001A000000000000001 /* ConfigProfile.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigProfile.swift; path = OmniTAKMobile/Features/Profiles/Models/ConfigProfile.swift; sourceTree = "<group>"; };
+		CF000002A000000000000001 /* ProfileQRCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfileQRCodec.swift; path = OmniTAKMobile/Features/Profiles/Services/ProfileQRCodec.swift; sourceTree = "<group>"; };
+		CF000003A000000000000001 /* ProfileStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfileStore.swift; path = OmniTAKMobile/Features/Profiles/Services/ProfileStore.swift; sourceTree = "<group>"; };
+		CF000004A000000000000001 /* ProfilesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProfilesView.swift; path = OmniTAKMobile/Features/Profiles/Views/ProfilesView.swift; sourceTree = "<group>"; };
+		CF000005A000000000000001 /* ConfigProfileTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigProfileTests.swift; path = OmniTAKMobileTests/ConfigProfileTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1028,6 +1038,7 @@
 				D34215C77B2CE923B04AF0F5 /* TAKPacketCodecTests.swift */,
 				EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
+								CF000005A000000000000001 /* ConfigProfileTests.swift */,
 				A99C500AFB1B09E55ABEDBBF /* Info.plist */,
 			);
 			name = OmniTAKMobileTests;
@@ -2666,6 +2677,7 @@
 				9D878C1238B9495B89C1D5D8 /* CoordinateFormatTests.swift in Sources */,
 				4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
+				CF000005B000000000000001 /* ConfigProfileTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2901,6 +2913,10 @@
 				7E069116B694B15B5EFDE612 /* DiagnosticsPlugin.swift in Sources */,
 				BD5ED2F273C06C32FB3CAA0E /* ADSBPlugin.swift in Sources */,
 				42DCF526B899E93E4340934B /* ADSBStatusOverlay.swift in Sources */,
+				CF000001B000000000000001 /* ConfigProfile.swift in Sources */,
+				CF000002B000000000000001 /* ProfileQRCodec.swift in Sources */,
+				CF000003B000000000000001 /* ProfileStore.swift in Sources */,
+				CF000004B000000000000001 /* ProfilesView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

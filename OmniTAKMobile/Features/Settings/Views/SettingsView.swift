@@ -38,6 +38,9 @@ struct SettingsView: View {
     @State private var showServersSheet = false
     @State private var showMissionCreationSheet = false
     @State private var showGybSheet = false
+    @State private var showProfilesSheet = false
+
+    @ObservedObject private var profileStore = ProfileStore.shared
 
     var body: some View {
         NavigationView {
@@ -55,6 +58,37 @@ struct SettingsView: View {
                                 PositionBroadcastService.shared.userCallsign = newValue
                                 ChatManager.shared.currentUserCallsign = newValue
                             }
+                    }
+                }
+
+                // Configuration Profiles — above Servers so "scan to join" is the first action
+                Section("Configuration Profiles") {
+                    Button(action: { showProfilesSheet = true }) {
+                        HStack {
+                            Image(systemName: "person.3.fill")
+                                .foregroundColor(Color(hex: "#FFFC00"))
+                                .frame(width: 24)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Manage Profiles")
+                                    .foregroundColor(.primary)
+                                if let active = profileStore.activeProfile {
+                                    Text("Active: \(active.name)")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.gray)
+                                } else {
+                                    Text("Snap & share config via QR")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.gray)
+                                }
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 14))
+                                .foregroundColor(.gray)
+                        }
                     }
                 }
 
@@ -345,6 +379,10 @@ struct SettingsView: View {
                         dismiss()
                     }
                 }
+            }
+            .sheet(isPresented: $showProfilesSheet) {
+                ProfilesView()
+                    .environmentObject(loc)
             }
             .sheet(isPresented: $showServersSheet) {
                 ServersView()
