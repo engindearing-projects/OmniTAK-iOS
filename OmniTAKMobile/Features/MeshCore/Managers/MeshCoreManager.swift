@@ -286,7 +286,7 @@ public final class MeshCoreManager: ObservableObject, MeshManager {
     ///   - b-t-f (GeoChat)          -> SEND_TXT_MSG to every known contact
     /// Returns true if at least one frame was dispatched.
     @discardableResult
-    public func sendCoTOverMesh(_ event: CoTEvent, channelIndex: UInt32 = 0) -> Bool {
+    func sendCoTOverMesh(_ event: CoTEvent, channelIndex: UInt32 = 0) -> Bool {
         guard isConnected, #available(iOS 13.0, *) else {
             lastError = "Not connected"
             return false
