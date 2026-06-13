@@ -14,7 +14,8 @@ import Foundation
 /// A server configuration stripped of all credential secrets.
 /// Retains enough for a teammate to know which server to connect to and
 /// initiate enrollment.  Does NOT include certificatePassword, caCertificatePassword,
-/// or the user's password — those are per-device secrets.
+/// the user's password, or the enrollment username — those are per-device secrets /
+/// PII (the callsign / username is unique to each operator; teammates set their own).
 struct ProfileServer: Codable, Equatable {
     var name: String
     var host: String
@@ -24,7 +25,8 @@ struct ProfileServer: Codable, Equatable {
     var enabled: Bool
     /// Optional enrollment pointer (server host may differ from streaming host)
     var enrollmentPort: UInt16?
-    /// Username hint — helps auto-populate the enrollment form; no password
+    /// Username — stored locally for UX, intentionally excluded from QR/Codable
+    /// so teammate callsigns / PII are never embedded in a shared QR code.
     var enrollmentUsername: String?
 
     init(from server: TAKServer) {
@@ -36,7 +38,39 @@ struct ProfileServer: Codable, Equatable {
         self.enabled = server.enabled
         self.enrollmentPort = server.enrollmentPort
         self.enrollmentUsername = server.username
-        // certificatePassword, caCertificatePassword, password intentionally omitted
+        // certificatePassword, caCertificatePassword, password, enrollmentUsername
+        // intentionally omitted from the serialised (Codable) form below.
+    }
+
+    // MARK: - Codable (excludes enrollmentUsername)
+
+    enum CodingKeys: String, CodingKey {
+        case name, host, port, protocolType, useTLS, enabled, enrollmentPort
+        // enrollmentUsername is intentionally absent — PII, not shared in QR
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name         = try c.decode(String.self,  forKey: .name)
+        host         = try c.decode(String.self,  forKey: .host)
+        port         = try c.decode(UInt16.self,  forKey: .port)
+        protocolType = try c.decode(String.self,  forKey: .protocolType)
+        useTLS       = try c.decode(Bool.self,    forKey: .useTLS)
+        enabled      = try c.decode(Bool.self,    forKey: .enabled)
+        enrollmentPort     = try c.decodeIfPresent(UInt16.self, forKey: .enrollmentPort)
+        enrollmentUsername = nil  // never decoded from QR; operator enters at enrollment
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name,         forKey: .name)
+        try c.encode(host,         forKey: .host)
+        try c.encode(port,         forKey: .port)
+        try c.encode(protocolType, forKey: .protocolType)
+        try c.encode(useTLS,       forKey: .useTLS)
+        try c.encode(enabled,      forKey: .enabled)
+        try c.encodeIfPresent(enrollmentPort, forKey: .enrollmentPort)
+        // enrollmentUsername intentionally not encoded
     }
 
     /// Reconstruct a TAKServer from this snapshot.
@@ -55,6 +89,11 @@ struct ProfileServer: Codable, Equatable {
             caCertificateName: nil,
             caCertificatePassword: nil,
             allowLegacyTLS: false,
+            // Intentional security policy (matches Android profile import behaviour):
+            // never propagate trust-disable via a shared profile — the operator's
+            // self-signed-server setting is per-device and set at enrollment time.
+            // Keeping this false-on-import is the safe default; it prevents a
+            // crafted QR from silently disabling TLS validation for a teammate.
             allowUntrustedTLS: false,
             username: enrollmentUsername,
             password: nil,

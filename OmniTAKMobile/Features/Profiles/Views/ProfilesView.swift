@@ -88,6 +88,7 @@ struct ProfilesView: View {
                     ProfileImportPreviewView(profile: profile) { confirmed in
                         if confirmed {
                             store.addProfile(profile)
+                            store.apply(profile)
                         }
                         importPreviewProfile = nil
                     }

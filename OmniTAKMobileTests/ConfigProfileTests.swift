@@ -105,7 +105,18 @@ class ConfigProfileTests: XCTestCase {
         XCTAssertEqual(snapshot.host, "secure.tak.mil")
         XCTAssertEqual(snapshot.port, 8089)
         XCTAssertEqual(snapshot.enrollmentPort, 8446)
-        XCTAssertEqual(snapshot.enrollmentUsername, "operator")
+        // enrollmentUsername is stored locally in the struct but excluded from
+        // Codable / QR serialisation (fix #9 — PII not shared in QR).
+        // The raw field still carries the value for local UX use.
+        XCTAssertEqual(snapshot.enrollmentUsername, "operator",
+            "enrollmentUsername is available locally before serialisation")
+
+        // After a round-trip through JSON (as would happen in a QR code),
+        // enrollmentUsername must be nil — it is excluded from CodingKeys.
+        let data = try! JSONEncoder().encode(snapshot)
+        let roundTripped = try! JSONDecoder().decode(ProfileServer.self, from: data)
+        XCTAssertNil(roundTripped.enrollmentUsername,
+            "enrollmentUsername must be nil after JSON round-trip (excluded from CodingKeys)")
 
         // When converted back, passwords are nil
         let restored = snapshot.toTAKServer()
@@ -308,5 +319,117 @@ class ConfigProfileTests: XCTestCase {
 
         store.deleteProfile(id: profile.id)
         XCTAssertFalse(store.profiles.contains { $0.id == profile.id })
+    }
+
+    // MARK: - Fix #5: Decompression bomb guard
+
+    func testDecompressionBombIsRejected() throws {
+        // Craft a URL whose decompressed payload exceeds 65 536 bytes.
+        // Strategy: create a large-but-compressible JSON blob, compress it,
+        // base64url-encode it, stuff it into the URL, and verify decode throws.
+        // We hand-craft the URL rather than going through encode() since encode()
+        // enforces the 2800-byte compressed limit (correct behaviour).
+        let bigString = String(repeating: "A", count: 100_000)
+        let bigData   = bigString.data(using: .utf8)!
+        let compressed: Data
+        if #available(iOS 13.0, *) {
+            compressed = (try? (bigData as NSData).compressed(using: .zlib) as Data) ?? bigData
+        } else {
+            // On pre-13 the fallback path returns uncompressed; skip on very old OS.
+            return
+        }
+        let payload    = ProfileQRCodec.base64URLEncode(compressed)
+        let urlString  = "omnitak://profile?d=\(payload)"
+
+        XCTAssertThrowsError(try ProfileQRCodec.decode(urlString: urlString)) { error in
+            guard case ProfileQRError.decompressedPayloadTooLarge = error else {
+                return XCTFail("Expected .decompressedPayloadTooLarge, got: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Fix #9 / Fix #11: enrollmentUsername excluded; no secrets in QR
+
+    func testEnrollmentUsernameNotInQRPayload() throws {
+        let server = TAKServer(
+            name: "HQ",
+            host: "tak.mil",
+            port: 8089,
+            protocolType: "ssl",
+            useTLS: true,
+            isDefault: false,
+            enabled: true,
+            certificateName: nil,
+            certificatePassword: nil,
+            caCertificateName: nil,
+            caCertificatePassword: nil,
+            allowLegacyTLS: false,
+            allowUntrustedTLS: false,
+            username: "jdoe",
+            password: nil,
+            enrollmentPort: 8446
+        )
+        let profile  = ConfigProfile(
+            name: "No-PII Test",
+            servers: [ProfileServer(from: server)]
+        )
+        let urlString = try ProfileQRCodec.encode(profile)
+
+        // The QR URL must not contain the username / callsign in plain text
+        XCTAssertFalse(urlString.contains("jdoe"),
+            "QR URL must not contain the enrollmentUsername in plain text")
+
+        // Decode and verify enrollmentUsername was stripped
+        let decoded = try ProfileQRCodec.decode(urlString: urlString)
+        XCTAssertNil(decoded.servers.first?.enrollmentUsername,
+            "enrollmentUsername must be nil after QR round-trip")
+    }
+
+    // MARK: - Fix #11: No-secrets regression test
+
+    func testSnapshotContainsNoPasswords() throws {
+        // Build a profile that mimics a server with cert + CA passwords.
+        let serverWithSecrets = TAKServer(
+            name: "Secure HQ",
+            host: "sec.tak.mil",
+            port: 8089,
+            protocolType: "ssl",
+            useTLS: true,
+            isDefault: false,
+            enabled: true,
+            certificateName: "my-cert",
+            certificatePassword: "supersecret",
+            caCertificateName: "my-ca",
+            caCertificatePassword: "casecret",
+            allowLegacyTLS: false,
+            allowUntrustedTLS: false,
+            username: "operator99",
+            password: "hunter2",
+            enrollmentPort: 8446
+        )
+        let profile = ConfigProfile(
+            name: "Secrets Test",
+            servers: [ProfileServer(from: serverWithSecrets)]
+        )
+
+        // 1. JSON serialisation must not contain any secret strings
+        let json = try JSONEncoder().encode(profile)
+        let jsonStr = String(data: json, encoding: .utf8) ?? ""
+        for secret in ["supersecret", "casecret", "hunter2", "operator99"] {
+            XCTAssertFalse(jsonStr.contains(secret),
+                "Serialised profile must not contain secret: \(secret)")
+        }
+
+        // 2. QR URL must not contain any secret strings
+        let urlString = try ProfileQRCodec.encode(profile)
+        // Check in plain text (the payload is base64url-encoded; secrets would not appear
+        // literally, but confirming the decoded form matches is the rigorous check).
+        let decoded = try ProfileQRCodec.decode(urlString: urlString)
+        XCTAssertNil(decoded.servers.first?.enrollmentUsername, "Username must be nil after QR round-trip")
+        // Verify toTAKServer() produced no passwords
+        let restored = decoded.servers.first!.toTAKServer()
+        XCTAssertNil(restored.password)
+        XCTAssertNil(restored.certificatePassword)
+        XCTAssertNil(restored.caCertificatePassword)
     }
 }

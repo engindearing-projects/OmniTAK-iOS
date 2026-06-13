@@ -58,12 +58,24 @@ struct MeshCoreSelfInfo: Equatable {
     let hasPosition: Bool
 }
 
+/// Device info decoded from a RESP_DEVICE_INFO (0x0D) frame.
+/// Layout per MeshCore-1.4.8: [0x0D][hwModel u8 @1][hwRevision u8 @2][fwVersion ascii @3…].
+struct MeshCoreDeviceInfo: Equatable {
+    /// Hardware model identifier byte.
+    let hwModel: UInt8
+    /// Hardware revision byte.
+    let hwRevision: UInt8
+    /// Firmware version string (null-terminated ASCII, may be empty).
+    let firmwareVersion: String
+}
+
 /// One decoded response frame from the radio.
 enum MeshCoreResponse: Equatable {
     case selfInfo(MeshCoreSelfInfo)
     case contact(MeshCoreContact)        // advert / contact (position-bearing)
     case textMessage(MeshCoreTextMessage)
     case battery(millivolts: Int, percent: Int)
+    case deviceInfo(MeshCoreDeviceInfo)  // 0x0D — hardware / firmware identity
     case noMoreMessages
     case messagesWaiting
     case other(code: UInt8)              // recognized-but-unhandled / unknown
@@ -98,7 +110,7 @@ enum MeshCoreFrameCodec {
     static let respContactMsgV3: UInt8   = 0x10
     static let respNoMoreMsgs: UInt8     = 0x0A
     static let respBattery: UInt8        = 0x0C
-    static let respDeviceInfo: UInt8     = 0x0D
+    static let respDeviceInfo: UInt8     = 0x0D   // RESP_DEVICE_INFO — 82 bytes on live radio
     static let respCodeContact: UInt8    = 0x03   // full contact record
     static let pushCodeAdvert: UInt8     = 0x80
     static let pushCodeNewAdvert: UInt8  = 0x8A
@@ -208,6 +220,9 @@ enum MeshCoreFrameCodec {
         case respBattery:
             if let (mv, pct) = decodeBattery(frame) { return .battery(millivolts: mv, percent: pct) }
             return .other(code: code)
+        case respDeviceInfo:
+            if let info = decodeDeviceInfo(frame) { return .deviceInfo(info) }
+            return .other(code: code)
         case respContactMsg, respContactMsgV3:
             if let msg = decodeTextMessage(frame, v3: code == respContactMsgV3) {
                 return .textMessage(msg)
@@ -296,6 +311,20 @@ enum MeshCoreFrameCodec {
         return (mv, batteryPercent(fromMillivolts: mv))
     }
 
+    /// Parse a RESP_DEVICE_INFO (0x0D) frame.
+    /// Layout: [0x0D][hwModel u8 @1][hwRevision u8 @2][fwVersion ascii @3…].
+    /// The live radio sends an 82-byte frame; anything ≥ 3 bytes is accepted
+    /// (the version string can be empty on minimal builds).
+    static func decodeDeviceInfo(_ frame: Data) -> MeshCoreDeviceInfo? {
+        guard frame.count >= 3 else { return nil }
+        let hwModel    = frame[frame.startIndex + 1]
+        let hwRevision = frame[frame.startIndex + 2]
+        let fwVersion  = frame.count > 3
+            ? frame.cString(from: 3, maxLen: frame.count - 3)
+            : ""
+        return MeshCoreDeviceInfo(hwModel: hwModel, hwRevision: hwRevision, firmwareVersion: fwVersion)
+    }
+
     static func batteryPercent(fromMillivolts mv: Int) -> Int {
         if mv <= 0 { return -1 }
         if mv <= batteryMinMv { return 0 }
@@ -320,11 +349,25 @@ enum MeshCoreFrameCodec {
         return out
     }
 
-    /// Derive a stable 32-bit node id from the first 4 bytes of a pubkey hex
-    /// (big-endian), used as the `MeshNode.id` key. 0 if the pubkey is invalid.
+    /// Derive a stable 32-bit node id from the first 6 bytes of a pubkey hex.
+    /// We fold the 6 bytes into a UInt32 by XOR-ing bytes 4 and 5 into the high
+    /// and mid positions so the full 48-bit prefix contributes to the id; this
+    /// matches the Android companion's key-contact behaviour (6-byte prefix).
+    /// 0 if the pubkey is invalid or too short.
     static func nodeId(fromPubKeyHex pubKeyHex: String) -> UInt32 {
-        guard let bytes = pubKeyPrefixBytes(pubKeyHex, count: 4) else { return 0 }
-        return bytes.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        guard let bytes = pubKeyPrefixBytes(pubKeyHex, count: 6) else { return 0 }
+        // Incorporate all 6 bytes: use first 4 as base, mix bytes 4+5 in.
+        let base = bytes.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        let mix  = UInt32(bytes[4]) ^ (UInt32(bytes[5]) << 16)
+        return base ^ mix
+    }
+
+    /// Stable 12-hex-char public-key prefix (6 bytes) used for MESHCORE UIDs
+    /// and self-node deduplication. Returns nil if pubKeyHex is too short.
+    static func pubKeyPrefix12(fromPubKeyHex pubKeyHex: String) -> String? {
+        let hex = pubKeyHex.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hex.count >= 12 else { return nil }
+        return String(hex.prefix(12)).lowercased()
     }
 }
 

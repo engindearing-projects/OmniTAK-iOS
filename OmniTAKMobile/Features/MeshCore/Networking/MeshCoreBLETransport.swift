@@ -206,9 +206,18 @@ final class MeshCoreBLETransport: NSObject, ObservableObject, MeshTransport {
             rx.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
         peripheral.writeValue(frame, for: rx, type: writeType)
         if writeType == .withoutResponse {
-            // No write callback for WWR — release the in-flight latch and keep draining.
+            // WWR: pace via peripheralIsReady(toSendWriteWithoutResponse:) so the
+            // radio's UART buffer isn't overrun under burst writes.  Release the
+            // in-flight latch now only when the peripheral reports it's ready;
+            // if canSendWriteWithoutResponse is already true we drain immediately
+            // (avoids deadlock on the very first frame).
             writeInFlight = false
-            if !writeQueue.isEmpty { drainWriteQueue() }
+            if !writeQueue.isEmpty {
+                if peripheral.canSendWriteWithoutResponse {
+                    drainWriteQueue()
+                }
+                // else: peripheralIsReady(toSendWriteWithoutResponse:) will call drainWriteQueue()
+            }
         }
     }
 
@@ -439,6 +448,12 @@ extension MeshCoreBLETransport: CBPeripheralDelegate {
         }
         // Write-with-response completed — release the latch and send the next.
         writeInFlight = false
+        drainWriteQueue()
+    }
+
+    /// Called by CoreBluetooth when a WWR peripheral's TX buffer has space again.
+    /// Resume draining the write queue now that the radio is ready.
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         drainWriteQueue()
     }
 }

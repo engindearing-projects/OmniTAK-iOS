@@ -187,6 +187,11 @@ public final class MeshCoreManager: ObservableObject, MeshManager {
         case .battery(_, let percent):
             if percent >= 0 { batteryPercent = percent }
 
+        case .deviceInfo(let info):
+            #if DEBUG
+            print("MeshCore: device hw=\(info.hwModel) rev=\(info.hwRevision) fw='\(info.firmwareVersion)'")
+            #endif
+
         case .messagesWaiting:
             if #available(iOS 13.0, *) { transport.send(MeshCoreFrameCodec.encodeGetNextMessage()) }
 
@@ -201,19 +206,23 @@ public final class MeshCoreManager: ObservableObject, MeshManager {
         let nodeId = MeshCoreFrameCodec.nodeId(fromPubKeyHex: contact.pubKeyHex)
         guard nodeId != 0 else { return }
         // Don't plot our own advert as a separate contact.
+        // Use the 6-byte (12-hex-char) prefix — the firmware keys contacts on
+        // the 6-byte prefix, so a 4-byte check would over-match short-prefix collisions.
         if !selfPubKeyHex.isEmpty,
            contact.pubKeyHex.lowercased().hasPrefix(String(selfPubKeyHex.prefix(12)).lowercased()) {
             return
         }
         contactsByNodeId[nodeId] = contact
 
+        // Build a stable short name from the 6-byte (12-hex-char) prefix.
+        let keyPrefix12 = String(contact.pubKeyHex.prefix(12)).uppercased()
         let position: MeshPosition? = contact.hasValidPosition
             ? MeshPosition(latitude: contact.latitude, longitude: contact.longitude, altitude: nil)
             : nil
         let node = MeshNode(
             id: nodeId,
-            shortName: String(contact.pubKeyHex.prefix(8)).uppercased(),
-            longName: contact.name.isEmpty ? "MeshCore \(String(contact.pubKeyHex.prefix(8)))" : contact.name,
+            shortName: keyPrefix12,
+            longName: contact.name.isEmpty ? "MeshCore \(keyPrefix12)" : contact.name,
             position: position,
             lastHeard: Date(),
             snr: nil,
@@ -243,8 +252,8 @@ public final class MeshCoreManager: ObservableObject, MeshManager {
         let known = contactsByNodeId.values.first {
             $0.pubKeyHex.lowercased().hasPrefix(senderPrefix)
         }
-        let senderUID = "MESHCORE-\(String((known?.pubKeyHex ?? msg.senderPubKeyPrefixHex).prefix(8)))"
-        let callsign = known?.name ?? "MeshCore \(msg.senderPubKeyPrefixHex.prefix(8))"
+        let senderUID = "MESHCORE-\(String((known?.pubKeyHex ?? msg.senderPubKeyPrefixHex).prefix(12)).uppercased())"
+        let callsign = known?.name ?? "MeshCore \(msg.senderPubKeyPrefixHex.prefix(12).uppercased())"
 
         let chat = ChatMessage(
             id: UUID().uuidString,

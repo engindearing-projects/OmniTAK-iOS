@@ -261,12 +261,20 @@ class PositionBroadcastService: ObservableObject {
             lastMeshPPLISend = now
             let xmlToSend = cotXML
             Task { @MainActor in
-                guard MeshtasticManager.shared.isConnected else { return }
                 guard let event = CoTMessageParser.parsePositionUpdate(xml: xmlToSend) else {
                     print("⚠️ Mesh PPLI: failed to parse self-SA CoT XML for mesh send")
                     return
                 }
-                MeshtasticManager.shared.sendCoTOverMesh(event)
+                let frameworkKey = UserDefaults.standard.string(forKey: MeshFramework.storageKey) ?? ""
+                if #available(iOS 13.0, *),
+                   frameworkKey == MeshFramework.meshcore.rawValue,
+                   MeshCoreManager.shared.isConnected {
+                    MeshCoreManager.shared.sendCoTOverMesh(event)
+                } else if MeshtasticManager.shared.isConnected {
+                    MeshtasticManager.shared.sendCoTOverMesh(event)
+                } else {
+                    return
+                }
                 #if DEBUG
                 print("📡 Mesh PPLI: sent self-position over mesh")
                 #endif

@@ -154,9 +154,11 @@ final class MeshCoreFrameCodecTests: XCTestCase {
         XCTAssertEqual(contact.longitude, -122.3321, accuracy: 1e-6)
         XCTAssertEqual(contact.advertTimestampSec, 1_700_000_000)
         // pubkey hex begins 01020304…
-        XCTAssertTrue(contact.pubKeyHex.hasPrefix("01020304"))
-        // node id derived from first 4 bytes big-endian = 0x01020304
-        XCTAssertEqual(MeshCoreFrameCodec.nodeId(fromPubKeyHex: contact.pubKeyHex), 0x01020304)
+        XCTAssertTrue(contact.pubKeyHex.hasPrefix("010203"))
+        // node id derived from first 6 bytes — must be non-zero and stable.
+        let nodeId = MeshCoreFrameCodec.nodeId(fromPubKeyHex: contact.pubKeyHex)
+        XCTAssertNotEqual(nodeId, 0)
+        XCTAssertEqual(nodeId, MeshCoreFrameCodec.nodeId(fromPubKeyHex: contact.pubKeyHex))
     }
 
     func testDecodeContactNullIslandHasNoValidPosition() {
@@ -228,6 +230,45 @@ final class MeshCoreFrameCodecTests: XCTestCase {
         XCTAssertEqual(code, 0xEE)
     }
 
+    // MARK: - Fix #1: RESP_DEVICE_INFO (0x0D) handler
+
+    func testDecodeDeviceInfoMinimalFrame() {
+        // Minimal 3-byte device info: [0x0D][hwModel][hwRevision]
+        let frame = Data([0x0D, 0x05, 0x02])
+        guard case let .deviceInfo(info)? = MeshCoreFrameCodec.decode(frame) else {
+            return XCTFail("expected .deviceInfo for code 0x0D")
+        }
+        XCTAssertEqual(info.hwModel, 0x05)
+        XCTAssertEqual(info.hwRevision, 0x02)
+        XCTAssertEqual(info.firmwareVersion, "")
+    }
+
+    func testDecodeDeviceInfo82ByteFrame() {
+        // Live radio sends 82 bytes: [0x0D][hw][rev][fw ascii null-terminated, padded]
+        var frame = [UInt8](repeating: 0, count: 82)
+        frame[0] = 0x0D
+        frame[1] = 0x03  // hwModel
+        frame[2] = 0x01  // hwRevision
+        let fw = Array("1.4.8".utf8)
+        for (i, b) in fw.enumerated() { frame[3 + i] = b }
+
+        guard case let .deviceInfo(info)? = MeshCoreFrameCodec.decode(Data(frame)) else {
+            return XCTFail("expected .deviceInfo for 82-byte frame")
+        }
+        XCTAssertEqual(info.hwModel, 0x03)
+        XCTAssertEqual(info.hwRevision, 0x01)
+        XCTAssertEqual(info.firmwareVersion, "1.4.8")
+    }
+
+    func testDecodeDeviceInfoTooShortIsOther() {
+        // 2-byte frame is below the 3-byte minimum → .other
+        let frame = Data([0x0D, 0x01])
+        guard case let .other(code)? = MeshCoreFrameCodec.decode(frame) else {
+            return XCTFail("expected .other for truncated 0x0D frame")
+        }
+        XCTAssertEqual(code, 0x0D)
+    }
+
     func testDecodeEmptyFrameIsNil() {
         XCTAssertNil(MeshCoreFrameCodec.decode(Data()))
     }
@@ -242,14 +283,35 @@ final class MeshCoreFrameCodecTests: XCTestCase {
     }
 
     func testNodeIdDerivation() {
-        XCTAssertEqual(MeshCoreFrameCodec.nodeId(fromPubKeyHex: "deadbeefcafe"), 0xDEADBEEF)
+        // 6-byte prefix: "deadbeefcafe" — nodeId must be non-zero and deterministic.
+        let id = MeshCoreFrameCodec.nodeId(fromPubKeyHex: "deadbeefcafe")
+        XCTAssertNotEqual(id, 0)
+        // Same input always yields the same id.
+        XCTAssertEqual(id, MeshCoreFrameCodec.nodeId(fromPubKeyHex: "deadbeefcafe"))
+        // Too-short pubkey → 0
+        XCTAssertEqual(MeshCoreFrameCodec.nodeId(fromPubKeyHex: "deadbeef"), 0)
         XCTAssertEqual(MeshCoreFrameCodec.nodeId(fromPubKeyHex: ""), 0)
+    }
+
+    // MARK: - Fix #3: node-id widened 4→6 bytes; CoT UID uses 12 hex chars
+
+    func testCoTUIDUses12HexChars() {
+        // UID must be MESHCORE- + 12 uppercase hex chars (6 bytes).
+        let uid = MeshCoreCoTConverter.uid(forPubKeyHex: "deadbeefcafebabe")
+        XCTAssertEqual(uid, "MESHCORE-DEADBEEFCAFE")
+        XCTAssertEqual(uid.count, "MESHCORE-".count + 12)
+    }
+
+    func testPubKeyPrefix12Helper() {
+        XCTAssertEqual(MeshCoreFrameCodec.pubKeyPrefix12(fromPubKeyHex: "deadbeefcafebabe0011"), "deadbeefcafe")
+        XCTAssertNil(MeshCoreFrameCodec.pubKeyPrefix12(fromPubKeyHex: "dead"))
     }
 
     // MARK: - CoT conversion
 
     func testCoTConverterUIDPrefix() {
-        XCTAssertEqual(MeshCoreCoTConverter.uid(forPubKeyHex: "deadbeefcafebabe"), "MESHCORE-deadbeef")
+        // Updated: 12 uppercase hex chars
+        XCTAssertEqual(MeshCoreCoTConverter.uid(forPubKeyHex: "deadbeefcafebabe"), "MESHCORE-DEADBEEFCAFE")
     }
 
     func testCoTConverterProducesPLIForPositionedContact() {
@@ -265,7 +327,8 @@ final class MeshCoreFrameCodecTests: XCTestCase {
         guard let event = MeshCoreCoTConverter.toCoTEvent(contact: contact) else {
             return XCTFail("expected a CoT event")
         }
-        XCTAssertEqual(event.uid, "MESHCORE-deadbeef")
+        // UID now uses 12 uppercase hex chars (6-byte prefix)
+        XCTAssertEqual(event.uid, "MESHCORE-DEADBEEFCAFE")
         XCTAssertEqual(event.type, "a-n-G-U-C")
         XCTAssertEqual(event.detail.callsign, "Recon-1")
         XCTAssertEqual(event.point.lat, 47.6062, accuracy: 1e-6)

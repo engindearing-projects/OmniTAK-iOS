@@ -160,13 +160,13 @@ class ChatManager: ObservableObject {
         }
 
         // --- Mesh off-grid GeoChat ---
-        // Mirror the text message over the active Meshtastic radio so peers
-        // with no server can see the chat.  MeshtasticManager is @MainActor.
+        // Mirror the text message over the active mesh radio so peers with no
+        // server can see the chat. Route via the active framework
+        // (selectedMeshFramework key) — Meshtastic or MeshCore.
         let meshText = text
         let meshCallsign = currentUserCallsign
         let meshLocation = locationManager?.location
         Task { @MainActor in
-            guard MeshtasticManager.shared.isConnected else { return }
             let point = CoTPoint(
                 lat: meshLocation?.coordinate.latitude ?? 0.0,
                 lon: meshLocation?.coordinate.longitude ?? 0.0,
@@ -192,7 +192,14 @@ class ChatManager: ObservableObject {
                 point: point,
                 detail: detail
             )
-            MeshtasticManager.shared.sendCoTOverMesh(event)
+            let frameworkKey = UserDefaults.standard.string(forKey: MeshFramework.storageKey) ?? ""
+            if #available(iOS 13.0, *),
+               frameworkKey == MeshFramework.meshcore.rawValue,
+               MeshCoreManager.shared.isConnected {
+                MeshCoreManager.shared.sendCoTOverMesh(event)
+            } else if MeshtasticManager.shared.isConnected {
+                MeshtasticManager.shared.sendCoTOverMesh(event)
+            }
             #if DEBUG
             print("📡 Mesh GeoChat: sent '\(meshText)' from \(meshCallsign) over mesh")
             #endif
@@ -271,7 +278,6 @@ class ChatManager: ObservableObject {
             let meshCallsign = currentUserCallsign
             let meshLocation = locationManager?.location
             Task { @MainActor in
-                guard MeshtasticManager.shared.isConnected else { return }
                 let point = CoTPoint(
                     lat: meshLocation?.coordinate.latitude ?? 0.0,
                     lon: meshLocation?.coordinate.longitude ?? 0.0,
@@ -297,7 +303,14 @@ class ChatManager: ObservableObject {
                     point: point,
                     detail: detail
                 )
-                MeshtasticManager.shared.sendCoTOverMesh(event)
+                let frameworkKey = UserDefaults.standard.string(forKey: MeshFramework.storageKey) ?? ""
+                if #available(iOS 13.0, *),
+                   frameworkKey == MeshFramework.meshcore.rawValue,
+                   MeshCoreManager.shared.isConnected {
+                    MeshCoreManager.shared.sendCoTOverMesh(event)
+                } else if MeshtasticManager.shared.isConnected {
+                    MeshtasticManager.shared.sendCoTOverMesh(event)
+                }
                 #if DEBUG
                 print("📡 Mesh GeoChat (image msg text): sent '\(meshText)' over mesh")
                 #endif

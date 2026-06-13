@@ -13,11 +13,12 @@ import Foundation
 
 enum MeshCoreCoTConverter {
 
-    /// CoT UID for a MeshCore contact: `MESHCORE-` + first 8 hex chars (4 bytes)
-    /// of the node's public key.
+    /// CoT UID for a MeshCore contact: `MESHCORE-` + first 12 uppercase hex chars
+    /// (6 bytes) of the node's public key. Matches the 6-byte prefix the firmware
+    /// uses to key contacts (Android-consistent: MESHCORE-<12 uppercase hex>).
     static func uid(forPubKeyHex pubKeyHex: String) -> String {
-        let prefix = String(pubKeyHex.prefix(8))
-        return "MESHCORE-\(prefix.isEmpty ? "unknown" : prefix)"
+        let prefix = String(pubKeyHex.prefix(12)).uppercased()
+        return "MESHCORE-\(prefix.isEmpty ? "UNKNOWN" : prefix)"
     }
 
     /// Build a CoT PLI event for a MeshCore contact with a valid position.
@@ -65,10 +66,10 @@ enum MeshCoreCoTConverter {
         return CoTEvent(uid: uid, type: cotType, time: time, point: point, detail: detail)
     }
 
-    /// A short, human-ish fallback name from the pubkey (last 4 hex of the
-    /// 8-char id), matching how MeshCore device names look (e.g. "MeshCore-25C70E7E").
+    /// A short, human-ish fallback name from the pubkey (first 12 hex = 6 bytes),
+    /// matching the 6-byte-prefix convention (e.g. "MeshCore-DEADBEEFCAFE").
     private static func shortName(forPubKeyHex pubKeyHex: String) -> String {
-        let id8 = String(pubKeyHex.prefix(8)).uppercased()
-        return id8.isEmpty ? "MeshCore" : "MeshCore-\(id8)"
+        let id12 = String(pubKeyHex.prefix(12)).uppercased()
+        return id12.isEmpty ? "MeshCore" : "MeshCore-\(id12)"
     }
 }

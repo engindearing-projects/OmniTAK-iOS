@@ -220,6 +220,11 @@ class DeepLinkHandler: ObservableObject {
     @Published var showEnrollmentSuccess = false
     @Published var enrolledServerName: String?
 
+    /// Non-nil while a config-profile deep link is awaiting user confirmation
+    /// (mirroring the scanner path: show ProfileImportPreviewView, apply only
+    /// on confirm). Set by processConfigProfile; cleared by confirmPendingProfile.
+    @Published var pendingDeepLinkProfile: ConfigProfile?
+
     private let csrEnrollmentService = CSREnrollmentService()
     private let urlSession: URLSession
 
@@ -324,18 +329,24 @@ class DeepLinkHandler: ObservableObject {
 
     // MARK: - Config Profile Import
 
+    /// Stage the profile for user confirmation — identical to the scanner path.
+    /// The app's root view observes `pendingDeepLinkProfile` and presents
+    /// ProfileImportPreviewView; call `confirmPendingProfile(_:confirmed:)`
+    /// from the preview's onConfirm callback.
     private func processConfigProfile(_ profile: ConfigProfile) {
-        print("[DeepLink] Importing config profile: \(profile.name)")
-        isProcessing = true
-        lastError = nil
+        print("[DeepLink] Staging config profile for confirmation: \(profile.name)")
+        pendingDeepLinkProfile = profile
+    }
 
+    /// Called by the confirmation UI (ProfileImportPreviewView's onConfirm).
+    /// If confirmed, stores and applies the profile; either way clears the pending state.
+    func confirmPendingProfile(_ profile: ConfigProfile, confirmed: Bool) {
+        pendingDeepLinkProfile = nil
+        guard confirmed else { return }
         ProfileStore.shared.addProfile(profile)
         ProfileStore.shared.apply(profile)
-
-        isProcessing = false
         enrolledServerName = profile.name
         showEnrollmentSuccess = true
-
         print("[DeepLink] ✅ Config profile '\(profile.name)' imported and applied")
     }
 

@@ -22,6 +22,7 @@ enum ProfileQRError: LocalizedError {
     case notAProfileURL
     case missingPayload
     case payloadTooLarge(Int)
+    case decompressedPayloadTooLarge(Int)
 
     var errorDescription: String? {
         switch self {
@@ -30,6 +31,7 @@ enum ProfileQRError: LocalizedError {
         case .notAProfileURL: return "URL is not an omnitak://profile link"
         case .missingPayload: return "QR link is missing the profile payload"
         case .payloadTooLarge(let bytes): return "Profile payload is too large (\(bytes) bytes) for a reliable QR code"
+        case .decompressedPayloadTooLarge(let bytes): return "Decompressed profile payload is too large (\(bytes) bytes)"
         }
     }
 }
@@ -85,7 +87,16 @@ enum ProfileQRCodec {
         let compressed = try base64URLDecode(dParam)
         let json: Data
         do {
-            json = try decompress(compressed)
+            let decompressed = try decompress(compressed)
+            // Guard against decompression bombs: cap at 64 KiB.
+            // A realistic full profile is well under 2 KiB compressed; this is
+            // a hard safety rail, not a QR-size limit.
+            guard decompressed.count <= 65_536 else {
+                throw ProfileQRError.decompressedPayloadTooLarge(decompressed.count)
+            }
+            json = decompressed
+        } catch let qrErr as ProfileQRError {
+            throw qrErr
         } catch {
             // Fallback: treat as raw (uncompressed) JSON for very small payloads
             json = compressed
@@ -103,7 +114,10 @@ enum ProfileQRCodec {
     /// Generate a UIImage containing the QR code for a profile URL.
     /// Returns nil if CoreImage fails (e.g. in unit tests without a display).
     static func generateQRImage(for urlString: String, size: CGFloat = 300) -> UIImage? {
-        guard let data = urlString.data(using: .isoLatin1) else { return nil }
+        // Use UTF-8 so non-ASCII team names (CJK, Arabic, etc.) encode correctly.
+        // CIQRCodeGenerator accepts raw UTF-8 bytes; .isoLatin1 produces nil for
+        // any character outside the Latin-1 range, resulting in a blank QR.
+        guard let data = urlString.data(using: .utf8) else { return nil }
 
         guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
         filter.setValue(data, forKey: "inputMessage")

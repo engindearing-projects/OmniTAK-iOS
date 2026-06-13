@@ -112,6 +112,14 @@ struct OmniTAKMobileApp: App {
                         }
                 }
             }
+            // Deep-link config-profile confirmation: mirrors the scanner path so
+            // the user reviews settings before they are applied.
+            .sheet(item: $deepLinkHandler.pendingDeepLinkProfile) { profile in
+                ProfileImportPreviewView(profile: profile) { confirmed in
+                    deepLinkHandler.confirmPendingProfile(profile, confirmed: confirmed)
+                }
+                .environmentObject(LocalizationManager.shared)
+            }
             .onOpenURL { url in
                 // KML/KMZ opened from Files / Mail / AirDrop / "Open with
                 // OmniTAK" → import through the robust vector overlay path.
