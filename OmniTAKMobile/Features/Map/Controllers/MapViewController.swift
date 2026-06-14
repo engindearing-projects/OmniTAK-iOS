@@ -178,7 +178,11 @@ struct ATAKMapView: View {
                 type: event.type,
                 callsign: event.detail.callsign,
                 team: event.detail.team ?? "Unknown",
-                hae: (isAir && event.point.hae > 0) ? event.point.hae : nil
+                hae: (isAir && event.point.hae > 0) ? event.point.hae : nil,
+                // Issue #75 — carry the usericon path + color so spot-map /
+                // iconset markers resolve to the right TAK icon on the map.
+                iconsetPath: event.detail.iconsetPath,
+                argbColor: event.detail.argbColor
             )
 
             // Filter based on overlay settings and CoT affiliation
@@ -1131,6 +1135,9 @@ struct ATAKMapView: View {
                 // Base layer (satellite / hybrid / standard) so the layers
                 // panel switches the globe's imagery, not just the 2D style.
                 baseLayer: activeMapLayer,
+                // Issue #72 — north-up lock state so the globe pins north-up
+                // (persisted via @AppStorage; survives engine toggle / relaunch).
+                isNorthLocked: isNorthLocked,
                 selfCallsign: userCallsign,
                 // Self-pip style parity with the Mapbox puck (Settings →
                 // Self-position marker).
@@ -1654,14 +1661,10 @@ struct ATAKMapView: View {
             cesiumLastHeading = cam.heading
             cesiumLastPitch = cam.pitch
             // Issue #73 — mirror Cesium heading into mapBearing so the compass
-            // overlay stays in sync with the 3D globe's rotation.
-            mapBearing = cam.heading
-            // Issue #72 — if north-lock is engaged and the globe drifted,
-            // snap it back. The setHeading call is cheap (no re-render) so
-            // it's fine to fire on every camera tick when locked.
-            if isNorthLocked && abs(cam.heading) > 0.5 {
-                NotificationCenter.default.post(name: .cesiumResetNorth, object: nil)
-            }
+            // overlay stays in sync with the 3D globe's rotation. When the lock
+            // is engaged the JS side pins heading to 0° itself (setNorthLock),
+            // so this just reflects the corrected value — no native re-snap loop.
+            mapBearing = isNorthLocked ? 0 : cam.heading
             // Mirror the Cesium camera into mapRegion so 2D-derived chrome
             // (scale bar, MGRS grid) reads the right scale on the globe, an
             // engine toggle lands at the same view, and — crucially — the
@@ -1920,12 +1923,19 @@ struct ATAKMapView: View {
         isNorthLocked.toggle()
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
-        if isNorthLocked {
-            resetMapToNorth()
-        }
         // Mapbox: rotate disable/enable is applied in TacticalMapView.updateUIView
-        // via the northLocked binding. No notification needed for 2D.
-        // Cesium: handled by isNorthLocked watchdog inside handleCesiumMapEvent.
+        // via the isNorthLocked binding (gestures.options.rotateEnabled).
+        // Cesium: engage/release the real lock so the globe stays north-up and
+        // can't be twisted off north — the JS side snaps to north on engage and
+        // self-corrects any drift.
+        NotificationCenter.default.post(
+            name: .cesiumSetNorthLock, object: nil, userInfo: ["on": isNorthLocked]
+        )
+        if isNorthLocked {
+            // Snap the 2D engine to north now (Cesium snaps inside setNorthLock).
+            NotificationCenter.default.post(name: .mapboxResetNorth, object: nil)
+            withAnimation(.easeInOut(duration: 0.3)) { mapBearing = 0 }
+        }
     }
 
     /// Snap both map engines back to north (heading 0°).
@@ -2170,6 +2180,13 @@ struct CoTMarker: Identifiable {
     /// Height above ellipsoid (m) for airborne tracks (air-dimension CoT).
     /// nil → clamp to ground. Drives the Cesium 3D altitude + TAK leader line.
     var hae: Double? = nil
+    /// Issue #75 — `usericon iconsetpath` from the incoming CoT (e.g.
+    /// `COT_MAPPING_SPOTMAP/red`), so a received spot-map / iconset marker
+    /// resolves to the right TAK icon instead of a generic affiliation frame.
+    var iconsetPath: String? = nil
+    /// Issue #75 — signed ARGB color from the CoT `<color>` element. Spot-map
+    /// points carry their color here rather than in the type.
+    var argbColor: Int? = nil
 }
 
 struct CoTMarkerView: View {

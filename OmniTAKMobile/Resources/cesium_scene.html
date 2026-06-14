@@ -28,7 +28,7 @@
 <script src="https://unpkg.com/milsymbol@2.2.0/dist/milsymbol.js"></script>
 <script>
   Cesium.Ion.defaultAccessToken='__CESIUM_ION_TOKEN__';
-  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null}};
+  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},northLocked:false,northSnapping:false};
   // Lasso multi-select drag (issue #16, 3D parity). Camera pan is
   // disabled while the lasso is enabled; the freehand path is drawn on
   // a 2D overlay canvas and the screen points are picked to lat/lon on
@@ -54,7 +54,19 @@
   window.addEventListener('resize',_fitViewport);
   document.addEventListener('DOMContentLoaded',_fitViewport);
   function _color(a){return a==='f'?'#4ADE80':a==='h'?'#F44336':a==='n'?'#FFC107':'#B39DDB'}
-  function _billboard(a,k,sidc){
+  // Issue #75 — perceived-luminance test for a #RRGGBB hex, to pick a
+  // contrasting outline on spot-map dots (matches the iOS registry).
+  function _isLight(hex){const m=/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex||'');if(!m)return false;const r=parseInt(m[1],16)/255,g=parseInt(m[2],16)/255,b=parseInt(m[3],16)/255;return(0.299*r+0.587*g+0.114*b)>0.6}
+  function _billboard(a,k,sidc,spot){
+    // Issue #75 — TAK Spot Map point: a colored dot whose color rides the CoT
+    // <color> element (passed as `spot`, a #RRGGBB string). Wins over sidc /
+    // affiliation art so a spot-map marker reads the same dot on 2D and 3D.
+    if(spot&&k!=='aircraft'){const dk='spot|'+spot;if(_state.billboardCache.has(dk))return _state.billboardCache.get(dk);
+      const dc=document.createElement('canvas');dc.width=56;dc.height=56;const dx=dc.getContext('2d');
+      dx.beginPath();dx.arc(28,28,18,0,Math.PI*2);dx.fillStyle=spot;dx.fill();
+      // Contrasting ring so the dot reads on any imagery.
+      const lite=_isLight(spot);dx.lineWidth=4;dx.strokeStyle=lite?'#000':'#fff';dx.stroke();
+      const durl=dc.toDataURL('image/png');_state.billboardCache.set(dk,durl);return durl;}
     if(sidc&&window.ms&&k!=='aircraft'){const sk='sidc|'+sidc;if(_state.billboardCache.has(sk))return _state.billboardCache.get(sk);
       try{const sym=new window.ms.Symbol(sidc,{size:32,infoBackground:'transparent',infoColor:'white'});const url=sym.asCanvas().toDataURL('image/png');_state.billboardCache.set(sk,url);return url;}catch(e){console.warn('milsymbol failed for',sidc,e);}}
     const key=a+'|'+(k||'');if(_state.billboardCache.has(key))return _state.billboardCache.get(key);
@@ -92,7 +104,22 @@
   function _pickedUid(viewer,pos){const p=viewer.scene.pick(pos);return(p&&p.id&&typeof p.id.id==='string')?p.id.id:null}
   function _cartoFor(viewer,pos){let c=viewer.scene.pickPosition(pos);if(!Cesium.defined(c))c=viewer.camera.pickEllipsoid(pos,viewer.scene.globe.ellipsoid);if(!Cesium.defined(c))return null;const cc=Cesium.Cartographic.fromCartesian(c);return{lat:Cesium.Math.toDegrees(cc.latitude),lon:Cesium.Math.toDegrees(cc.longitude),hae:cc.height}}
   function _zoomFromHeight(h,latRad){const c=Math.max(Math.cos(latRad||0),0.01),mpp=(h*256)/1000.0,z=Math.log2(40075017*c/Math.max(mpp,1));return Math.max(0,Math.min(22,z))}
-  function _postCameraChanged(v){const cam=v.camera,carto=cam.positionCartographic;if(!carto)return;const r=cam.computeViewRectangle(v.scene.globe.ellipsoid);
+  function _postCameraChanged(v){const cam=v.camera,carto=cam.positionCartographic;if(!carto)return;
+    // Issue #72 — north-up lock guarantee. If the heading drifted off north
+    // (e.g. a two-finger twist, which Cesium folds into the rotate gesture and
+    // can't be disabled without killing pan), snap it straight back in-place.
+    // Guarded by _state.northSnapping so this re-entrant camera change doesn't
+    // recurse. Done in JS (no native round-trip / flyTo) so it's instant and
+    // doesn't fight the gesture.
+    if(_state.northLocked&&!_state.northSnapping&&Math.abs(cam.heading)>0.0087&&Math.abs(cam.heading-2*Math.PI)>0.0087){
+      _state.northSnapping=true;
+      const cv=v.scene.canvas;let ctr=v.scene.pickPosition(new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2));
+      if(!Cesium.defined(ctr))ctr=cam.pickEllipsoid(new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2),v.scene.globe.ellipsoid);
+      if(Cesium.defined(ctr)){const range=Cesium.Cartesian3.distance(cam.positionWC,ctr);cam.lookAt(ctr,new Cesium.HeadingPitchRange(0,cam.pitch,range));cam.lookAtTransform(Cesium.Matrix4.IDENTITY);}
+      else{cam.setView({orientation:{heading:0,pitch:cam.pitch,roll:0}});}
+      _state.northSnapping=false;
+    }
+    const r=cam.computeViewRectangle(v.scene.globe.ellipsoid);
     // The point under the SCREEN CENTER (where the aim crosshair sits)
     // — distinct from the camera's sub-point when tilted. Used as the
     // point-drop coordinate and the scale-bar / region center.
@@ -130,10 +157,10 @@
       const labelText=(e.callsign||'')+(showLeader?('\n'+Math.round(hae)+' m HAE'):'');
       let entity=_state.entities.get(e.uid);
       if(!entity){entity=v.entities.add({id:e.uid,position:pos,
-        billboard:{image:_billboard(e.affiliation||'u',e.kind,e.sidc),verticalOrigin:Cesium.VerticalOrigin.CENTER,heightReference:hr,disableDepthTestDistance:Number.POSITIVE_INFINITY,scale:e.kind==='aircraft'?1.5:0.7,rotation:rot},
+        billboard:{image:_billboard(e.affiliation||'u',e.kind,e.sidc,e.spot),verticalOrigin:Cesium.VerticalOrigin.CENTER,heightReference:hr,disableDepthTestDistance:Number.POSITIVE_INFINITY,scale:e.kind==='aircraft'?1.5:0.7,rotation:rot},
         label:labelText?{text:labelText,font:'12px -apple-system, sans-serif',fillColor:Cesium.Color.WHITE,outlineColor:Cesium.Color.BLACK,outlineWidth:2,style:Cesium.LabelStyle.FILL_AND_OUTLINE,pixelOffset:new Cesium.Cartesian2(0,-32),heightReference:hr,disableDepthTestDistance:Number.POSITIVE_INFINITY}:undefined,
       });_state.entities.set(e.uid,entity);}
-      else{entity.position=pos;entity.billboard.image=_billboard(e.affiliation||'u',e.kind,e.sidc);entity.billboard.heightReference=hr;entity.billboard.rotation=rot;
+      else{entity.position=pos;entity.billboard.image=_billboard(e.affiliation||'u',e.kind,e.sidc,e.spot);entity.billboard.heightReference=hr;entity.billboard.rotation=rot;
         if(entity.label){entity.label.text=labelText;entity.label.heightReference=hr;}}
       // Leader line as its OWN entity (uid+':leader'), remove-then-add
       // on every upsert — exactly like trails/measurements. Mutating a
@@ -180,12 +207,45 @@
       if(f<1)v.camera.zoomIn(amount);else v.camera.zoomOut(amount);
     },
     // Issue #72/#73 — rotate the globe to the requested heading (degrees CW
-    // from north) while keeping the current center, altitude, and pitch.
-    // Called with {heading:0} from the iOS layer to snap north.
+    // from north) while keeping the screen-center ground point, altitude, and
+    // pitch fixed. Called with {heading:0} from the iOS layer to snap north.
+    // Reorients AROUND the point under the screen crosshair (via lookAt) so the
+    // operator's framing doesn't jump — flying to the camera's own world
+    // position left the rotation reference ambiguous and could drift the view.
     setHeading(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
       const hd=Cesium.Math.toRadians(typeof e.heading==='number'?e.heading:0);
-      const pos=v.camera.positionWC.clone();const dir=v.camera.directionWC.clone();const up=v.camera.upWC.clone();
-      v.camera.flyTo({destination:pos,orientation:{heading:hd,pitch:v.camera.pitch,roll:0},duration:0.4});
+      const cam=v.camera;const cv=v.scene.canvas;
+      // Ground point under the screen center is the natural pivot. Fall back to
+      // the camera's sub-point if the crosshair is off-globe (e.g. horizon in view).
+      let center=v.scene.pickPosition(new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2));
+      if(!Cesium.defined(center))center=cam.pickEllipsoid(new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2),v.scene.globe.ellipsoid);
+      if(!Cesium.defined(center)){
+        // No ground reference (horizon/space in view) — reorient in place.
+        cam.setView({orientation:{heading:hd,pitch:cam.pitch,roll:0}});v.scene.requestRender();return;
+      }
+      // Reorient AROUND the screen-center ground point via lookAt so the
+      // operator's framing doesn't jump, then release the reference frame so
+      // free pan/zoom keep working. lookAt is synchronous → north-lock snaps
+      // instantly without a flyTo animation fighting the gesture.
+      const range=Cesium.Cartesian3.distance(cam.positionWC,center);
+      cam.lookAt(center,new Cesium.HeadingPitchRange(hd,cam.pitch,range));
+      cam.lookAtTransform(Cesium.Matrix4.IDENTITY);
+      v.scene.requestRender();
+    },
+    // Issue #72 — true north-up lock for the globe. ATAK-style: while locked,
+    // the globe stays north-up no matter what the operator does. Pan, zoom and
+    // tilt stay fully live; only the heading is pinned to 0°. We disable
+    // free-look (the only desktop gesture that *only* changes heading) and, as
+    // the real guarantee, the camera-changed handler instantly re-snaps heading
+    // to north whenever it drifts (covers the two-finger twist on touch, which
+    // Cesium folds into the rotate gesture and can't be split off cleanly).
+    // Releasing restores free rotation. Distinct from setHeading's one-shot snap.
+    setNorthLock(arg){const e=_parse(arg);const on=!!(e&&e.on);const v=_state.viewer;if(!v)return;
+      _state.northLocked=on;
+      const ctrl=v.scene.screenSpaceCameraController;
+      ctrl.enableLook=!on; // free-look changes heading with no other effect — safe to disable
+      if(on)this.setHeading({heading:0});
+      v.scene.requestRender();
     },
     // Lasso multi-select mode. While on, the overlay canvas captures
     // the single-finger drag (DOM touch events) and intercepts it so

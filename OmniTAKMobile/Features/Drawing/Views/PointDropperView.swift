@@ -49,6 +49,10 @@ struct PointDropperView: View {
                         // FEMA / IC palette (issue #13 MVP, SF Symbols stand-in).
                         femaPaletteSection
 
+                        // TAK Spot Map palette (issue #75) — standard TAK icon
+                        // set, selectable + round-trips with ATAK / iTAK.
+                        takSpotPaletteSection
+
                         // Everything else is optional — collapsed by default.
                         Button {
                             withAnimation { showAdvanced.toggle() }
@@ -189,6 +193,35 @@ struct PointDropperView: View {
                     ForEach(FemaIcon.allCases) { icon in
                         FemaIconButton(icon: icon) {
                             quickDropFema(icon)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(12)
+    }
+
+    // MARK: - TAK Spot Map Palette (issue #75)
+
+    private var takSpotPaletteSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("TAK SPOTS")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+                Text("(standard TAK icon set)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(TAKIconRegistry.shared.selectableSpotIcons) { icon in
+                        TAKSpotIconButton(icon: icon) {
+                            quickDropTAK(icon)
                         }
                     }
                 }
@@ -483,6 +516,18 @@ struct PointDropperView: View {
         #endif
     }
 
+    private func quickDropTAK(_ icon: TAKSpotIcon) {
+        guard let location = mapCenter ?? currentLocation else { return }
+        let marker = service.quickDropTAK(icon, at: location, broadcast: broadcastImmediately)
+
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+
+        #if DEBUG
+        print("📍 TAK spot dropped \(icon.displayName) marker: \(marker.name)")
+        #endif
+    }
+
     private func quickDrop(affiliation: MarkerAffiliation) {
         // Drop at the map crosshair (center) the operator aimed; fall back to
         // GPS only if the map center isn't known yet.
@@ -571,6 +616,44 @@ struct FemaIconButton: View {
     }
 }
 
+/// Swatch button for the TAK Spot Map palette (issue #75). Shows the standard
+/// TAK colored dot the marker will use, so the operator picks the exact icon
+/// that ATAK / iTAK will render.
+struct TAKSpotIconButton: View {
+    let icon: TAKSpotIcon
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            let g = UIImpactFeedbackGenerator(style: .light)
+            g.impactOccurred()
+            action()
+        }) {
+            VStack(spacing: 4) {
+                ZStack {
+                    Circle()
+                        .fill(icon.color)
+                        .frame(width: 24, height: 24)
+                    Circle()
+                        .stroke(Color.white.opacity(0.8), lineWidth: 1.5)
+                        .frame(width: 24, height: 24)
+                }
+                Text(icon.displayName)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 64, height: 60)
+            .background(icon.color.opacity(0.18))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(icon.color.opacity(0.55), lineWidth: 1)
+            )
+        }
+        .accessibilityLabel(Text("Drop \(icon.displayName) spot marker"))
+    }
+}
+
 struct QuickDropButton: View {
     let affiliation: MarkerAffiliation
     let label: String
@@ -635,9 +718,18 @@ struct RecentMarkerCard: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Image(systemName: marker.iconName)
-                    .font(.system(size: 16))
-                    .foregroundColor(marker.affiliation.color)
+                // Issue #75 — show the TAK spot dot for spot-map markers so the
+                // list matches the map; affiliation glyph otherwise.
+                if let spot = marker.takIcon {
+                    ZStack {
+                        Circle().fill(spot.color).frame(width: 16, height: 16)
+                        Circle().stroke(Color.white.opacity(0.8), lineWidth: 1).frame(width: 16, height: 16)
+                    }
+                } else {
+                    Image(systemName: marker.iconName)
+                        .font(.system(size: 16))
+                        .foregroundColor(marker.affiliation.color)
+                }
 
                 Text(marker.name)
                     .font(.system(size: 12, weight: .bold))

@@ -42,6 +42,13 @@ struct PointMarker: Identifiable, Codable, Equatable {
     // the affiliation default. See `FemaIconSet.swift` for the MVP caveat.
     var femaIcon: FemaIcon?
 
+    // TAK Spot Map icon (issue #75). When set, the marker is a standard TAK
+    // spot-map point: it renders with the colored dot, emits the canonical
+    // `b-m-p-s-m` CoT type + `COT_MAPPING_SPOTMAP/{color}` usericon path, and
+    // round-trips with ATAK / iTAK. Takes precedence over the affiliation
+    // default; mutually exclusive with `femaIcon` in the placement UI.
+    var takIcon: TAKSpotIcon?
+
     // Sharing
     var isBroadcast: Bool
 
@@ -55,6 +62,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         saluteReport: SALUTEReport? = nil,
         createdBy: String? = nil,
         femaIcon: FemaIcon? = nil,
+        takIcon: TAKSpotIcon? = nil,
         isBroadcast: Bool = false
     ) {
         self.id = id
@@ -68,10 +76,13 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.saluteReport = saluteReport
         self.createdBy = createdBy
         self.uid = "marker-\(id.uuidString)"
-        // FEMA icon (if any) overrides the affiliation-default CoT type and icon.
-        self.cotType = femaIcon?.cotType ?? affiliation.cotType
+        // Icon precedence: TAK spot-map icon → FEMA icon → affiliation default.
+        // A TAK spot icon emits the canonical b-m-p-s-m type; FEMA emits its
+        // best-effort type; otherwise the affiliation's ground-unit type.
+        self.cotType = takIcon.map { _ in TAKSpotIcon.cotType } ?? femaIcon?.cotType ?? affiliation.cotType
         self.iconName = femaIcon?.sfSymbolName ?? affiliation.iconName
         self.femaIcon = femaIcon
+        self.takIcon = takIcon
         self.isBroadcast = isBroadcast
     }
 
@@ -80,7 +91,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, name, affiliation, latitude, longitude, altitude
         case timestamp, modifiedAt, remarks, createdBy, saluteReport
-        case uid, cotType, iconName, isBroadcast, femaIcon
+        case uid, cotType, iconName, isBroadcast, femaIcon, takIcon
     }
 
     init(from decoder: Decoder) throws {
@@ -104,6 +115,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         iconName = try container.decode(String.self, forKey: .iconName)
         isBroadcast = try container.decode(Bool.self, forKey: .isBroadcast)
         femaIcon = try container.decodeIfPresent(FemaIcon.self, forKey: .femaIcon)
+        takIcon = try container.decodeIfPresent(TAKSpotIcon.self, forKey: .takIcon)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -124,6 +136,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         try container.encode(iconName, forKey: .iconName)
         try container.encode(isBroadcast, forKey: .isBroadcast)
         try container.encodeIfPresent(femaIcon, forKey: .femaIcon)
+        try container.encodeIfPresent(takIcon, forKey: .takIcon)
     }
 
     // MARK: - Equatable

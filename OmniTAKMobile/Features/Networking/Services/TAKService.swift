@@ -969,6 +969,11 @@ struct CoTDetail {
     let battery: Int?
     let device: String?
     let platform: String?
+    /// Issue #75 — `usericon iconsetpath` from the CoT `<usericon>` element
+    /// (e.g. `COT_MAPPING_SPOTMAP/red`), used to resolve the TAK icon.
+    var iconsetPath: String? = nil
+    /// Issue #75 — signed ARGB color from the CoT `<color>` element.
+    var argbColor: Int? = nil
 }
 
 // MARK: - Server Connection State
@@ -1924,6 +1929,22 @@ private func parseCoT(xml: String) -> CoTEvent? {
         platform = extractAttribute("platform", from: takvTag)
     }
 
+    // Issue #75 — extract the usericon iconset path so received iconset /
+    // spot-map markers resolve to the right TAK icon instead of a generic
+    // affiliation frame.
+    var iconsetPath: String? = nil
+    if let iconRange = xml.range(of: "<usericon[^>]+>", options: .regularExpression) {
+        iconsetPath = extractAttribute("iconsetpath", from: String(xml[iconRange]))
+    }
+
+    // Issue #75 — extract the <color argb> value (spot-map points carry their
+    // color here, not in the type). Stored as a signed Int for the registry.
+    var argbColor: Int? = nil
+    if let colorRange = xml.range(of: "<color[^>]+>", options: .regularExpression),
+       let argbStr = extractAttribute("argb", from: String(xml[colorRange])) {
+        argbColor = Int(argbStr)
+    }
+
     return CoTEvent(
         uid: String(uid),
         type: String(type),
@@ -1938,7 +1959,9 @@ private func parseCoT(xml: String) -> CoTEvent? {
             remarks: remarks,
             battery: battery,
             device: device,
-            platform: platform
+            platform: platform,
+            iconsetPath: iconsetPath,
+            argbColor: argbColor
         )
     )
 }

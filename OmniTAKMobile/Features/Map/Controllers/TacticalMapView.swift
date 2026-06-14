@@ -716,7 +716,9 @@ struct TacticalMapView: UIViewRepresentable {
             var fresh: [PointAnnotation] = []
             fresh.reserveCapacity(parent.markers.count)
             for marker in parent.markers {
-                let key = "cot|\(marker.type)|\(marker.callsign)"
+                // Style-image key folds in the icon source so a spot-map dot and
+                // an affiliation frame of the same type don't share one image.
+                let key = "cot|\(marker.type)|\(marker.iconsetPath ?? "")|\(marker.argbColor ?? 0)|\(marker.callsign)"
                 let img = symbolImage(for: marker)
                 var ann = PointAnnotation(id: "cot-\(marker.uid)", coordinate: marker.coordinate)
                 ann.image = .init(image: img, name: key)
@@ -728,6 +730,19 @@ struct TacticalMapView: UIViewRepresentable {
         }
 
         private func symbolImage(for marker: CoTMarker) -> UIImage {
+            // Issue #75 — TAK icon suite. If the marker carries a known iconset
+            // path (e.g. COT_MAPPING_SPOTMAP/red) or is a spot-map CoT type,
+            // resolve it to the standard TAK icon. Falls through to MIL-STD-2525
+            // when the registry has no match (the existing affiliation frames).
+            if let img = TAKIconRegistry.shared.resolveImage(
+                cotType: marker.type,
+                iconsetPath: marker.iconsetPath,
+                argb: marker.argbColor,
+                size: 28
+            ) {
+                return img
+            }
+
             let key = "cot|\(marker.type)|\(marker.callsign)"
             if let cached = symbolImageCache[key] { return cached }
 
@@ -778,7 +793,10 @@ struct TacticalMapView: UIViewRepresentable {
             fresh.reserveCapacity(parent.pointMarkers.count)
             for pm in parent.pointMarkers {
                 let img = pointMarkerImage(for: pm)
-                let key = "pm|\(pm.affiliation.rawValue)"
+                // Style-image key must distinguish TAK spot icons from plain
+                // affiliation glyphs, else two markers sharing an affiliation
+                // but different spot colors would collide on one cached image.
+                let key = pm.takIcon.map { "pm|spot|\($0.rawValue)" } ?? "pm|\(pm.affiliation.rawValue)"
                 var ann = PointAnnotation(id: "pm-\(pm.id.uuidString)", coordinate: pm.coordinate)
                 ann.image = .init(image: img, name: key)
                 ann.textField = pm.name
@@ -799,6 +817,12 @@ struct TacticalMapView: UIViewRepresentable {
         }
 
         private func pointMarkerImage(for marker: PointMarker) -> UIImage {
+            // TAK Spot Map icon (issue #75) — render the standard colored dot
+            // via the shared registry so it matches the picker swatch and the
+            // 3D globe pixel-for-pixel.
+            if let spot = marker.takIcon {
+                return TAKIconRegistry.shared.image(for: spot, size: 36)
+            }
             let key = "pmimg|\(marker.affiliation.rawValue)"
             if let cached = symbolImageCache[key] { return cached }
             let size = CGSize(width: 36, height: 36)

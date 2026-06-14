@@ -147,6 +147,51 @@ class PointDropperService: ObservableObject {
         return "\(icon.shortCode)-\(count)-\(f.string(from: Date()))"
     }
 
+    /// Quick drop a standard TAK Spot Map marker (issue #75). The chosen color
+    /// drives the dot, the canonical `b-m-p-s-m` CoT type, and the
+    /// `COT_MAPPING_SPOTMAP/{color}` usericon path so it round-trips with ATAK.
+    @discardableResult
+    func quickDropTAK(
+        _ icon: TAKSpotIcon,
+        at coordinate: CLLocationCoordinate2D,
+        name: String? = nil,
+        broadcast: Bool = false
+    ) -> PointMarker {
+        // Spot-map points are affiliation-agnostic; default to unknown so any
+        // code still reading `.affiliation` has a sane value. The takIcon
+        // override drives rendering + CoT type/color.
+        let markerName = name ?? generateTAKMarkerName(for: icon)
+        let marker = PointMarker(
+            name: markerName,
+            affiliation: .unknown,
+            coordinate: coordinate,
+            takIcon: icon,
+            isBroadcast: broadcast
+        )
+
+        markers.append(marker)
+        updateRecentMarkers(marker)
+        saveMarkers()
+
+        #if DEBUG
+        print("📍 TAK spot drop: \(icon.displayName) at (\(coordinate.latitude), \(coordinate.longitude))")
+        #endif
+
+        if broadcast {
+            broadcastMarker(marker)
+        }
+
+        onEvent?(.markerCreated(marker))
+        return marker
+    }
+
+    private func generateTAKMarkerName(for icon: TAKSpotIcon) -> String {
+        let count = markers.filter { $0.takIcon == icon }.count + 1
+        let f = DateFormatter()
+        f.dateFormat = "HHmm"
+        return "SPOT-\(icon.displayName.uppercased())-\(count)-\(f.string(from: Date()))"
+    }
+
     /// Get marker by ID
     func getMarker(id: UUID) -> PointMarker? {
         return markers.first { $0.id == id }

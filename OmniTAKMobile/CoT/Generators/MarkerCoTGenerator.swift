@@ -15,12 +15,23 @@ class MarkerCoTGenerator {
 
     /// Generate CoT XML for a point marker
     static func generateCoT(for marker: PointMarker, staleTime: TimeInterval = 3600) -> String {
-        // Convert hex color to ARGB signed integer
-        let argbColor = hexToARGB(marker.affiliation.hexColor)
+        // Icon + color: a TAK Spot Map icon (issue #75) emits the canonical
+        // `COT_MAPPING_SPOTMAP/{color}` path + its swatch color so ATAK / iTAK
+        // render the exact dot the operator picked. Otherwise fall back to the
+        // affiliation-keyed spot-map path the app has always sent.
+        let iconsetPath: String
+        let argbColor: Int
+        if let takIcon = marker.takIcon {
+            iconsetPath = takIcon.iconsetPath
+            argbColor = hexToARGB(takIcon.argbHex)
+        } else {
+            iconsetPath = "COT_MAPPING_SPOTMAP/\(marker.affiliation.rawValue.lowercased())_point"
+            argbColor = hexToARGB(marker.affiliation.hexColor)
+        }
 
         var detail = """
                 <contact callsign="\(marker.name.xmlEscaped)"/>
-                <usericon iconsetpath="COT_MAPPING_SPOTMAP/\(marker.affiliation.rawValue.lowercased())_point"/>
+                <usericon iconsetpath="\(iconsetPath)"/>
                 <color argb="\(argbColor)"/>
                 <affiliation value="\(marker.affiliation.rawValue)"/>
         """
@@ -161,8 +172,14 @@ class MarkerCoTGenerator {
 
     // MARK: - Helper Methods
 
-    /// Convert hex color string (AARRGGBB) to signed 32-bit ARGB integer
-    /// Example: "FF00FFFF" (cyan) -> -16711681
+    /// Convert hex color string (AARRGGBB) to signed 32-bit ARGB integer.
+    /// Example: "FF00FFFF" (cyan) -> -16711681, "FFFF0000" (red) -> -65536.
+    ///
+    /// TAK `<color argb>` values are signed 32-bit ints — that's what ATAK
+    /// writes and what its `Integer.parseInt` reader expects. The opaque-alpha
+    /// values (0xFFxxxxxx) overflow `Int32.max`, so we MUST reinterpret the
+    /// 32-bit pattern as signed (Int32 → Int) rather than widening the unsigned
+    /// value (which produced e.g. 4294901760 — a number ATAK can't parse).
     private static func hexToARGB(_ hexString: String) -> Int {
         // Remove any # prefix if present
         let hex = hexString.replacingOccurrences(of: "#", with: "")
@@ -172,8 +189,9 @@ class MarkerCoTGenerator {
             return -1  // Default to white if parsing fails
         }
 
-        // Convert to signed Int (this handles the negative values correctly)
-        return Int(bitPattern: UInt(hexValue))
+        // Reinterpret the 32-bit pattern as a signed Int32, then widen. This
+        // yields the negative values TAK uses for opaque colors.
+        return Int(Int32(bitPattern: hexValue))
     }
 
     /// Format coordinate as MGRS-like string
