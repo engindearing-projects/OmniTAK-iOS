@@ -451,6 +451,22 @@ struct CertificateEnrollmentView: View {
         print("🔍 QR Code Handler: Code = \(code)")
         #endif
 
+        // Standard ATAK/TAK enrollment deep link scanned with the in-app
+        // camera — e.g. tak://com.atakmap.app/enroll?host=&username=&token=.
+        // Route through the shared DeepLinkHandler so it takes the exact same
+        // CSR-enroll → add-server → connect path as an OS-camera-app open.
+        let lower = code.lowercased()
+        if (lower.hasPrefix("tak://") || lower.hasPrefix("atak://") || lower.hasPrefix("omnitak://")),
+           let url = URL(string: code.trimmingCharacters(in: .whitespacesAndNewlines)),
+           TAKDeepLink.parse(url: url) != nil {
+            #if DEBUG
+            print("🔍 QR Code Handler: Detected TAK deep link, routing to DeepLinkHandler")
+            #endif
+            DeepLinkHandler.shared.handleURL(url)
+            dismiss()
+            return
+        }
+
         // Check if this is a certificate enrollment URL
         if code.lowercased().contains("enroll") && code.lowercased().hasPrefix("http") {
             #if DEBUG

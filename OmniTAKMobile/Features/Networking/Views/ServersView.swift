@@ -16,6 +16,7 @@ struct ServersView: View {
     @ObservedObject private var takService = TAKService.shared
 
     @State private var showEnrollment = false
+    @State private var showQRScan = false
     @State private var showDataPackageImport = false
     @State private var serverToEdit: TAKServer? = nil
     @State private var showActionsMenu = false
@@ -37,6 +38,9 @@ struct ServersView: View {
 
                         // Add Server Button
                         addServerButton
+
+                        // Scan Enrollment QR Button
+                        scanQRButton
 
                         // Import Data Package Button
                         importDataPackageButton
@@ -63,6 +67,10 @@ struct ServersView: View {
                             Label("Quick Connect", systemImage: "bolt.circle")
                         }
 
+                        Button(action: { showQRScan = true }) {
+                            Label("Scan QR", systemImage: "qrcode.viewfinder")
+                        }
+
                         Button(action: { showDataPackageImport = true }) {
                             Label("Data Package", systemImage: "doc.badge.plus")
                         }
@@ -80,6 +88,12 @@ struct ServersView: View {
         }
         .sheet(isPresented: $showEnrollment) {
             SimpleEnrollView()
+        }
+        .sheet(isPresented: $showQRScan) {
+            // Reuse the camera QR scanner. A scanned standard ATAK/TAK
+            // enrollment QR (tak://…/enroll?host=&username=&token=) is routed
+            // through DeepLinkHandler → CSR enroll → add server → connect.
+            CertificateEnrollmentView()
         }
         .sheet(isPresented: $showDataPackageImport) {
             DataPackageImportView()
@@ -172,6 +186,40 @@ struct ServersView: View {
                         .foregroundColor(.white)
 
                     Text("Sign in with username & password")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "#888888"))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .foregroundColor(Color(hex: "#444444"))
+            }
+            .padding(16)
+            .background(Color(white: 0.08))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(hex: "#FFFC00").opacity(0.3), lineWidth: 1)
+            )
+        }
+    }
+
+    // MARK: - Scan QR Button
+
+    private var scanQRButton: some View {
+        Button(action: { showQRScan = true }) {
+            HStack(spacing: 12) {
+                Image(systemName: "qrcode.viewfinder")
+                    .font(.system(size: 24))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Scan QR Code")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+
+                    Text("Onboard from a TAK/ATAK enrollment QR")
                         .font(.system(size: 12))
                         .foregroundColor(Color(hex: "#888888"))
                 }
