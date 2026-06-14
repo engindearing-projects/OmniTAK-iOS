@@ -128,6 +128,13 @@ struct ATAKMapView: View {
     @State private var showScaleBar = true  // ATAK-style: Enabled by default in bottom-left
     @State private var showGrid = false
 
+    // Issue #72 — north-up lock (persisted so it survives restarts)
+    @AppStorage("map_northLocked") private var isNorthLocked: Bool = false
+    // Issue #73 — current map bearing in degrees CW from north. Updated by
+    // both engines on every camera-change event so the compass overlay always
+    // reflects the live map rotation (not just device heading).
+    @State private var mapBearing: Double = 0
+
     // New ATAK-style UI states
     @State private var isCursorModeActive = false
     @State private var showQuickActionToolbar = false  // Hidden - user can access tools via radial menu and ATAK tools menu
@@ -237,7 +244,15 @@ struct ATAKMapView: View {
             mapStateManager: mapStateManager,
             measurementManager: measurementManager,
             lassoService: lassoService,
-            onMapTap: handleMapTap
+            onMapTap: handleMapTap,
+            // Issue #72 — forward the north-lock flag so TacticalMapView
+            // can disable rotation gestures when engaged.
+            isNorthLocked: isNorthLocked,
+            // Issue #73 — callback so the 2D engine reports its live
+            // bearing to the parent for the compass overlay needle.
+            onBearingChanged: { bearing in
+                mapBearing = bearing
+            }
         )
         .ignoresSafeArea()
     }
@@ -359,6 +374,7 @@ struct ATAKMapView: View {
                     showScaleBar: $showScaleBar,
                     showGrid: $showGrid,
                     showCallsignPanel: $showCallsignPanel,
+                    isNorthLocked: $isNorthLocked,
                     adsbService: ADSBTrafficService.shared,
                     onLayerToggle: { layer in
                         toggleLayer(layer)
@@ -368,6 +384,9 @@ struct ATAKMapView: View {
                     },
                     onMapOverlayToggle: { overlay in
                         toggleMapOverlay(overlay)
+                    },
+                    onNorthLockToggle: {
+                        toggleNorthLock()
                     }
                 )
                 .background(Color.black.opacity(0.9))
@@ -526,9 +545,17 @@ struct ATAKMapView: View {
         // the direction of travel and freezes at the last value when the
         // user stops moving (what was causing #44 "always 347°"). Fall back
         // to course only if heading is unavailable (e.g., no magnetometer).
+        // Issue #73 — compass is always visible (not gated on showCompass) so
+        // the tap-to-north affordance and north-lock badge are always reachable.
+        // The showCompass toggle in the layers panel now just controls whether
+        // the compass starts visible; the overlay still mounts so the lock
+        // indicator is never hidden while north-lock is engaged.
         CompassOverlayView(
             heading: compassHeading,
-            isVisible: showCompass
+            isVisible: showCompass || isNorthLocked,
+            mapBearing: mapBearing,
+            isNorthLocked: isNorthLocked,
+            onResetNorth: { resetMapToNorth() }
         )
         .zIndex(1005)
     }
@@ -1626,6 +1653,15 @@ struct ATAKMapView: View {
             cesiumLastHeight = cam.height
             cesiumLastHeading = cam.heading
             cesiumLastPitch = cam.pitch
+            // Issue #73 — mirror Cesium heading into mapBearing so the compass
+            // overlay stays in sync with the 3D globe's rotation.
+            mapBearing = cam.heading
+            // Issue #72 — if north-lock is engaged and the globe drifted,
+            // snap it back. The setHeading call is cheap (no re-render) so
+            // it's fine to fire on every camera tick when locked.
+            if isNorthLocked && abs(cam.heading) > 0.5 {
+                NotificationCenter.default.post(name: .cesiumResetNorth, object: nil)
+            }
             // Mirror the Cesium camera into mapRegion so 2D-derived chrome
             // (scale bar, MGRS grid) reads the right scale on the globe, an
             // engine toggle lands at the same view, and — crucially — the
@@ -1873,6 +1909,34 @@ struct ATAKMapView: View {
             case "callsign": showCallsignPanel.toggle()
             default: break
             }
+        }
+    }
+
+    // MARK: - North-Up Lock (Issue #72/#73)
+
+    /// Toggle the north-up lock on/off. When engaged, rotation gestures
+    /// snap back to north and the compass badge turns cyan.
+    private func toggleNorthLock() {
+        isNorthLocked.toggle()
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        if isNorthLocked {
+            resetMapToNorth()
+        }
+        // Mapbox: rotate disable/enable is applied in TacticalMapView.updateUIView
+        // via the northLocked binding. No notification needed for 2D.
+        // Cesium: handled by isNorthLocked watchdog inside handleCesiumMapEvent.
+    }
+
+    /// Snap both map engines back to north (heading 0°).
+    private func resetMapToNorth() {
+        // Cesium — post the notification; the Coordinator forwards it to the JS bridge.
+        NotificationCenter.default.post(name: .cesiumResetNorth, object: nil)
+        // Mapbox — post a dedicated notification that TacticalMapView's
+        // coordinator listens to and applies via setCamera(bearing:0).
+        NotificationCenter.default.post(name: .mapboxResetNorth, object: nil)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            mapBearing = 0
         }
     }
 

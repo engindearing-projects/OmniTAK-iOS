@@ -179,6 +179,14 @@
       if(amount<1)return;
       if(f<1)v.camera.zoomIn(amount);else v.camera.zoomOut(amount);
     },
+    // Issue #72/#73 — rotate the globe to the requested heading (degrees CW
+    // from north) while keeping the current center, altitude, and pitch.
+    // Called with {heading:0} from the iOS layer to snap north.
+    setHeading(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
+      const hd=Cesium.Math.toRadians(typeof e.heading==='number'?e.heading:0);
+      const pos=v.camera.positionWC.clone();const dir=v.camera.directionWC.clone();const up=v.camera.upWC.clone();
+      v.camera.flyTo({destination:pos,orientation:{heading:hd,pitch:v.camera.pitch,roll:0},duration:0.4});
+    },
     // Lasso multi-select mode. While on, the overlay canvas captures
     // the single-finger drag (DOM touch events) and intercepts it so
     // the globe stays put; camera inputs are also disabled as a backup.

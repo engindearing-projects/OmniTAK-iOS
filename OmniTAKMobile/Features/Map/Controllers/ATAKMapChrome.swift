@@ -247,10 +247,15 @@ struct ATAKSidePanel: View {
     @Binding var showScaleBar: Bool
     @Binding var showGrid: Bool
     @Binding var showCallsignPanel: Bool
+    /// Issue #72 — north-up lock state. The panel shows this as an active/inactive
+    /// toggle so the operator can lock/unlock without leaving the map chrome.
+    @Binding var isNorthLocked: Bool
     @ObservedObject var adsbService: ADSBTrafficService
     let onLayerToggle: (String) -> Void
     let onOverlayToggle: (String) -> Void
     let onMapOverlayToggle: (String) -> Void
+    /// Issue #72 — called when the north-lock button is tapped.
+    var onNorthLockToggle: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -325,6 +330,11 @@ struct ATAKSidePanel: View {
 
                 LayerButton(icon: "safari", title: "Compass", isActive: showCompass, compact: true) {
                     onMapOverlayToggle("compass")
+                }
+                // Issue #72 — north-up lock toggle. Cyan when engaged to match
+                // the compass badge; "N" arrow icon echoes ATAK's lock affordance.
+                LayerButton(icon: isNorthLocked ? "lock.fill" : "arrow.up", title: "North Lock", isActive: isNorthLocked, compact: true) {
+                    onNorthLockToggle?()
                 }
                 LayerButton(icon: "location.circle", title: "Coordinates", isActive: showCoordinates, compact: true) {
                     onMapOverlayToggle("coordinates")

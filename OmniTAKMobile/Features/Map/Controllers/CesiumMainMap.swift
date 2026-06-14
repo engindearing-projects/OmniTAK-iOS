@@ -74,6 +74,9 @@ extension Notification.Name {
     /// `ATAKMapView` falls the map back to the 2D engine so the user isn't
     /// stuck on an infinite "Loading 3D world…" spinner.
     static let cesiumLoadTimedOut = Notification.Name("cesiumLoadTimedOut")
+    /// Issue #72/#73 — snap the Cesium globe heading back to north (0°).
+    /// Posted by the compass overlay tap or the north-lock toggle.
+    static let cesiumResetNorth = Notification.Name("cesiumResetNorth")
 }
 
 struct CesiumMainMap: UIViewRepresentable {
@@ -178,6 +181,15 @@ struct CesiumMainMap: UIViewRepresentable {
             )
         }
 
+        // Issue #72/#73 — snap the globe heading to north (0°). Preserves the
+        // current center, altitude, and pitch so only the rotation changes.
+        context.coordinator.resetNorthObserver = NotificationCenter.default.addObserver(
+            forName: .cesiumResetNorth, object: nil, queue: .main
+        ) { [weak coordinator = context.coordinator] _ in
+            guard let coordinator, coordinator.isReady, let wv = coordinator.webView else { return }
+            wv.evaluateJavaScript("window.OmniBridge.setHeading({heading:0});", completionHandler: nil)
+        }
+
         webView.loadHTMLString(CesiumMainMap.html, baseURL: URL(string: "https://cesium.com/"))
         context.coordinator.startLoadWatchdog()
         return webView
@@ -278,6 +290,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var zoomObserver: NSObjectProtocol?
         /// Observer token for "Show on Map" (contact-centering) commands.
         var centerOnObserver: NSObjectProtocol?
+        /// Observer token for issue #72/#73 north-snap commands.
+        var resetNorthObserver: NSObjectProtocol?
         /// Watchdog: the globe pulls Cesium.js + terrain from the cesium.com
         /// CDN on every load. If the device can't reach it (bad network, dead
         /// CDN) the page sits on "Loading 3D world…" forever. If the bridge

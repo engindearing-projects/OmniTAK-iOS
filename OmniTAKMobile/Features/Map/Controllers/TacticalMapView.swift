@@ -13,6 +13,13 @@ import CoreLocation
 import MapboxMaps
 import UIKit
 
+// MARK: - Mapbox north-reset notification (Issue #72/#73)
+
+extension Notification.Name {
+    /// Posted by ATAKMapView to snap the Mapbox camera heading to 0° (north).
+    static let mapboxResetNorth = Notification.Name("mapboxResetNorth")
+}
+
 // MARK: - Tactical Map View (Mapbox Maps SDK v3 — native)
 //
 // This is the main map surface for OmniTAK iOS. It used to wrap MKMapView;
@@ -44,6 +51,13 @@ struct TacticalMapView: UIViewRepresentable {
     @ObservedObject var rasterStore: RasterOverlayStore = RasterOverlayStore.shared
     @ObservedObject var mbtilesStore: MBTilesOverlayStore = MBTilesOverlayStore.shared
     let onMapTap: (CLLocationCoordinate2D) -> Void
+    /// Issue #72 — when true, rotation gestures are disabled and bearing
+    /// is snapped back to 0° on any camera-change that drifts off north.
+    var isNorthLocked: Bool = false
+    /// Issue #73 — called with the current map bearing (° CW from north)
+    /// whenever the Mapbox camera rotates, so the parent can update the
+    /// compass overlay needle.
+    var onBearingChanged: ((Double) -> Void)? = nil
 
     // MARK: - UIViewRepresentable
 
@@ -144,6 +158,23 @@ struct TacticalMapView: UIViewRepresentable {
             coord.handleCameraChanged(mapView: mapView)
         }
 
+        // Issue #72/#73 — listen for the north-snap notification so
+        // both the compass tap and the north-lock toggle route through
+        // the same path on the 2D engine.
+        coord.resetNorthObserver = NotificationCenter.default.addObserver(
+            forName: .mapboxResetNorth, object: nil, queue: .main
+        ) { [weak coord, weak mapView] _ in
+            guard let mapView = mapView else { return }
+            coord?.isProgrammaticUpdate = true
+            let state = mapView.mapboxMap.cameraState
+            mapView.mapboxMap.setCamera(to: CameraOptions(
+                center: state.center,
+                zoom: state.zoom,
+                bearing: 0,
+                pitch: state.pitch
+            ))
+        }
+
         return mapView
     }
 
@@ -163,6 +194,11 @@ struct TacticalMapView: UIViewRepresentable {
             }
         }
 
+        // Issue #72 — north-lock: disable rotation gesture while locked,
+        // re-enable when released. The Mapbox API exposes this cleanly on
+        // gestures.options without tearing down the whole gesture stack.
+        mapView.gestures.options.rotateEnabled = !isNorthLocked
+
         // Region sync — only push to Mapbox if the SwiftUI region
         // diverges from the camera state by more than a hair. This is
         // the same feedback-loop guard MKMapView needed.
@@ -172,6 +208,8 @@ struct TacticalMapView: UIViewRepresentable {
                 abs(cameraState.center.latitude - region.center.latitude) > 0.0001 ||
                 abs(cameraState.center.longitude - region.center.longitude) > 0.0001
             let zoomChanged = abs(cameraState.zoom - TacticalMapView.zoom(forSpan: region.span, mapHeight: mapView.bounds.height)) > 0.25
+            // Issue #72 — when north-locked, always keep bearing at 0.
+            let bearingForUpdate = isNorthLocked ? 0.0 : cameraState.bearing
             if centerChanged || zoomChanged {
                 context.coordinator.isProgrammaticUpdate = true
                 // Explicitly preserve current pitch + bearing — MKCoordinateRegion
@@ -181,7 +219,7 @@ struct TacticalMapView: UIViewRepresentable {
                 let opts = CameraOptions(
                     center: region.center,
                     zoom: TacticalMapView.zoom(forSpan: region.span, mapHeight: mapView.bounds.height),
-                    bearing: cameraState.bearing,
+                    bearing: bearingForUpdate,
                     pitch: cameraState.pitch
                 )
                 mapView.mapboxMap.setCamera(to: opts)
@@ -293,6 +331,9 @@ struct TacticalMapView: UIViewRepresentable {
         // Camera feedback-loop guards
         var isUserInteracting = false
         var isProgrammaticUpdate = false
+
+        // Issue #72/#73 — reset-north observer (removes itself on dealloc)
+        var resetNorthObserver: NSObjectProtocol?
 
         // Annotation managers — one per geometry kind. Mapbox v11
         // wants us to reuse these (cheap to create, expensive to
@@ -422,7 +463,23 @@ struct TacticalMapView: UIViewRepresentable {
                 span: TacticalMapView.span(forZoom: state.zoom, latitude: state.center.latitude)
             )
             DispatchQueue.main.async { [weak self] in
-                self?.parent.region = newRegion
+                guard let self else { return }
+                self.parent.region = newRegion
+                // Issue #73 — report bearing so the compass overlay needle tracks
+                // the 2D map's rotation (not just the device's magnetometer).
+                self.parent.onBearingChanged?(state.bearing)
+                // Issue #72 — if north-lock is engaged, snap back to 0° on any
+                // user-initiated rotation (bearing drift > 0.5° threshold).
+                if self.parent.isNorthLocked && !self.isProgrammaticUpdate && abs(state.bearing) > 0.5 {
+                    self.isProgrammaticUpdate = true
+                    mapView.mapboxMap.setCamera(to: CameraOptions(
+                        center: state.center,
+                        zoom: state.zoom,
+                        bearing: 0,
+                        pitch: state.pitch
+                    ))
+                    self.isProgrammaticUpdate = false
+                }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.isUserInteracting = false

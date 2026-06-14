@@ -18,6 +18,11 @@ struct OmniTAKMobileApp: App {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage("remoteIdScanEnabled") private var remoteIdScanEnabled = false
     @AppStorage("gybDetectorEnabled") private var gybDetectorEnabled = false
+    // Issue #74 — keep-screen-awake fix. Mirrors nav_keepScreenOn into
+    // UIApplication.isIdleTimerDisabled so the setting actually prevents
+    // the screen from sleeping while OmniTAK is foreground.
+    @AppStorage("nav_keepScreenOn") private var keepScreenOn: Bool = true
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // Eagerly initialize the Meshtastic manager so its COT bridge is wired
@@ -57,12 +62,26 @@ struct OmniTAKMobileApp: App {
                     .onAppear {
                         RemoteIdAppBridge.shared.setEnabled(remoteIdScanEnabled)
                         GybManager.shared.setEnabled(gybDetectorEnabled)
+                        // Issue #74 — apply keep-screen-on at launch.
+                        UIApplication.shared.isIdleTimerDisabled = keepScreenOn
                     }
                     .onChange(of: remoteIdScanEnabled) { newValue in
                         RemoteIdAppBridge.shared.setEnabled(newValue)
                     }
                     .onChange(of: gybDetectorEnabled) { newValue in
                         GybManager.shared.setEnabled(newValue)
+                    }
+                    // Issue #74 — re-apply when the setting changes while the
+                    // app is running (Settings toggle takes effect immediately).
+                    .onChange(of: keepScreenOn) { newValue in
+                        UIApplication.shared.isIdleTimerDisabled = newValue
+                    }
+                    // Issue #74 — re-apply on foreground transition (iOS can
+                    // reset isIdleTimerDisabled across scene lifecycle events).
+                    .onChange(of: scenePhase) { phase in
+                        if phase == .active {
+                            UIApplication.shared.isIdleTimerDisabled = keepScreenOn
+                        }
                     }
                     #if DEBUG
                     .task {
