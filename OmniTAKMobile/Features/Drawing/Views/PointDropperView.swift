@@ -53,6 +53,14 @@ struct PointDropperView: View {
                         // set, selectable + round-trips with ATAK / iTAK.
                         takSpotPaletteSection
 
+                        // TAK Markers (2525C) palette (issue #75) — the standard
+                        // ATAK "Markers" symbol set, selectable + round-trips.
+                        takMarkersPaletteSection
+
+                        // TAK Google palette (issue #75) — the standard ATAK
+                        // "Google" place-icon set, selectable + round-trips.
+                        takGooglePaletteSection
+
                         // Everything else is optional — collapsed by default.
                         Button {
                             withAnimation { showAdvanced.toggle() }
@@ -222,6 +230,64 @@ struct PointDropperView: View {
                     ForEach(TAKIconRegistry.shared.selectableSpotIcons) { icon in
                         TAKSpotIconButton(icon: icon) {
                             quickDropTAK(icon)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(12)
+    }
+
+    // MARK: - TAK Markers (2525C) Palette (issue #75)
+
+    private var takMarkersPaletteSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("TAK MARKERS")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+                Text("(MIL-STD-2525 icon set)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(TAKIconRegistry.shared.selectableMarkersIcons) { icon in
+                        TAKMarkersIconButton(icon: icon) {
+                            quickDropTAKMarkers(icon)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(12)
+    }
+
+    // MARK: - TAK Google Palette (issue #75)
+
+    private var takGooglePaletteSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("TAK GOOGLE")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+                Text("(Google place icon set)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.gray)
+                Spacer()
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(TAKIconRegistry.shared.selectableGoogleIcons) { icon in
+                        TAKGoogleIconButton(icon: icon) {
+                            quickDropTAKGoogle(icon)
                         }
                     }
                 }
@@ -528,6 +594,30 @@ struct PointDropperView: View {
         #endif
     }
 
+    private func quickDropTAKMarkers(_ icon: TAKMarkersIcon) {
+        guard let location = mapCenter ?? currentLocation else { return }
+        let marker = service.quickDropTAKMarkers(icon, at: location, broadcast: broadcastImmediately)
+
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+
+        #if DEBUG
+        print("📍 TAK markers dropped \(icon.displayName) marker: \(marker.name)")
+        #endif
+    }
+
+    private func quickDropTAKGoogle(_ icon: TAKGoogleIcon) {
+        guard let location = mapCenter ?? currentLocation else { return }
+        let marker = service.quickDropTAKGoogle(icon, at: location, broadcast: broadcastImmediately)
+
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+
+        #if DEBUG
+        print("📍 TAK google dropped \(icon.displayName) marker: \(marker.name)")
+        #endif
+    }
+
     private func quickDrop(affiliation: MarkerAffiliation) {
         // Drop at the map crosshair (center) the operator aimed; fall back to
         // GPS only if the map center isn't known yet.
@@ -651,6 +741,76 @@ struct TAKSpotIconButton: View {
             )
         }
         .accessibilityLabel(Text("Drop \(icon.displayName) spot marker"))
+    }
+}
+
+/// Swatch button for the TAK Markers (2525C) palette (issue #75). Shows the
+/// actual MIL-STD-2525 symbol the marker will render so the operator picks the
+/// exact icon ATAK / iTAK will draw.
+struct TAKMarkersIconButton: View {
+    let icon: TAKMarkersIcon
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            let g = UIImpactFeedbackGenerator(style: .light)
+            g.impactOccurred()
+            action()
+        }) {
+            VStack(spacing: 4) {
+                Image(uiImage: TAKIconRegistry.shared.image(for: icon, size: 30))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 30, height: 30)
+                Text(icon.shortName)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 64, height: 60)
+            .background(Color.white.opacity(0.08))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.35), lineWidth: 1)
+            )
+        }
+        .accessibilityLabel(Text("Drop \(icon.displayName) marker"))
+    }
+}
+
+/// Swatch button for the TAK Google place palette (issue #75). Shows the actual
+/// rendered place pin the marker will use so the operator picks the exact icon
+/// that round-trips with ATAK / iTAK.
+struct TAKGoogleIconButton: View {
+    let icon: TAKGoogleIcon
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: {
+            let g = UIImpactFeedbackGenerator(style: .light)
+            g.impactOccurred()
+            action()
+        }) {
+            VStack(spacing: 4) {
+                Image(uiImage: TAKIconRegistry.shared.image(for: icon, size: 34))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 30, height: 30)
+                Text(icon.displayName)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(width: 64, height: 60)
+            .background(Color(uiColor: icon.tintColor).opacity(0.14))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color(uiColor: icon.tintColor).opacity(0.5), lineWidth: 1)
+            )
+        }
+        .accessibilityLabel(Text("Drop \(icon.displayName) place marker"))
     }
 }
 

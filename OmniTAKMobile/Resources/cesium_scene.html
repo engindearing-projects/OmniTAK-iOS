@@ -57,7 +57,11 @@
   // Issue #75 — perceived-luminance test for a #RRGGBB hex, to pick a
   // contrasting outline on spot-map dots (matches the iOS registry).
   function _isLight(hex){const m=/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex||'');if(!m)return false;const r=parseInt(m[1],16)/255,g=parseInt(m[2],16)/255,b=parseInt(m[3],16)/255;return(0.299*r+0.587*g+0.114*b)>0.6}
-  function _billboard(a,k,sidc,spot){
+  function _billboard(a,k,sidc,spot,icon){
+    // Issue #75 — pre-rendered pack icon (the TAK "Google" place pin) supplied
+    // as a PNG data URI. Wins over sidc / affiliation art so a Google-pack
+    // marker reads the same pin on 2D and 3D. Spot dots are handled below.
+    if(icon&&k!=='aircraft'){return icon;}
     // Issue #75 — TAK Spot Map point: a colored dot whose color rides the CoT
     // <color> element (passed as `spot`, a #RRGGBB string). Wins over sidc /
     // affiliation art so a spot-map marker reads the same dot on 2D and 3D.
@@ -156,11 +160,14 @@
       const leaderPos=showLeader?Cesium.Cartesian3.fromDegreesArrayHeights([e.lon,e.lat,0,e.lon,e.lat,hae]):null;
       const labelText=(e.callsign||'')+(showLeader?('\n'+Math.round(hae)+' m HAE'):'');
       let entity=_state.entities.get(e.uid);
+      // The Google place pin (e.icon) is a teardrop that points at its tip, so
+      // anchor it at the bottom; dots / sidc / affiliation glyphs stay centered.
+      const vo=(e.icon&&e.kind!=='aircraft')?Cesium.VerticalOrigin.BOTTOM:Cesium.VerticalOrigin.CENTER;
       if(!entity){entity=v.entities.add({id:e.uid,position:pos,
-        billboard:{image:_billboard(e.affiliation||'u',e.kind,e.sidc,e.spot),verticalOrigin:Cesium.VerticalOrigin.CENTER,heightReference:hr,disableDepthTestDistance:Number.POSITIVE_INFINITY,scale:e.kind==='aircraft'?1.5:0.7,rotation:rot},
+        billboard:{image:_billboard(e.affiliation||'u',e.kind,e.sidc,e.spot,e.icon),verticalOrigin:vo,heightReference:hr,disableDepthTestDistance:Number.POSITIVE_INFINITY,scale:e.kind==='aircraft'?1.5:0.7,rotation:rot},
         label:labelText?{text:labelText,font:'12px -apple-system, sans-serif',fillColor:Cesium.Color.WHITE,outlineColor:Cesium.Color.BLACK,outlineWidth:2,style:Cesium.LabelStyle.FILL_AND_OUTLINE,pixelOffset:new Cesium.Cartesian2(0,-32),heightReference:hr,disableDepthTestDistance:Number.POSITIVE_INFINITY}:undefined,
       });_state.entities.set(e.uid,entity);}
-      else{entity.position=pos;entity.billboard.image=_billboard(e.affiliation||'u',e.kind,e.sidc,e.spot);entity.billboard.heightReference=hr;entity.billboard.rotation=rot;
+      else{entity.position=pos;entity.billboard.image=_billboard(e.affiliation||'u',e.kind,e.sidc,e.spot,e.icon);entity.billboard.verticalOrigin=vo;entity.billboard.heightReference=hr;entity.billboard.rotation=rot;
         if(entity.label){entity.label.text=labelText;entity.label.heightReference=hr;}}
       // Leader line as its OWN entity (uid+':leader'), remove-then-add
       // on every upsert — exactly like trails/measurements. Mutating a

@@ -15,15 +15,25 @@ class MarkerCoTGenerator {
 
     /// Generate CoT XML for a point marker
     static func generateCoT(for marker: PointMarker, staleTime: TimeInterval = 3600) -> String {
-        // Icon + color: a TAK Spot Map icon (issue #75) emits the canonical
-        // `COT_MAPPING_SPOTMAP/{color}` path + its swatch color so ATAK / iTAK
-        // render the exact dot the operator picked. Otherwise fall back to the
+        // Icon + color (issue #75 — the standard TAK icon suite). Each pack
+        // emits its canonical `usericon iconsetpath` so the marker renders as
+        // the exact icon the operator picked on ATAK / iTAK / TAK Server:
+        //   • Spot Map → `COT_MAPPING_SPOTMAP/{color}` + the swatch color
+        //   • Markers  → `COT_MAPPING_2525C/{2525type}` (color follows affiliation)
+        //   • Google   → `{googleUID}/{token}.png`
+        // Markers/Spots that carry no explicit pack fall back to the
         // affiliation-keyed spot-map path the app has always sent.
         let iconsetPath: String
         let argbColor: Int
         if let takIcon = marker.takIcon {
             iconsetPath = takIcon.iconsetPath
             argbColor = hexToARGB(takIcon.argbHex)
+        } else if let markersIcon = marker.markersIcon {
+            iconsetPath = markersIcon.iconsetPath
+            argbColor = hexToARGB(marker.affiliation.hexColor)
+        } else if let googleIcon = marker.googleIcon {
+            iconsetPath = googleIcon.iconsetPath
+            argbColor = hexToARGB(marker.affiliation.hexColor)
         } else {
             iconsetPath = "COT_MAPPING_SPOTMAP/\(marker.affiliation.rawValue.lowercased())_point"
             argbColor = hexToARGB(marker.affiliation.hexColor)

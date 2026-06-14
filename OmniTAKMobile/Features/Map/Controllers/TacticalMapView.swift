@@ -793,10 +793,14 @@ struct TacticalMapView: UIViewRepresentable {
             fresh.reserveCapacity(parent.pointMarkers.count)
             for pm in parent.pointMarkers {
                 let img = pointMarkerImage(for: pm)
-                // Style-image key must distinguish TAK spot icons from plain
+                // Style-image key must distinguish each TAK icon pack from plain
                 // affiliation glyphs, else two markers sharing an affiliation
-                // but different spot colors would collide on one cached image.
-                let key = pm.takIcon.map { "pm|spot|\($0.rawValue)" } ?? "pm|\(pm.affiliation.rawValue)"
+                // but different pack icons would collide on one cached image.
+                let key: String
+                if let spot = pm.takIcon { key = "pm|spot|\(spot.rawValue)" }
+                else if let mk = pm.markersIcon { key = "pm|mk|\(mk.rawValue)" }
+                else if let g = pm.googleIcon { key = "pm|google|\(g.rawValue)" }
+                else { key = "pm|\(pm.affiliation.rawValue)" }
                 var ann = PointAnnotation(id: "pm-\(pm.id.uuidString)", coordinate: pm.coordinate)
                 ann.image = .init(image: img, name: key)
                 ann.textField = pm.name
@@ -806,22 +810,26 @@ struct TacticalMapView: UIViewRepresentable {
                 ann.textHaloColor = StyleColor(.black)
                 ann.textHaloWidth = 1.0
                 ann.textSize = 11
-                // Affiliation glyphs are circular, so center them on the
-                // coordinate. `.bottom` (for teardrop pins) made the circle
-                // render above its point — markers appeared to drop above
-                // the aim crosshair.
-                ann.iconAnchor = .center
+                // Circular glyphs (spot dots, 2525 frames, affiliation) center on
+                // the coordinate; the Google teardrop pin points at its tip, so
+                // it anchors at the bottom.
+                ann.iconAnchor = pm.googleIcon != nil ? .bottom : .center
                 fresh.append(ann)
             }
             manager.annotations = fresh
         }
 
         private func pointMarkerImage(for marker: PointMarker) -> UIImage {
-            // TAK Spot Map icon (issue #75) — render the standard colored dot
-            // via the shared registry so it matches the picker swatch and the
-            // 3D globe pixel-for-pixel.
+            // TAK icon suite (issue #75) — render the picked pack icon via the
+            // shared registry so it matches the picker swatch and the 3D globe.
             if let spot = marker.takIcon {
                 return TAKIconRegistry.shared.image(for: spot, size: 36)
+            }
+            if let mk = marker.markersIcon {
+                return TAKIconRegistry.shared.image(for: mk, size: 36)
+            }
+            if let g = marker.googleIcon {
+                return TAKIconRegistry.shared.image(for: g, size: 40)
             }
             let key = "pmimg|\(marker.affiliation.rawValue)"
             if let cached = symbolImageCache[key] { return cached }

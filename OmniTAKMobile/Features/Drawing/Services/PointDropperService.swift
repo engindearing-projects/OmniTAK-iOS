@@ -192,6 +192,90 @@ class PointDropperService: ObservableObject {
         return "SPOT-\(icon.displayName.uppercased())-\(count)-\(f.string(from: Date()))"
     }
 
+    /// Quick drop a standard TAK Markers (2525C) marker (issue #75). Renders
+    /// MIL-STD-2525 symbology and emits the `COT_MAPPING_2525C/{type}` path so
+    /// it round-trips with ATAK / iTAK.
+    @discardableResult
+    func quickDropTAKMarkers(
+        _ icon: TAKMarkersIcon,
+        at coordinate: CLLocationCoordinate2D,
+        name: String? = nil,
+        broadcast: Bool = false
+    ) -> PointMarker {
+        // Carry a sensible affiliation parsed from the 2525 type so any code
+        // still reading `.affiliation` (counts, color) stays consistent; the
+        // markersIcon override drives rendering + CoT type/path.
+        let affiliation = MarkerCoTGenerator.parseAffiliation(from: icon.cotType)
+        let markerName = name ?? generateTAKMarkersName(for: icon)
+        let marker = PointMarker(
+            name: markerName,
+            affiliation: affiliation,
+            coordinate: coordinate,
+            markersIcon: icon,
+            isBroadcast: broadcast
+        )
+
+        markers.append(marker)
+        updateRecentMarkers(marker)
+        saveMarkers()
+
+        #if DEBUG
+        print("📍 TAK markers drop: \(icon.displayName) at (\(coordinate.latitude), \(coordinate.longitude))")
+        #endif
+
+        if broadcast { broadcastMarker(marker) }
+        onEvent?(.markerCreated(marker))
+        return marker
+    }
+
+    private func generateTAKMarkersName(for icon: TAKMarkersIcon) -> String {
+        let count = markers.filter { $0.markersIcon == icon }.count + 1
+        let f = DateFormatter()
+        f.dateFormat = "HHmm"
+        return "\(icon.shortName)-\(count)-\(f.string(from: Date()))"
+    }
+
+    /// Quick drop a standard TAK Google place marker (issue #75). Renders a
+    /// place pin and emits the `{googleUID}/{token}.png` path so it round-trips
+    /// with ATAK / iTAK.
+    @discardableResult
+    func quickDropTAKGoogle(
+        _ icon: TAKGoogleIcon,
+        at coordinate: CLLocationCoordinate2D,
+        name: String? = nil,
+        broadcast: Bool = false
+    ) -> PointMarker {
+        // Google pack markers are affiliation-agnostic (ATAK files them under
+        // unknown); default to unknown so any `.affiliation` reader is sane.
+        let markerName = name ?? generateTAKGoogleName(for: icon)
+        let marker = PointMarker(
+            name: markerName,
+            affiliation: .unknown,
+            coordinate: coordinate,
+            googleIcon: icon,
+            isBroadcast: broadcast
+        )
+
+        markers.append(marker)
+        updateRecentMarkers(marker)
+        saveMarkers()
+
+        #if DEBUG
+        print("📍 TAK google drop: \(icon.displayName) at (\(coordinate.latitude), \(coordinate.longitude))")
+        #endif
+
+        if broadcast { broadcastMarker(marker) }
+        onEvent?(.markerCreated(marker))
+        return marker
+    }
+
+    private func generateTAKGoogleName(for icon: TAKGoogleIcon) -> String {
+        let count = markers.filter { $0.googleIcon == icon }.count + 1
+        let f = DateFormatter()
+        f.dateFormat = "HHmm"
+        return "\(icon.displayName.uppercased())-\(count)-\(f.string(from: Date()))"
+    }
+
     /// Get marker by ID
     func getMarker(id: UUID) -> PointMarker? {
         return markers.first { $0.id == id }

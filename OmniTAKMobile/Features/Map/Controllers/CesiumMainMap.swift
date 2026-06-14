@@ -672,6 +672,10 @@ struct CesiumMainMap: UIViewRepresentable {
         // HTML renders a colored dot (the standard spot-map point) instead of
         // the sidc / affiliation art, so the globe matches the 2D engine.
         let spot: String?
+        // Issue #75 — pre-rendered icon as a PNG data URI (used for the TAK
+        // "Google" place pack, which has no SIDC equivalent). When present the
+        // HTML billboards this image directly so the globe matches the 2D pin.
+        let icon: String?
         // TAK-style altitude leader line (vertical drop-line from ground to
         // the icon + "{alt} m HAE" label). Reserved for detected drones so
         // the 3D globe doesn't get cluttered with a stick under every
@@ -694,6 +698,20 @@ struct CesiumMainMap: UIViewRepresentable {
         return CesiumMainMap.hex(forUIColor: color)
     }
 
+    /// Issue #75 — PNG data URI for a TAK "Google" place marker, or nil when
+    /// the entity isn't a Google-pack point. The Google pack has no SIDC, so the
+    /// globe billboards the same rendered pin the 2D engine uses.
+    private static func googleIconURI(iconsetPath: String?) -> String? {
+        guard let path = iconsetPath, let g = TAKGoogleIcon.from(iconsetPath: path) else { return nil }
+        return dataURI(for: TAKIconRegistry.shared.image(for: g, size: 44))
+    }
+
+    /// Encode a UIImage as a `data:image/png;base64,…` URI for the HTML bridge.
+    private static func dataURI(for image: UIImage) -> String? {
+        guard let png = image.pngData() else { return nil }
+        return "data:image/png;base64,\(png.base64EncodedString())"
+    }
+
     private func buildEntityJSON() -> String {
         var all: [BridgeEntity] = []
 
@@ -714,6 +732,7 @@ struct CesiumMainMap: UIViewRepresentable {
                 // billboard — the globe's bullseye analog.
                 sidc: selfMarkerStyle == "bullseye" ? nil : "SFGPUCI----",
                 spot: nil,
+                icon: nil,
                 leader: false
             ))
         }
@@ -736,6 +755,8 @@ struct CesiumMainMap: UIViewRepresentable {
                 // point (carries a COT_MAPPING_SPOTMAP usericon or b-m-p-s-m
                 // type); the HTML renders the dot over the sidc in that case.
                 spot: CesiumMainMap.spotHex(cotType: c.type, iconsetPath: c.iconsetPath, argb: c.argbColor),
+                // Issue #75 — Google-pack place pin (no SIDC) rendered for 3D.
+                icon: CesiumMainMap.googleIconURI(iconsetPath: c.iconsetPath),
                 // Detected drones (RID-{uasId}) get the TAK altitude leader
                 // line; other airborne CoT contacts float without the stick.
                 leader: c.uid.hasPrefix("RID-")
@@ -762,6 +783,7 @@ struct CesiumMainMap: UIViewRepresentable {
                 // "aircraft" so the directional arrow wins.
                 sidc: nil,
                 spot: nil,
+                icon: nil,
                 // ADS-B aircraft float at altitude but skip the leader line to
                 // keep a busy airspace readable.
                 leader: false
@@ -788,6 +810,9 @@ struct CesiumMainMap: UIViewRepresentable {
                 // Issue #75 — a placed TAK spot-map pin renders its colored dot
                 // on the globe too, matching the picker swatch and 2D engine.
                 spot: pm.takIcon.map { CesiumMainMap.hex(forUIColor: $0.uiColor) },
+                // Issue #75 — a placed Google place pin renders on the globe via
+                // its data URI (Markers ride the sidc path above).
+                icon: pm.googleIcon.map { CesiumMainMap.dataURI(for: TAKIconRegistry.shared.image(for: $0, size: 44)) } ?? nil,
                 leader: false
             ))
         }
@@ -810,6 +835,7 @@ struct CesiumMainMap: UIViewRepresentable {
                     heading: nil,
                     sidc: nil,
                     spot: nil,
+                    icon: nil,
                     leader: false
                 ))
             }
