@@ -183,14 +183,69 @@ public final class LassoSelectionService: ObservableObject {
         }
 
         var drawingIDs: Set<UUID> = []
-        for d in drawings {
-            guard let centroid = centroid(of: d.coordinates) else { continue }
-            if pointInPolygon(centroid, polygon: polygon) {
-                drawingIDs.insert(d.id)
-            }
+        for d in drawings where drawingHit(d.coordinates, polygon: polygon) {
+            drawingIDs.insert(d.id)
         }
 
         return SelectionContext(markerIDs: markerIDs, drawingIDs: drawingIDs)
+    }
+
+    /// Does a drawing count as lassoed? A drawing is hit if it is
+    /// contained, overlapped, OR crossed by the lasso — not just when
+    /// its centroid lands inside. The old centroid-only test silently
+    /// missed lines: a line drawn across the map was never selected when
+    /// the lasso enclosed only part of it, looped around one endpoint, or
+    /// sliced through it without containing the midpoint. Select if ANY
+    /// vertex is inside, the centroid is inside, or ANY of the drawing's
+    /// segments intersects a lasso edge.
+    public static func drawingHit(
+        _ coords: [CLLocationCoordinate2D],
+        polygon: [CLLocationCoordinate2D]
+    ) -> Bool {
+        guard !coords.isEmpty, polygon.count >= 3 else { return false }
+        // 1. Any vertex inside the lasso (catches a partially-enclosed line
+        //    and any shape with a corner inside the squiggle).
+        for c in coords where pointInPolygon(c, polygon: polygon) { return true }
+        // 2. Centroid inside (a large shape lassoed around its middle with
+        //    no vertex inside).
+        if let mid = centroid(of: coords), pointInPolygon(mid, polygon: polygon) {
+            return true
+        }
+        // 3. Any drawing segment crosses any lasso edge (a line the lasso
+        //    slices through without containing an endpoint, or a shape that
+        //    only partially overlaps the lasso).
+        guard coords.count >= 2 else { return false }
+        let n = polygon.count
+        for i in 0..<(coords.count - 1) {
+            let a = coords[i], b = coords[i + 1]
+            for j in 0..<n where segmentsIntersect(a, b, polygon[j], polygon[(j + 1) % n]) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Proper segment intersection via orientation signs (general
+    /// crossing case; collinear-overlap isn't needed for lasso
+    /// hit-testing). Planar lon=x / lat=y, same convention as
+    /// `pointInPolygon`.
+    public static func segmentsIntersect(
+        _ p1: CLLocationCoordinate2D, _ p2: CLLocationCoordinate2D,
+        _ p3: CLLocationCoordinate2D, _ p4: CLLocationCoordinate2D
+    ) -> Bool {
+        func orient(
+            _ a: CLLocationCoordinate2D,
+            _ b: CLLocationCoordinate2D,
+            _ c: CLLocationCoordinate2D
+        ) -> Double {
+            (b.longitude - a.longitude) * (c.latitude - a.latitude) -
+                (b.latitude - a.latitude) * (c.longitude - a.longitude)
+        }
+        let d1 = orient(p3, p4, p1)
+        let d2 = orient(p3, p4, p2)
+        let d3 = orient(p1, p2, p3)
+        let d4 = orient(p1, p2, p4)
+        return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0))
     }
 
     /// Ray-casting point-in-polygon (Franklin's PNPOLY). Treats
