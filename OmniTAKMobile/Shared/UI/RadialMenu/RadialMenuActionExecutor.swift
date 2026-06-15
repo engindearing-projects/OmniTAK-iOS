@@ -65,6 +65,8 @@ class RadialMenuActionExecutor {
             return executeDrawPolygon(context: context)
         case .editDrawing:
             return executeEditDrawing(context: context, services: services)
+        case .moveDrawing:
+            return executeMoveDrawing(context: context, services: services)
         case .deleteDrawing:
             return executeDeleteDrawing(context: context, services: services)
         case .copyCoordinates:
@@ -493,6 +495,24 @@ class RadialMenuActionExecutor {
         return true
     }
 
+    /// Issue #60 (move/reposition follow-up) — enter reposition mode for the
+    /// pressed drawing. The map view observes `radialMenuMoveDrawing`, starts a
+    /// DrawingMoveSession, and locks the camera while the operator drags the
+    /// whole shape to a new position. Works for shapes selected from either
+    /// engine (the radial Move action routes through here identically).
+    private static func executeMoveDrawing(context: RadialMenuContext, services: RadialMenuServices) -> Bool {
+        guard let drawingId = context.pressedDrawingId,
+              let drawingType = context.pressedDrawingType else { return false }
+
+        NotificationCenter.default.post(
+            name: .radialMenuMoveDrawing,
+            object: nil,
+            userInfo: ["drawingId": drawingId, "drawingType": drawingType]
+        )
+
+        return true
+    }
+
     private static func executeDeleteDrawing(context: RadialMenuContext, services: RadialMenuServices) -> Bool {
         guard let drawingId = context.pressedDrawingId,
               let drawingType = context.pressedDrawingType,
@@ -767,6 +787,9 @@ extension Notification.Name {
     /// showToolsMenu state so the 5x4 grid presents.
     static let showFullTools = Notification.Name("showFullTools")
     static let radialMenuEditDrawing = Notification.Name("radialMenuEditDrawing")
+    /// Issue #60 (move/reposition follow-up) — posted by the drawing radial
+    /// menu's Move action; the map view enters reposition mode for the shape.
+    static let radialMenuMoveDrawing = Notification.Name("radialMenuMoveDrawing")
     // App mode & layers
     static let radialMenuShowAppModePicker = Notification.Name("radialMenuShowAppModePicker")
     static let radialMenuShowLayers = Notification.Name("radialMenuShowLayers")

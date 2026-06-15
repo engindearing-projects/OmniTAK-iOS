@@ -124,6 +124,50 @@ enum RadialMenuPresets {
         )
     }
 
+    // MARK: - Drawing Context Menu
+
+    /// Menu for a placed drawing shape (line / polygon / circle / drawing
+    /// marker). Adds **Move** between Edit and Delete — the reposition action
+    /// from issue #60. Edit / Delete reuse the shared `.editMarker` /
+    /// `.deleteMarker` actions, which already dispatch to the drawing handlers
+    /// when the context is a drawing (see RadialMenuActionExecutor). This is
+    /// shown instead of `markerContextMenu` whenever a drawing is selected, so
+    /// Move never appears for point markers (which can't be repositioned here).
+    static var drawingContextMenu: RadialMenuConfiguration {
+        RadialMenuConfiguration(
+            items: [
+                RadialMenuItem(
+                    icon: "pencil.circle.fill",
+                    label: "Edit",
+                    color: atakOrange,
+                    action: .editMarker
+                ),
+                RadialMenuItem(
+                    icon: "arrow.up.and.down.and.arrow.left.and.right",
+                    label: "Move",
+                    color: atakBlue,
+                    action: .moveDrawing
+                ),
+                RadialMenuItem(
+                    icon: "trash.fill",
+                    label: "Delete",
+                    color: atakRed,
+                    action: .deleteMarker
+                ),
+                RadialMenuItem(
+                    icon: "info.circle.fill",
+                    label: "Info",
+                    color: atakGray,
+                    action: .getInfo
+                )
+            ],
+            radius: 120,
+            itemSize: 56,
+            hapticFeedback: true,
+            showLabels: true
+        )
+    }
+
     // MARK: - Quick Actions Menu
 
     /// Menu for quick tactical actions
@@ -528,6 +572,8 @@ struct RadialMenuPresetsPreviewWrapper: View {
             return "Draw Polygon"
         case .editDrawing:
             return "Edit Drawing"
+        case .moveDrawing:
+            return "Move Drawing"
         case .deleteDrawing:
             return "Delete Drawing"
         case .openLayers:
