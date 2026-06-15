@@ -89,6 +89,18 @@ class PositionBroadcastService: ObservableObject {
     // Not @Published — mutated on ppliQueue; expose internal for @testable access.
     internal var lastMeshPPLISend: Date?
 
+    /// Pure throttle decision for the mesh PPLI cadence (Issue #46).
+    ///
+    /// The mesh PPLI rides on the high-frequency server keepalive tick, so most
+    /// ticks must be dropped to keep low-bandwidth LoRa from saturating. A send
+    /// is allowed when there's no prior send, or when at least `interval` seconds
+    /// have elapsed since the last one. Factored out so the gate is unit-testable
+    /// without a radio or a running timer.
+    static func shouldSendMeshPPLI(lastSend: Date?, now: Date, interval: TimeInterval) -> Bool {
+        guard let lastSend = lastSend else { return true }
+        return now.timeIntervalSince(lastSend) >= interval
+    }
+
     // MARK: - Issue #65: Manual Position Override
     //
     // When the operator taps their self-pip and sets a manual coordinate,
@@ -276,10 +288,12 @@ class PositionBroadcastService: ObservableObject {
         // MeshtasticManager is @MainActor, so we must hop to the main actor
         // before touching it (prevents the off-main @Published-publish crash class).
         if meshBroadcastEnabled {
-            let interval = meshPPLIInterval
-            let lastSend = lastMeshPPLISend
             let now = Date()
-            guard lastSend == nil || now.timeIntervalSince(lastSend!) >= interval else {
+            guard Self.shouldSendMeshPPLI(
+                lastSend: lastMeshPPLISend,
+                now: now,
+                interval: meshPPLIInterval
+            ) else {
                 return
             }
             lastMeshPPLISend = now

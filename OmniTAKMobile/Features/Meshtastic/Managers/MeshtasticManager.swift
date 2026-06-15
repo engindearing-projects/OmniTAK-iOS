@@ -444,19 +444,10 @@ public class MeshtasticManager: ObservableObject {
             return false
         }
 
-        // Phase 2: use compact TAKPacket for a-* (PLI) and b-t-f (GeoChat).
-        // Fall back to Phase-1 TAKMessage{CoTEvent} for other types.
-        let payload: Data
-        if event.type.hasPrefix("a-") || event.type == "b-t-f" {
-            if let takPacketPayload = TAKPacketCodec.encode(event) {
-                payload = takPacketPayload
-            } else {
-                // encode returned nil (shouldn't happen for a-* / b-t-f) — fallback
-                payload = ATAKPluginSerializer.serialize(event)
-            }
-        } else {
-            payload = ATAKPluginSerializer.serialize(event)
-        }
+        // Format selection (TAKPacket for PLI/GeoChat, TAKMessage fallback for
+        // everything else) is the pure, unit-tested MeshTAKRouting decision.
+        let payload = MeshTAKRouting.encodePayload(for: event)
+            ?? ATAKPluginSerializer.serialize(event)
 
         switch device.connectionType {
         case .bluetooth:

@@ -105,3 +105,53 @@ protocol MeshManager: ObservableObject {
     @discardableResult
     func sendCoTOverMesh(_ event: CoTEvent, channelIndex: UInt32) -> Bool
 }
+
+// MARK: - Mesh TAK Routing (Issue #46)
+
+/// Pure decision layer for the off-grid mesh path.
+///
+/// `MeshtasticManager.sendCoTOverMesh` couples three things: deciding which wire
+/// format a CoT event takes, building those bytes, and handing them to a live
+/// BLE/TCP transport. Only the first two are testable without a radio, so they
+/// live here as side-effect-free functions; the manager keeps the transport I/O.
+///
+/// Format selection (matches the Phase 2 interop contract):
+///   - `a-*`  (PLI)     → compact `TAKPacket` (atak.proto) so stock Meshtastic
+///                        gear, the phone-app TAK role, and TAK_Meshtastic_Gateway
+///                        all read it.
+///   - `b-t-f` (GeoChat) → compact `TAKPacket` GeoChat (unishox2-compressed).
+///   - everything else  → the OmniTAK↔OmniTAK `TAKMessage{CoTEvent}` fallback,
+///                        which the inbound parser still accepts.
+enum MeshTAKRouting {
+
+    /// Which on-the-wire encoder a given CoT event takes over the mesh.
+    enum Format: Equatable {
+        /// Compact `TAKPacket` (atak.proto) — PLI or GeoChat.
+        case takPacket
+        /// `TAKMessage{CoTEvent}` fallback (OmniTAK↔OmniTAK, non-PLI/non-chat).
+        case takMessage
+    }
+
+    /// Decide the wire format for an outbound CoT event. Pure — no radio, no I/O.
+    static func decide(for event: CoTEvent) -> Format {
+        if event.type.hasPrefix("a-") || event.type == "b-t-f" {
+            return .takPacket
+        }
+        return .takMessage
+    }
+
+    /// Encode the bytes to put on the mesh for an outbound CoT event, choosing
+    /// the encoder per `decide(for:)`. Pure — returns the payload, sends nothing.
+    ///
+    /// `TAKPacketCodec.encode` only returns nil for types it doesn't handle; in
+    /// that case (which `decide` already routes to `.takMessage`) we fall back to
+    /// the `TAKMessage` serializer so a payload is always produced.
+    static func encodePayload(for event: CoTEvent) -> Data? {
+        switch decide(for: event) {
+        case .takPacket:
+            return TAKPacketCodec.encode(event) ?? ATAKPluginSerializer.serialize(event)
+        case .takMessage:
+            return ATAKPluginSerializer.serialize(event)
+        }
+    }
+}

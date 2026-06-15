@@ -2,143 +2,62 @@
 //  MeshBroadcastTests.swift
 //  OmniTAKMobileTests
 //
-//  Phase 1 mesh off-grid PPLI + GeoChat — behavior documentation and round-trip
-//  reproducer.
+//  Issue #46 Phase 1 — off-grid OmniTAK↔OmniTAK over Meshtastic.
 //
-//  NOTE: At the time of writing the iOS test *target* is not linked against
-//  OmniTAKMobile (same situation as ATAKPluginParserTests.swift and the other
-//  stubs in this folder).  These tests are written in stub style alongside the
-//  existing files; wiring a new PBXNativeTarget is deferred to a future sprint.
+//  These tests exercise the *pure* decision layer of the mesh off-grid path so
+//  the routing/throttle/attribution logic is verified without a radio:
 //
-//  The standalone round-trip reproducer at the bottom (MeshRoundTripReproducer)
-//  IS runnable from a Swift playground or as a standalone Swift file because it
-//  does NOT import OmniTAKMobile — it re-declares the minimal types it needs.
-//  Run it with:
-//      swift OmniTAKMobileTests/MeshBroadcastTests.swift
+//    1. Outbound routing decision (MeshTAKRouting.decide) — which mesh payload
+//       encoder fires for a given CoT type (PLI / GeoChat TAKPacket vs the
+//       OmniTAK↔OmniTAK TAKMessage fallback).
+//    2. CoT↔mesh-frame encoding + attribution — the bytes the routing decision
+//       selects actually carry the callsign/team/message (round-trip through
+//       TAKPacketCodec and ATAKPluginSerializer/Parser).
+//    3. PPLI throttle decision (PositionBroadcastService.shouldSendMeshPPLI) —
+//       the time-window gate that keeps low-bandwidth LoRa from being saturated.
+//    4. Inbound mesh → contact/chat mapping (ATAKPluginParser.classify) — a
+//       remote PLI becomes a map contact (.positionUpdate); a remote GeoChat
+//       becomes a chat message (.chatMessage) attributed to its sender.
 //
-//  Verified behaviors documented here (Phase 1, OmniTAK↔OmniTAK, no server):
-//    1. sendAutoPPLITick sends over mesh when meshBroadcastEnabled == true AND
-//       the throttle window has elapsed.
-//    2. sendAutoPPLITick does NOT send over mesh when meshBroadcastEnabled == false.
-//    3. sendAutoPPLITick respects the meshPPLIInterval throttle (second call
-//       within the window is skipped).
-//    4. ChatManager.sendMessage mirrors text to mesh via MeshtasticManager.
-//    5. ATAKPluginParser.classify(b-t-f event) → .chatMessage with correct text.
-//    6. ATAKPluginSerializer → ATAKPluginParser round-trip preserves uid, type,
-//       lat/lon, callsign, remarks.
+//  The end-to-end mesh link (BLE/TCP → LoRa → peer) is NOT exercised here — that
+//  needs two Meshtastic radios and is covered by the on-hardware checklist in the
+//  PR. Everything below is deterministic pure Swift against the linked module.
 //
 
 import XCTest
 @testable import OmniTAK
 
-// MARK: - Mesh Broadcast Unit Tests (stub style — no compiled target yet)
-
 final class MeshBroadcastTests: XCTestCase {
 
-    // MARK: - 1. PPLI throttle: disabled flag prevents mesh send
+    // MARK: - Fixtures
 
-    func testMeshPPLISkippedWhenDisabled() {
-        let service = PositionBroadcastService.shared
-        let originalEnabled = service.meshBroadcastEnabled
-        defer { service.meshBroadcastEnabled = originalEnabled }
-
-        service.meshBroadcastEnabled = false
-        service.lastMeshPPLISend = nil
-
-        // With meshBroadcastEnabled == false the mesh branch is never entered,
-        // so lastMeshPPLISend remains nil after a tick.
-        // (Direct invocation is not possible without a linked test target;
-        // document the expected invariant here.)
-        XCTAssertFalse(service.meshBroadcastEnabled,
-            "meshBroadcastEnabled should be false in this test")
-    }
-
-    // MARK: - 2. PPLI throttle: second call within window is skipped
-
-    func testMeshPPLIThrottleHonored() {
-        let service = PositionBroadcastService.shared
-        let originalEnabled = service.meshBroadcastEnabled
-        let originalInterval = service.meshPPLIInterval
-        let originalLastSend = service.lastMeshPPLISend
-        defer {
-            service.meshBroadcastEnabled = originalEnabled
-            service.meshPPLIInterval = originalInterval
-            service.lastMeshPPLISend = originalLastSend
-        }
-
-        service.meshBroadcastEnabled = true
-        service.meshPPLIInterval = 30.0
-
-        // Simulate a send that just happened.
-        let now = Date()
-        service.lastMeshPPLISend = now
-
-        // A "tick" 5 seconds later should NOT send (interval is 30 s).
-        let tickTime = now.addingTimeInterval(5)
-        let shouldSend = tickTime.timeIntervalSince(now) >= service.meshPPLIInterval
-        XCTAssertFalse(shouldSend,
-            "A tick 5 s after the last send should be suppressed by the 30 s throttle")
-
-        // A tick 35 seconds later SHOULD send.
-        let laterTick = now.addingTimeInterval(35)
-        let shouldSendLater = laterTick.timeIntervalSince(now) >= service.meshPPLIInterval
-        XCTAssertTrue(shouldSendLater,
-            "A tick 35 s after the last send should pass the 30 s throttle")
-    }
-
-    // MARK: - 3. Default mesh settings
-
-    func testMeshBroadcastDefaults() {
-        // Defaults: enabled=true, interval=30 s.
-        // We can only assert the initial values since this is a singleton and
-        // other tests may have mutated them.  Assert the domain constraint only.
-        let service = PositionBroadcastService.shared
-        XCTAssertTrue(service.meshPPLIInterval >= 30.0,
-            "meshPPLIInterval must be at least 30 s (LoRa bandwidth budget)")
-        XCTAssertTrue(service.meshPPLIInterval <= 60.0,
-            "meshPPLIInterval must be at most 60 s (reasonable SA cadence)")
-    }
-
-    // MARK: - 4. ATAKPluginParser.classify routes b-t-f to .chatMessage
-
-    func testClassifyBtfRoutesToChatMessage() {
-        let event = CoTEvent(
-            uid: "MSG-abc123",
-            type: "b-t-f",
-            time: Date(),
-            point: CoTPoint(lat: 47.0, lon: -122.0, hae: 0, ce: 9999, le: 9999),
+    /// A self-SA PLI event (what PositionBroadcastService emits over the mesh).
+    private func makePLIEvent() -> CoTEvent {
+        CoTEvent(
+            uid: "IOS-1234abcd",
+            type: "a-f-G-U-C",
+            time: Date(timeIntervalSince1970: 1_714_000_000),
+            point: CoTPoint(lat: 47.6062, lon: -122.3321, hae: 56.0, ce: 5, le: 5),
             detail: CoTDetail(
                 callsign: "ALPHA-1",
-                team: nil,
-                teamRole: nil,
-                speed: nil,
-                course: nil,
-                remarks: "Hello from mesh",
-                battery: nil,
+                team: "Cyan",
+                teamRole: "Team Member",
+                speed: 3.0,
+                course: 270.0,
+                remarks: nil,
+                battery: 85,
                 device: nil,
                 platform: nil
             )
         )
-
-        switch ATAKPluginParser.classify(event) {
-        case .chatMessage(let msg):
-            XCTAssertEqual(msg.id, "MSG-abc123")
-            XCTAssertEqual(msg.senderCallsign, "ALPHA-1")
-            XCTAssertEqual(msg.messageText, "Hello from mesh")
-            XCTAssertEqual(msg.conversationId, ChatRoom.allUsersId)
-            XCTAssertFalse(msg.isFromSelf)
-        default:
-            XCTFail("b-t-f event should classify as .chatMessage, not \(ATAKPluginParser.classify(event))")
-        }
     }
 
-    // MARK: - 5. b-t-f with empty remarks → empty messageText (not nil)
-
-    func testClassifyBtfEmptyRemarks() {
-        let event = CoTEvent(
-            uid: "MSG-empty",
+    /// A GeoChat event (what ChatManager mirrors over the mesh).
+    private func makeGeoChatEvent(text: String = "Moving to OBJ Bravo") -> CoTEvent {
+        CoTEvent(
+            uid: "MSG-deadbeef",
             type: "b-t-f",
-            time: Date(),
+            time: Date(timeIntervalSince1970: 1_714_000_000),
             point: CoTPoint(lat: 0, lon: 0, hae: 0, ce: 9999, le: 9999),
             detail: CoTDetail(
                 callsign: "BRAVO-2",
@@ -146,128 +65,231 @@ final class MeshBroadcastTests: XCTestCase {
                 teamRole: nil,
                 speed: nil,
                 course: nil,
-                remarks: nil,    // no remarks field
+                remarks: text,
                 battery: nil,
                 device: nil,
                 platform: nil
             )
+        )
+    }
+
+    // MARK: - 1. Outbound routing decision
+
+    func testRoutingPLIUsesTAKPacket() {
+        let decision = MeshTAKRouting.decide(for: makePLIEvent())
+        XCTAssertEqual(decision, .takPacket,
+            "a-* (PLI) events must route to the compact TAKPacket encoder for ecosystem interop")
+    }
+
+    func testRoutingGeoChatUsesTAKPacket() {
+        let decision = MeshTAKRouting.decide(for: makeGeoChatEvent())
+        XCTAssertEqual(decision, .takPacket,
+            "b-t-f (GeoChat) events must route to the compact TAKPacket GeoChat encoder")
+    }
+
+    func testRoutingOtherTypeUsesTAKMessageFallback() {
+        // A waypoint (b-m-p-w) is neither a-* nor b-t-f — it must take the
+        // OmniTAK↔OmniTAK TAKMessage{CoTEvent} fallback, not TAKPacket.
+        let waypoint = CoTEvent(
+            uid: "WPT-1",
+            type: "b-m-p-w",
+            time: Date(),
+            point: CoTPoint(lat: 47.0, lon: -122.0, hae: 0, ce: 9999, le: 9999),
+            detail: CoTDetail(callsign: "WPT", team: nil, teamRole: nil, speed: nil,
+                              course: nil, remarks: "rally", battery: nil,
+                              device: nil, platform: nil)
+        )
+        XCTAssertEqual(MeshTAKRouting.decide(for: waypoint), .takMessage,
+            "non-PLI/non-chat events must fall back to the TAKMessage path")
+    }
+
+    // MARK: - 2. Encoding selected by the routing decision carries attribution
+
+    func testEncodePayloadForPLIRoundTripsToContact() {
+        let event = makePLIEvent()
+        // Routing says TAKPacket — encode the payload the manager would send.
+        XCTAssertEqual(MeshTAKRouting.decide(for: event), .takPacket)
+        guard let payload = MeshTAKRouting.encodePayload(for: event) else {
+            return XCTFail("encodePayload returned nil for a PLI event")
+        }
+        XCTAssertFalse(payload.isEmpty, "PLI payload must not be empty")
+
+        // The wire bytes must decode back to the same position + team + callsign.
+        guard let pkt = TAKPacketCodec.decode(payload) else {
+            return XCTFail("TAKPacketCodec.decode failed on the PLI payload we encoded")
+        }
+        XCTAssertTrue(pkt.hasPLI, "encoded PLI must decode as a PLI")
+        XCTAssertEqual(pkt.callsign, "ALPHA-1", "callsign attribution must survive encode")
+        XCTAssertEqual(pkt.team, .cyan, "team attribution must survive encode")
+        XCTAssertEqual(pkt.latitudeI, 476062000, "latitude_i must survive encode")
+        XCTAssertEqual(pkt.longitudeI, -1223321000, "longitude_i must survive encode")
+    }
+
+    func testEncodePayloadForGeoChatRoundTripsToMessage() {
+        let event = makeGeoChatEvent(text: "RTO actual, sitrep?")
+        XCTAssertEqual(MeshTAKRouting.decide(for: event), .takPacket)
+        guard let payload = MeshTAKRouting.encodePayload(for: event) else {
+            return XCTFail("encodePayload returned nil for a GeoChat event")
+        }
+
+        guard let pkt = TAKPacketCodec.decode(payload) else {
+            return XCTFail("TAKPacketCodec.decode failed on the GeoChat payload we encoded")
+        }
+        XCTAssertTrue(pkt.hasChat, "encoded GeoChat must decode as a chat")
+        XCTAssertEqual(pkt.chatMessage, "RTO actual, sitrep?",
+            "chat text attribution must survive encode (unishox2 round-trip)")
+        XCTAssertEqual(pkt.callsign, "BRAVO-2", "sender callsign must survive encode")
+    }
+
+    func testEncodePayloadFallbackRoundTripsViaTAKMessage() {
+        // For the fallback path, encodePayload yields a TAKMessage that the
+        // inbound ATAKPluginParser must be able to read back.
+        let event = CoTEvent(
+            uid: "WPT-roundtrip",
+            type: "b-m-p-w",
+            time: Date(timeIntervalSince1970: 1_714_000_000),
+            point: CoTPoint(lat: 47.5, lon: -122.5, hae: 12, ce: 9999, le: 9999),
+            detail: CoTDetail(callsign: "WPT-CS", team: nil, teamRole: nil, speed: nil,
+                              course: nil, remarks: nil, battery: nil,
+                              device: nil, platform: nil)
+        )
+        XCTAssertEqual(MeshTAKRouting.decide(for: event), .takMessage)
+        guard let payload = MeshTAKRouting.encodePayload(for: event) else {
+            return XCTFail("encodePayload returned nil for the fallback path")
+        }
+        guard let parsed = ATAKPluginParser.parse(payload) else {
+            return XCTFail("fallback TAKMessage payload should be readable by ATAKPluginParser")
+        }
+        XCTAssertEqual(parsed.uid, "WPT-roundtrip")
+        XCTAssertEqual(parsed.type, "b-m-p-w")
+        XCTAssertEqual(parsed.point.lat, 47.5, accuracy: 1e-6)
+    }
+
+    // MARK: - 3. PPLI throttle decision
+
+    func testMeshPPLIFirstSendAlwaysAllowed() {
+        // With no prior send, the first tick must be allowed regardless of interval.
+        XCTAssertTrue(
+            PositionBroadcastService.shouldSendMeshPPLI(lastSend: nil, now: Date(), interval: 30),
+            "the first mesh PPLI (no prior send) must always be allowed")
+    }
+
+    func testMeshPPLIThrottleSuppressesWithinWindow() {
+        let now = Date(timeIntervalSince1970: 1_714_000_000)
+        let recent = now.addingTimeInterval(-5)   // 5 s ago, interval is 30 s
+        XCTAssertFalse(
+            PositionBroadcastService.shouldSendMeshPPLI(lastSend: recent, now: now, interval: 30),
+            "a tick 5 s after the last send must be suppressed by the 30 s throttle")
+    }
+
+    func testMeshPPLIThrottleAllowsAfterWindow() {
+        let now = Date(timeIntervalSince1970: 1_714_000_000)
+        let old = now.addingTimeInterval(-35)      // 35 s ago, interval is 30 s
+        XCTAssertTrue(
+            PositionBroadcastService.shouldSendMeshPPLI(lastSend: old, now: now, interval: 30),
+            "a tick 35 s after the last send must pass the 30 s throttle")
+    }
+
+    func testMeshPPLIThrottleBoundaryIsInclusive() {
+        let now = Date(timeIntervalSince1970: 1_714_000_000)
+        let exactly = now.addingTimeInterval(-30)  // exactly one interval ago
+        XCTAssertTrue(
+            PositionBroadcastService.shouldSendMeshPPLI(lastSend: exactly, now: now, interval: 30),
+            "a tick exactly one interval after the last send must be allowed (>=)")
+    }
+
+    func testMeshPPLIDefaultIntervalWithinLoRaBudget() {
+        // Domain constraint: the default must sit in the 30–60 s ATAK SA window
+        // so we neither flood LoRa nor let peers go stale.
+        let service = PositionBroadcastService.shared
+        XCTAssertGreaterThanOrEqual(service.meshPPLIInterval, 30.0,
+            "meshPPLIInterval must be >= 30 s (LoRa bandwidth budget)")
+        XCTAssertLessThanOrEqual(service.meshPPLIInterval, 60.0,
+            "meshPPLIInterval must be <= 60 s (reasonable SA cadence)")
+    }
+
+    // MARK: - 4. Inbound mesh → contact / chat mapping
+
+    func testInboundPLIClassifiesAsPositionUpdate() {
+        // A decoded remote PLI must land as a map contact, not a chat line.
+        let event = makePLIEvent()
+        switch ATAKPluginParser.classify(event) {
+        case .positionUpdate(let e):
+            XCTAssertEqual(e.detail.callsign, "ALPHA-1",
+                "inbound PLI should surface the remote callsign as a contact")
+        default:
+            XCTFail("a-f-G-U-C (PLI) must classify as .positionUpdate for the map")
+        }
+    }
+
+    func testInboundGeoChatClassifiesAsChatMessage() {
+        let event = makeGeoChatEvent(text: "Hello from the mesh")
+        switch ATAKPluginParser.classify(event) {
+        case .chatMessage(let msg):
+            XCTAssertEqual(msg.senderCallsign, "BRAVO-2",
+                "inbound GeoChat must be attributed to its sender")
+            XCTAssertEqual(msg.messageText, "Hello from the mesh")
+            XCTAssertEqual(msg.conversationId, ChatRoom.allUsersId,
+                "broadcast mesh chat lands in All Chat Users")
+            XCTAssertFalse(msg.isFromSelf, "inbound mesh chat is from a peer, not self")
+        default:
+            XCTFail("b-t-f (GeoChat) must classify as .chatMessage for the chat pane")
+        }
+    }
+
+    func testInboundGeoChatNilRemarksIsEmptyNotCrash() {
+        let event = CoTEvent(
+            uid: "MSG-empty",
+            type: "b-t-f",
+            time: Date(),
+            point: CoTPoint(lat: 0, lon: 0, hae: 0, ce: 9999, le: 9999),
+            detail: CoTDetail(callsign: "CHARLIE-3", team: nil, teamRole: nil, speed: nil,
+                              course: nil, remarks: nil, battery: nil,
+                              device: nil, platform: nil)
         )
         switch ATAKPluginParser.classify(event) {
         case .chatMessage(let msg):
             XCTAssertEqual(msg.messageText, "",
-                "Nil remarks should produce empty string, not crash")
+                "nil remarks must produce an empty message, not crash")
         default:
-            XCTFail("b-t-f should still classify as .chatMessage even with nil remarks")
+            XCTFail("b-t-f with nil remarks must still classify as .chatMessage")
         }
     }
 
-    // MARK: - 6. Full serialize → parse round-trip for b-t-f GeoChat
+    // MARK: - 5. Full outbound→inbound loop (encode then read back)
 
-    func testBtfRoundTrip() {
-        let original = CoTEvent(
-            uid: "CHAT-roundtrip",
-            type: "b-t-f",
-            time: Date(timeIntervalSince1970: 1_714_000_000),
-            point: CoTPoint(lat: 47.6097, lon: -122.3331, hae: 42.0, ce: 9999, le: 9999),
-            detail: CoTDetail(
-                callsign: "CHARLIE-3",
-                team: nil,
-                teamRole: nil,
-                speed: nil,
-                course: nil,
-                remarks: "Off-grid test message",
-                battery: nil,
-                device: nil,
-                platform: nil
-            )
-        )
-
-        let bytes = ATAKPluginSerializer.serialize(
-            original,
-            sendTime: original.time,
-            startTime: original.time,
-            staleTime: original.time.addingTimeInterval(60)
-        )
-        XCTAssertFalse(bytes.isEmpty, "serializer should produce bytes for b-t-f")
-
-        guard let parsed = ATAKPluginParser.parse(bytes) else {
-            return XCTFail("parser returned nil for b-t-f payload")
+    func testGeoChatEncodeThenInboundClassifyLoop() {
+        // Simulate: local device encodes a GeoChat for the mesh, a peer decodes
+        // the same bytes and classifies them. End-to-end attribution must hold.
+        let outbound = makeGeoChatEvent(text: "Off-grid loop test")
+        guard let payload = MeshTAKRouting.encodePayload(for: outbound),
+              let pkt = TAKPacketCodec.decode(payload),
+              let inbound = TAKPacketCodec.toCoTEvent(pkt) else {
+            return XCTFail("GeoChat encode → decode → toCoTEvent loop failed")
         }
-
-        XCTAssertEqual(parsed.uid, original.uid)
-        XCTAssertEqual(parsed.type, original.type)
-        XCTAssertEqual(parsed.point.lat, original.point.lat, accuracy: 1e-9)
-        XCTAssertEqual(parsed.point.lon, original.point.lon, accuracy: 1e-9)
-        XCTAssertEqual(parsed.detail.callsign, "CHARLIE-3")
-        XCTAssertEqual(parsed.detail.remarks, "Off-grid test message",
-            "remarks (GeoChat text) must survive the serialize→parse round-trip")
-
-        // Verify classify produces .chatMessage with correct text
-        switch ATAKPluginParser.classify(parsed) {
+        switch ATAKPluginParser.classify(inbound) {
         case .chatMessage(let msg):
-            XCTAssertEqual(msg.messageText, "Off-grid test message")
-            XCTAssertEqual(msg.senderCallsign, "CHARLIE-3")
+            XCTAssertEqual(msg.messageText, "Off-grid loop test")
+            XCTAssertEqual(msg.senderCallsign, "BRAVO-2")
         default:
-            XCTFail("round-tripped b-t-f should classify as .chatMessage")
+            XCTFail("looped-back GeoChat must classify as .chatMessage on the peer")
         }
     }
 
-    // MARK: - 7. Self-SA (a-f-G-U-C) round-trip still routes to .positionUpdate
-
-    func testSelfSARoundTripStillPositionUpdate() {
-        let event = CoTEvent(
-            uid: "IOS-selfsa",
-            type: "a-f-G-U-C",
-            time: Date(),
-            point: CoTPoint(lat: 47.0, lon: -122.0, hae: 10, ce: 5, le: 5),
-            detail: CoTDetail(
-                callsign: "DELTA-4",
-                team: "Cyan",
-                teamRole: nil,
-                speed: 2.5,
-                course: 90.0,
-                remarks: nil,
-                battery: 80,
-                device: nil,
-                platform: nil
-            )
-        )
-
-        let bytes = ATAKPluginSerializer.serialize(event)
-        guard let parsed = ATAKPluginParser.parse(bytes) else {
-            return XCTFail("self-SA parse returned nil")
+    func testPLIEncodeThenInboundClassifyLoop() {
+        let outbound = makePLIEvent()
+        guard let payload = MeshTAKRouting.encodePayload(for: outbound),
+              let pkt = TAKPacketCodec.decode(payload),
+              let inbound = TAKPacketCodec.toCoTEvent(pkt) else {
+            return XCTFail("PLI encode → decode → toCoTEvent loop failed")
         }
-
-        switch ATAKPluginParser.classify(parsed) {
-        case .positionUpdate:
-            break  // expected
+        switch ATAKPluginParser.classify(inbound) {
+        case .positionUpdate(let e):
+            XCTAssertEqual(e.point.lat, 47.6062, accuracy: 1e-4)
+            XCTAssertEqual(e.point.lon, -122.3321, accuracy: 1e-4)
+            XCTAssertEqual(e.detail.callsign, "ALPHA-1")
         default:
-            XCTFail("a-f-G-U-C should still route to .positionUpdate after mesh refactor")
+            XCTFail("looped-back PLI must classify as .positionUpdate on the peer")
         }
     }
 }
-
-// MARK: - Standalone Round-Trip Reproducer
-//
-// This section can be run directly:  swift OmniTAKMobileTests/MeshBroadcastTests.swift
-//
-// It is intentionally self-contained (no OmniTAKMobile import) so it works
-// outside Xcode without a compiled test target.
-
-// NOTE: The reproducer is embedded as a documentation block only because
-// the hand-rolled protobuf logic lives in the app module and can't be
-// duplicated here without divergence.  The XCTestCase tests above (stubs 4-7)
-// cover the same assertions when the test target is linked.
-//
-// Manual verification steps:
-//   1. Build OmniTAKMobile for any iOS Simulator.
-//   2. Connect a Meshtastic radio (BLE or TCP).
-//   3. Enable Position Broadcasting → Advanced → Mesh Broadcast.
-//   4. Observe in Xcode console: "📡 Mesh PPLI: sent self-position over mesh"
-//      every 30-60 s while connected.
-//   5. Send a GeoChat message — console should show:
-//      "📡 Mesh GeoChat: sent '<text>' from <callsign> over mesh"
-//   6. On a second device receiving the mesh PPLI: the sender's marker should
-//      appear on the map (ATAKPluginParser → CoTEventHandler → TAKService.updateEnhancedMarker).
-//   7. On a second device receiving the GeoChat: the message should appear in
-//      Chat → All Chat Users (ATAKPluginParser.classify b-t-f → .chatMessage).
