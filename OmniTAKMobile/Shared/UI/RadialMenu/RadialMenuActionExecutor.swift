@@ -67,6 +67,8 @@ class RadialMenuActionExecutor {
             return executeEditDrawing(context: context, services: services)
         case .moveDrawing:
             return executeMoveDrawing(context: context, services: services)
+        case .editVertices:
+            return executeEditVertices(context: context, services: services)
         case .deleteDrawing:
             return executeDeleteDrawing(context: context, services: services)
         case .copyCoordinates:
@@ -513,6 +515,24 @@ class RadialMenuActionExecutor {
         return true
     }
 
+    /// Issue #84 — enter vertex-edit mode for the pressed drawing. The map view
+    /// observes `radialMenuEditVertices`, starts a DrawingVertexEditSession,
+    /// locks the camera, and renders draggable per-vertex handles (plus a
+    /// radius handle for a circle) the operator drags to reshape. Routes through
+    /// here identically for shapes selected from either engine.
+    private static func executeEditVertices(context: RadialMenuContext, services: RadialMenuServices) -> Bool {
+        guard let drawingId = context.pressedDrawingId,
+              let drawingType = context.pressedDrawingType else { return false }
+
+        NotificationCenter.default.post(
+            name: .radialMenuEditVertices,
+            object: nil,
+            userInfo: ["drawingId": drawingId, "drawingType": drawingType]
+        )
+
+        return true
+    }
+
     private static func executeDeleteDrawing(context: RadialMenuContext, services: RadialMenuServices) -> Bool {
         guard let drawingId = context.pressedDrawingId,
               let drawingType = context.pressedDrawingType,
@@ -790,6 +810,9 @@ extension Notification.Name {
     /// Issue #60 (move/reposition follow-up) — posted by the drawing radial
     /// menu's Move action; the map view enters reposition mode for the shape.
     static let radialMenuMoveDrawing = Notification.Name("radialMenuMoveDrawing")
+    /// Issue #84 — posted by the drawing radial menu's Edit Vertices action;
+    /// the map view enters vertex-edit mode for the shape.
+    static let radialMenuEditVertices = Notification.Name("radialMenuEditVertices")
     // App mode & layers
     static let radialMenuShowAppModePicker = Notification.Name("radialMenuShowAppModePicker")
     static let radialMenuShowLayers = Notification.Name("radialMenuShowLayers")

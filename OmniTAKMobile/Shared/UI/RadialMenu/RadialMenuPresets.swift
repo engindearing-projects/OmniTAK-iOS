@@ -127,12 +127,13 @@ enum RadialMenuPresets {
     // MARK: - Drawing Context Menu
 
     /// Menu for a placed drawing shape (line / polygon / circle / drawing
-    /// marker). Adds **Move** between Edit and Delete — the reposition action
-    /// from issue #60. Edit / Delete reuse the shared `.editMarker` /
+    /// marker). Adds **Move** (whole-shape reposition, issue #60) and **Vertices**
+    /// (drag individual vertices / a circle's radius handle, issue #84) between
+    /// Edit and Delete. Edit / Delete reuse the shared `.editMarker` /
     /// `.deleteMarker` actions, which already dispatch to the drawing handlers
     /// when the context is a drawing (see RadialMenuActionExecutor). This is
     /// shown instead of `markerContextMenu` whenever a drawing is selected, so
-    /// Move never appears for point markers (which can't be repositioned here).
+    /// these shape-only actions never appear for point markers.
     static var drawingContextMenu: RadialMenuConfiguration {
         RadialMenuConfiguration(
             items: [
@@ -147,6 +148,12 @@ enum RadialMenuPresets {
                     label: "Move",
                     color: atakBlue,
                     action: .moveDrawing
+                ),
+                RadialMenuItem(
+                    icon: "point.topleft.down.curvedto.point.bottomright.up.fill",
+                    label: "Vertices",
+                    color: atakGreen,
+                    action: .editVertices
                 ),
                 RadialMenuItem(
                     icon: "trash.fill",
@@ -574,6 +581,8 @@ struct RadialMenuPresetsPreviewWrapper: View {
             return "Edit Drawing"
         case .moveDrawing:
             return "Move Drawing"
+        case .editVertices:
+            return "Edit Vertices"
         case .deleteDrawing:
             return "Delete Drawing"
         case .openLayers:

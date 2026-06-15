@@ -28,7 +28,7 @@
 <script src="https://unpkg.com/milsymbol@2.2.0/dist/milsymbol.js"></script>
 <script>
   Cesium.Ion.defaultAccessToken='__CESIUM_ION_TOKEN__';
-  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},move:{enabled:false,dragging:false,last:null},northLocked:false,northSnapping:false};
+  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},move:{enabled:false,dragging:false,last:null},vertexEdit:{enabled:false,dragging:false,handles:[]},northLocked:false,northSnapping:false};
   // Lasso multi-select drag (issue #16, 3D parity). Camera pan is
   // disabled while the lasso is enabled; the freehand path is drawn on
   // a 2D overlay canvas and the screen points are picked to lat/lon on
@@ -54,6 +54,17 @@
     _postMapEvent({event:'move',lat:c.lat,lon:c.lon,hae:c.hae,fromLat:_state.move.last.lat,fromLon:_state.move.last.lon});
     _state.move.last=c;}
   function _moveTouchEnd(e){if(!_state.move.enabled)return;e.preventDefault();_state.move.dragging=false;_state.move.last=null;}
+  // Issue #84 — single-finger drag in vertex-edit mode. touchstart posts a
+  // 'vertexdragstart' with the touched globe point so the native side hit-tests
+  // the grabbed handle; touchmove posts 'vertexdrag' with the current point so
+  // native moves that one vertex (or the circle radius handle); touchend posts
+  // 'vertexdragend'. Same overlay-canvas + camera-lock pattern as move/lasso.
+  function _vertexCarto(t){const v=_state.viewer;if(!v)return null;return _cartoFor(v,new Cesium.Cartesian2(t.clientX,t.clientY));}
+  function _vertexTouchStart(e){if(!_state.vertexEdit.enabled)return;e.preventDefault();const t=e.touches[0];if(!t)return;const c=_vertexCarto(t);if(!c)return;_state.vertexEdit.dragging=true;
+    _postMapEvent({event:'vertexdragstart',lat:c.lat,lon:c.lon,hae:c.hae});}
+  function _vertexTouchMove(e){if(!_state.vertexEdit.enabled||!_state.vertexEdit.dragging)return;e.preventDefault();const t=e.touches[0];if(!t)return;const c=_vertexCarto(t);if(!c)return;
+    _postMapEvent({event:'vertexdrag',lat:c.lat,lon:c.lon,hae:c.hae});}
+  function _vertexTouchEnd(e){if(!_state.vertexEdit.enabled)return;e.preventDefault();_state.vertexEdit.dragging=false;_postMapEvent({event:'vertexdragend',lat:0,lon:0});}
   function _drawColor(hex,a){try{const c=Cesium.Color.fromCssColorString(hex||'#4ADE80');return a!==undefined?c.withAlpha(a):c}catch(e){return Cesium.Color.CYAN}}
   function _havDist(a,b){const R=6371000,lat1=a[1]*Math.PI/180,lat2=b[1]*Math.PI/180,dLat=(b[1]-a[1])*Math.PI/180,dLon=(b[0]-a[0])*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.min(1,Math.sqrt(s)))}
   function _fitViewport(){
@@ -327,6 +338,48 @@
         cv.style.display='none';cv.style.pointerEvents='none';
         if(v)v.scene.screenSpaceCameraController.enableInputs=true;
       }
+    },
+    // Issue #84 — drawing vertex-edit mode. Same overlay-canvas + camera-lock
+    // pattern as move; the single-finger drag posts vertexdragstart/vertexdrag/
+    // vertexdragend events the native side uses to hit-test + move one vertex.
+    // The draggable handles are rendered as bright points by setVertexHandles.
+    setVertexEditMode(arg){const e=_parse(arg);const on=!!(e&&e.on);const v=_state.viewer;const cv=document.getElementById('lassoCanvas');if(!cv)return;
+      if(on){
+        _state.vertexEdit.enabled=true;_state.vertexEdit.dragging=false;
+        cv.width=window.innerWidth;cv.height=window.innerHeight;cv.style.display='block';cv.style.pointerEvents='auto';
+        cv.addEventListener('touchstart',_vertexTouchStart,{passive:false});
+        cv.addEventListener('touchmove',_vertexTouchMove,{passive:false});
+        cv.addEventListener('touchend',_vertexTouchEnd,{passive:false});
+        cv.addEventListener('touchcancel',_vertexTouchEnd,{passive:false});
+        if(v)v.scene.screenSpaceCameraController.enableInputs=false;
+      }else{
+        _state.vertexEdit.enabled=false;_state.vertexEdit.dragging=false;
+        cv.removeEventListener('touchstart',_vertexTouchStart);
+        cv.removeEventListener('touchmove',_vertexTouchMove);
+        cv.removeEventListener('touchend',_vertexTouchEnd);
+        cv.removeEventListener('touchcancel',_vertexTouchEnd);
+        const ctx=cv.getContext('2d');ctx&&ctx.clearRect(0,0,cv.width,cv.height);
+        cv.style.display='none';cv.style.pointerEvents='none';
+        if(v)v.scene.screenSpaceCameraController.enableInputs=true;
+        // Clear any rendered handles when leaving the mode.
+        window.OmniBridge.setVertexHandles('[]');
+      }
+    },
+    // Issue #84 — render the draggable vertex handles for the shape under edit.
+    // `arg` is a JSON array of [lon,lat] pairs. Each becomes a bright point
+    // (same style as the in-progress drawing vertices) clamped to the ground,
+    // depth-test disabled so it reads above the shape. Re-pushed live during a
+    // drag so the grabbed handle visibly tracks the finger.
+    setVertexHandles(arg){const list=_parse(arg);const v=_state.viewer;if(!v)return;
+      // Remove the previous handle entities.
+      for(const e of (_state.vertexEdit.handles||[])){try{v.entities.remove(e);}catch(err){}}
+      _state.vertexEdit.handles=[];
+      if(!Array.isArray(list))return;
+      list.forEach(function(c,i){if(!Array.isArray(c)||c.length<2)return;
+        const ent=v.entities.add({id:'vhandle-'+i,position:Cesium.Cartesian3.fromDegrees(c[0],c[1],0),
+          point:{pixelSize:13,color:Cesium.Color.fromCssColorString('#FFFC00'),outlineColor:Cesium.Color.WHITE,outlineWidth:2,heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,disableDepthTestDistance:Number.POSITIVE_INFINITY}});
+        _state.vertexEdit.handles.push(ent);});
+      v.scene.requestRender();
     },
     // Base imagery swap so the layers panel works on the globe:
     // satellite = Cesium World Imagery (aerial), standard = OSM streets,

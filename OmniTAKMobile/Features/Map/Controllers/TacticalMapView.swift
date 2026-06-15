@@ -56,6 +56,14 @@ struct TacticalMapView: UIViewRepresentable {
     // translates the shape via `onDrawingMoveDragged` (the parent persists it).
     @ObservedObject var drawingMoveSession: DrawingMoveSession
     var onDrawingMoveDragged: ((CLLocationDegrees, CLLocationDegrees) -> Void)? = nil
+    // Issue #84 — vertex-edit session shared with the parent + Cesium engine.
+    // When active, a single-finger drag grabs the nearest handle on touch-down
+    // (`onVertexDragBegan` with the touched coordinate) and moves it each frame
+    // (`onVertexDragMoved`); the parent owns the hit-test + persist.
+    @ObservedObject var drawingVertexEditSession: DrawingVertexEditSession
+    var onVertexDragBegan: ((CLLocationCoordinate2D) -> Void)? = nil
+    var onVertexDragMoved: ((CLLocationCoordinate2D) -> Void)? = nil
+    var onVertexDragEnded: (() -> Void)? = nil
     @ObservedObject var kmlVectorStore: KMLVectorOverlayStore = KMLVectorOverlayStore.shared
     @ObservedObject var rasterStore: RasterOverlayStore = RasterOverlayStore.shared
     @ObservedObject var mbtilesStore: MBTilesOverlayStore = MBTilesOverlayStore.shared
@@ -177,6 +185,23 @@ struct TacticalMapView: UIViewRepresentable {
         mapView.addGestureRecognizer(movePan)
         context.coordinator.movePanGesture = movePan
 
+        // Issue #84 — vertex-edit drag gesture, gated on
+        // DrawingVertexEditSession.isActive. On touch-down it forwards the
+        // touched map coordinate so the parent hit-tests the grabbed handle;
+        // each frame forwards the dragged coordinate so the parent moves that
+        // vertex (or the circle radius handle). Like move, `updateUIView`
+        // disables map pan while active so the drag moves the vertex, not the
+        // camera.
+        let vertexPan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleVertexEditPanGesture(_:))
+        )
+        vertexPan.maximumNumberOfTouches = 1
+        vertexPan.cancelsTouchesInView = true
+        vertexPan.delegate = context.coordinator
+        mapView.addGestureRecognizer(vertexPan)
+        context.coordinator.vertexEditPanGesture = vertexPan
+
         // Lifecycle hooks — load terrain + atmosphere on style load
         // so the operator gets immediate 3D depth without a settings
         // detour, and mirror camera changes back into the SwiftUI
@@ -241,7 +266,9 @@ struct TacticalMapView: UIViewRepresentable {
         // Issue #60 (move/reposition follow-up) — while repositioning a shape,
         // disable the map's own pan so the single-finger drag moves the SHAPE
         // (via the movePan recognizer), not the camera. Restore pan on exit.
-        mapView.gestures.options.panEnabled = !drawingMoveSession.isActive
+        // Issue #84 — same while vertex-editing (the vertexPan owns the drag).
+        mapView.gestures.options.panEnabled =
+            !drawingMoveSession.isActive && !drawingVertexEditSession.isActive
 
         // Region sync — only push to Mapbox if the SwiftUI region
         // diverges from the camera state by more than a hair. This is
@@ -411,6 +438,8 @@ struct TacticalMapView: UIViewRepresentable {
         private var drawingMarkerManager: PointAnnotationManager?
         private var drawingLabelManager: PointAnnotationManager?
         private var measurementVertexManager: PointAnnotationManager?
+        // Issue #84 — draggable vertex handles for the shape under vertex edit.
+        private var vertexHandleManager: PointAnnotationManager?
         private var drawingLineManager: PolylineAnnotationManager?
         private var drawingPolygonManager: PolygonAnnotationManager?
         private var drawingTempLineManager: PolylineAnnotationManager?
@@ -449,6 +478,11 @@ struct TacticalMapView: UIViewRepresentable {
         // lat/lon deltas as the finger moves).
         weak var movePanGesture: UIPanGestureRecognizer?
         private var lastMovePanPoint: CGPoint?
+
+        // Issue #84 — vertex-edit drag recognizer. Unlike move (which tracks a
+        // delta), this forwards absolute coordinates: the grabbed vertex on
+        // touch-down, then the dragged coordinate each frame.
+        weak var vertexEditPanGesture: UIPanGestureRecognizer?
 
         // MIL-STD-2525 symbol cache — UIHostingController snapshots
         // keyed by (cotType, callsign) so we don't rebuild the image
@@ -574,6 +608,7 @@ struct TacticalMapView: UIViewRepresentable {
             refreshDrawingPolygons()
             refreshDrawingCircles()
             refreshDrawingTempOverlay()
+            refreshVertexHandles()
             refreshMeasurementOverlay()
             refreshRangeBearing()
             refreshBreadcrumbTrail()
@@ -1316,6 +1351,65 @@ struct TacticalMapView: UIViewRepresentable {
             measurementVertexManager = m
             return m
         }
+
+        // MARK: - Vertex-edit handles (issue #84)
+
+        /// Render draggable handles for the shape under vertex edit (or clear
+        /// them when not editing). Every vertex of a line/polygon, the single
+        /// point of a marker, or `[center, radiusHandle]` for a circle. Read
+        /// live from the store so handles follow the shape as the operator drags.
+        private func refreshVertexHandles() {
+            let session = parent.drawingVertexEditSession
+            guard session.isActive, let id = session.drawingId, let type = session.drawingType else {
+                // Not editing — clear handles only if some are still shown, so we
+                // don't churn an already-empty manager on every camera tick.
+                if vertexHandlesShown {
+                    vertexHandleManager?.annotations = []
+                    vertexHandlesShown = false
+                    annotationSignatures["vertexHandles"] = nil
+                }
+                return
+            }
+            guard let manager = ensureVertexHandleManager() else { return }
+            let handles: [CLLocationCoordinate2D]
+            switch type {
+            case .marker:
+                handles = parent.drawingStore.markers.first(where: { $0.id == id }).map { [$0.coordinate] } ?? []
+            case .line:
+                handles = parent.drawingStore.lines.first(where: { $0.id == id })?.coordinates ?? []
+            case .polygon:
+                handles = parent.drawingStore.polygons.first(where: { $0.id == id })?.coordinates ?? []
+            case .circle:
+                guard let c = parent.drawingStore.circles.first(where: { $0.id == id }) else { handles = []; break }
+                handles = [c.center, c.radiusHandleCoordinate]
+            }
+            // Dedup vs camera ticks: only re-publish when the handle set changes.
+            var sigHasher = Hasher()
+            sigHasher.combine("vertexHandles"); sigHasher.combine(id)
+            for h in handles { sigHasher.combine(h.latitude); sigHasher.combine(h.longitude) }
+            guard shouldPublish(layer: "vertexHandles", signature: sigHasher.finalize()) else { return }
+            manager.annotations = handles.enumerated().map { (i, c) in
+                var ann = PointAnnotation(id: "vh-\(i)", coordinate: c)
+                ann.image = .init(image: Self.tempVertexImage, name: "temp-vertex")
+                ann.iconAnchor = .center
+                return ann
+            }
+            vertexHandlesShown = true
+        }
+
+        /// Whether vertex handles are currently displayed (to avoid clearing an
+        /// already-empty manager every camera tick once editing ends).
+        private var vertexHandlesShown = false
+
+        private func ensureVertexHandleManager() -> PointAnnotationManager? {
+            if let m = vertexHandleManager { return m }
+            guard let mapView = mapView else { return nil }
+            // Make this the topmost annotation manager so handles sit above the
+            // shape outlines the operator is editing.
+            let m = mapView.annotations.makePointAnnotationManager(id: "vertex-handles")
+            vertexHandleManager = m
+            return m
+        }
         private func ensureRangeRingManager() -> PolygonAnnotationManager? {
             if let m = rangeRingManager { return m }
             guard let mapView = mapView else { return nil }
@@ -1679,6 +1773,11 @@ struct TacticalMapView: UIViewRepresentable {
             if gestureRecognizer === movePanGesture {
                 return parent.drawingMoveSession.isActive
             }
+            // Issue #84 — the vertex-edit pan only begins while a vertex-edit
+            // session is active; otherwise it stands down.
+            if gestureRecognizer === vertexEditPanGesture {
+                return parent.drawingVertexEditSession.isActive
+            }
             return true
         }
 
@@ -1739,6 +1838,32 @@ struct TacticalMapView: UIViewRepresentable {
                 lastMovePanPoint = point
             case .ended, .cancelled, .failed:
                 lastMovePanPoint = nil
+            default:
+                break
+            }
+        }
+
+        // MARK: - Drawing vertex-edit gesture (issue #84)
+
+        /// Single-finger drag in vertex-edit mode → move one vertex. On
+        /// touch-down we forward the touched map coordinate so the parent
+        /// hit-tests the nearest handle and grabs it; each frame we forward the
+        /// dragged coordinate so the parent sets that vertex to it (the parent
+        /// owns the geometry so both engines share the same logic). Using the
+        /// absolute coordinate under the finger keeps the vertex pinned to the
+        /// touch at any zoom/pitch.
+        @objc func handleVertexEditPanGesture(_ gesture: UIPanGestureRecognizer) {
+            guard let mapView = mapView, parent.drawingVertexEditSession.isActive else { return }
+            let point = gesture.location(in: mapView)
+            let coord = mapView.mapboxMap.coordinate(for: point)
+            switch gesture.state {
+            case .began:
+                parent.onVertexDragBegan?(coord)
+                parent.onVertexDragMoved?(coord)
+            case .changed:
+                parent.onVertexDragMoved?(coord)
+            case .ended, .cancelled, .failed:
+                parent.onVertexDragEnded?()
             default:
                 break
             }

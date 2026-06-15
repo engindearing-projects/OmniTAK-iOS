@@ -27,10 +27,17 @@ import UIKit
 /// struct so the SwiftUI shell can drive the radial menu and contact
 /// edit flows the same way the 2D Mapbox path does.
 struct CesiumMapEvent {
-    enum Kind { case tap, longpress, cameraChanged, lasso, move }
+    enum Kind {
+        case tap, longpress, cameraChanged, lasso, move
+        // Issue #84 — vertex edit. `vertexDragStart` carries the touched globe
+        // point (native hit-tests the grabbed handle); `vertexDrag` carries the
+        // dragged point (native moves that vertex); `vertexDragEnd` releases it.
+        case vertexDragStart, vertexDrag, vertexDragEnd
+    }
     let kind: Kind
     /// For `.move`, this is the drag's CURRENT globe point; `moveFromCoordinate`
     /// is the previous one, so the delta is (coordinate − moveFromCoordinate).
+    /// For `.vertexDragStart` / `.vertexDrag` it's the touched / dragged point.
     let coordinate: CLLocationCoordinate2D
     let screenPoint: CGPoint
     /// Cesium Entity id that was picked under the cursor, or nil for an
@@ -164,6 +171,15 @@ struct CesiumMainMap: UIViewRepresentable {
     /// step is posted back as a `.move` event carrying the previous→current
     /// globe coordinates so the native side rigidly translates the shape.
     var drawingMoveActive: Bool = false
+    /// Issue #84 — when true (vertex-edit mode), lock the globe camera, render
+    /// `vertexEditHandles` as draggable points, and capture a single-finger
+    /// drag posted back as `.vertexDragStart` / `.vertexDrag` / `.vertexDragEnd`
+    /// events (native hit-tests + moves the grabbed vertex).
+    var drawingVertexEditActive: Bool = false
+    /// Issue #84 — the current draggable vertex handles for the shape under
+    /// edit (lat/lon). Rendered as bright points on the globe; updated live as
+    /// the operator drags so a handle tracks the finger.
+    var vertexEditHandles: [CLLocationCoordinate2D] = []
     /// Base imagery layer for the globe ("satellite" | "hybrid" | "standard").
     var baseLayer: String = "satellite"
     /// Issue #72 — north-up lock. When true the globe is pinned north-up
@@ -388,6 +404,22 @@ struct CesiumMainMap: UIViewRepresentable {
                 webView.evaluateJavaScript("window.OmniBridge.setMoveMode({on:\(drawingMoveActive)});", completionHandler: nil)
             }
 
+            // Issue #84 — vertex-edit mode toggle. Same transition-only pattern;
+            // the bridge locks the camera and captures the single-finger drag,
+            // posting vertexdragstart/vertexdrag/vertexdragend events.
+            if drawingVertexEditActive != context.coordinator.vertexEditWasActive {
+                context.coordinator.vertexEditWasActive = drawingVertexEditActive
+                webView.evaluateJavaScript("window.OmniBridge.setVertexEditMode({on:\(drawingVertexEditActive)});", completionHandler: nil)
+            }
+            // Push the draggable handle set whenever it changes (and while
+            // editing) so a handle tracks the finger as the operator drags.
+            if drawingVertexEditActive {
+                let handlesJSON = buildVertexHandlesJSON()
+                if context.coordinator.shouldPublishBridge(call: "setVertexHandles", signature: handlesJSON.hashValue) {
+                    webView.evaluateJavaScript("window.OmniBridge.setVertexHandles(\(handlesJSON));", completionHandler: nil)
+                }
+            }
+
             // Base layer (imagery) — swap the globe's imagery on change so the
             // layers panel's Satellite/Hybrid/Standard work on 3D too.
             if baseLayer != context.coordinator.lastBaseLayer {
@@ -424,6 +456,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var lassoWasActive = false
         /// Issue #60 — whether drawing reposition mode was active last render.
         var moveWasActive = false
+        /// Issue #84 — whether vertex-edit mode was active last render.
+        var vertexEditWasActive = false
         /// Last base imagery layer pushed to the globe (swap on change).
         var lastBaseLayer = "satellite"
         /// Observer token for toolbar zoom commands forwarded to the bridge.
@@ -508,6 +542,12 @@ struct CesiumMainMap: UIViewRepresentable {
                 // drag capture is restored, mirroring the north-lock re-apply.
                 if moveWasActive {
                     webView?.evaluateJavaScript("window.OmniBridge.setMoveMode({on:true});", completionHandler: nil)
+                }
+                // Issue #84 — same re-apply for vertex-edit mode, including
+                // re-pushing the current handles so they reappear on the globe.
+                if vertexEditWasActive {
+                    webView?.evaluateJavaScript("window.OmniBridge.setVertexEditMode({on:true});", completionHandler: nil)
+                    webView?.evaluateJavaScript("window.OmniBridge.setVertexHandles(\(parent.buildVertexHandlesJSON()));", completionHandler: nil)
                 }
                 // Drain the latest snapshots the moment the HTML signals it
                 // has the OmniBridge alive — anything queued during page
@@ -601,6 +641,9 @@ struct CesiumMainMap: UIViewRepresentable {
                 case "camerachanged": kind = .cameraChanged
                 case "lasso": kind = .lasso
                 case "move": kind = .move
+                case "vertexdragstart": kind = .vertexDragStart
+                case "vertexdrag": kind = .vertexDrag
+                case "vertexdragend": kind = .vertexDragEnd
                 default: return
                 }
                 let cameraState: CesiumMapEvent.CameraState?
@@ -764,6 +807,17 @@ struct CesiumMainMap: UIViewRepresentable {
         }
 
         guard let data = try? JSONEncoder().encode(all),
+              let str = String(data: data, encoding: .utf8) else { return "[]" }
+        return str
+    }
+
+    /// Issue #84 — the draggable vertex handles for the shape under edit, as a
+    /// JSON array of `[lon, lat]` pairs (the bridge's coordinate order). The
+    /// globe renders each as a bright point; the native side owns hit-testing
+    /// and applying the drag, so this is purely the render payload.
+    fileprivate func buildVertexHandlesJSON() -> String {
+        let pairs = vertexEditHandles.map { [$0.longitude, $0.latitude] }
+        guard let data = try? JSONSerialization.data(withJSONObject: pairs),
               let str = String(data: data, encoding: .utf8) else { return "[]" }
         return str
     }

@@ -75,6 +75,7 @@ enum RadialMenuAction: Equatable {
     case drawPolygon
     case editDrawing
     case moveDrawing
+    case editVertices
     case deleteDrawing
 
     // Utility Actions
@@ -132,6 +133,8 @@ enum RadialMenuAction: Equatable {
             return "editDrawing"
         case .moveDrawing:
             return "moveDrawing"
+        case .editVertices:
+            return "editVertices"
         case .deleteDrawing:
             return "deleteDrawing"
         case .copyCoordinates:
@@ -411,7 +414,7 @@ extension RadialMenuAction {
         case .measure, .measureDistance, .measureArea, .measureBearing:
             return "measure"
         case .openDrawingTools, .openDrawingsList, .drawLine, .drawCircle, .drawPolygon,
-             .moveDrawing:
+             .moveDrawing, .editVertices:
             return "drawing"
         case .navigate, .navigateToMarker, .createRoute:
             return "routes"

@@ -234,6 +234,7 @@
 		9D878C1238B9495B89C1D5D8 /* CoordinateFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */; };
 		AAFEACD1A8F44A9C9BB80BC0 /* LassoLineSelectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EADC4D789C2402E9D406268 /* LassoLineSelectTests.swift */; };
 		D60D60D60D60D60D60D60D60 /* DrawingMoveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D60F60F60F60F60F60F60F60 /* DrawingMoveTests.swift */; };
+		0B3D84FD5B2E90470EDD3D15 /* DrawingVertexEditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */; };
 		D7A6203FEC6C090F38F35099 /* CesiumCameraSeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */; };
 		9F360AA41C05B15FC6B71F75 /* EchelonModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D5A42ABFBE8EF268B187D8 /* EchelonModels.swift */; };
 		9F4D964068E0E91862AEE361 /* KMLOverlaysPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 619B6C2A0B1A1C5237648ED5 /* KMLOverlaysPanel.swift */; };
@@ -769,6 +770,7 @@
 		EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoordinateFormatTests.swift; path = OmniTAKMobileTests/CoordinateFormatTests.swift; sourceTree = "<group>"; };
 		8EADC4D789C2402E9D406268 /* LassoLineSelectTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LassoLineSelectTests.swift; path = OmniTAKMobileTests/LassoLineSelectTests.swift; sourceTree = "<group>"; };
 		D60F60F60F60F60F60F60F60 /* DrawingMoveTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingMoveTests.swift; path = OmniTAKMobileTests/DrawingMoveTests.swift; sourceTree = "<group>"; };
+		64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingVertexEditTests.swift; path = OmniTAKMobileTests/DrawingVertexEditTests.swift; sourceTree = "<group>"; };
 		2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CesiumCameraSeedTests.swift; path = OmniTAKMobileTests/CesiumCameraSeedTests.swift; sourceTree = "<group>"; };
 		EC5FB4399952EB25310628E4 /* RangeBearingService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RangeBearingService.swift; path = OmniTAKMobile/Features/Measurement/Services/RangeBearingService.swift; sourceTree = "<group>"; };
 		ED51505084DDA26949BB854D /* EchelonHierarchyView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EchelonHierarchyView.swift; path = OmniTAKMobile/Features/Teams/Views/EchelonHierarchyView.swift; sourceTree = "<group>"; };
@@ -1069,6 +1071,7 @@
 				EC23A9361C594E04810857B2 /* CoordinateFormatTests.swift */,
 				8EADC4D789C2402E9D406268 /* LassoLineSelectTests.swift */,
 				D60F60F60F60F60F60F60F60 /* DrawingMoveTests.swift */,
+				64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */,
 			2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
 								CF000005A000000000000001 /* ConfigProfileTests.swift */,
@@ -2720,6 +2723,7 @@
 				9D878C1238B9495B89C1D5D8 /* CoordinateFormatTests.swift in Sources */,
 				AAFEACD1A8F44A9C9BB80BC0 /* LassoLineSelectTests.swift in Sources */,
 				D60D60D60D60D60D60D60D60 /* DrawingMoveTests.swift in Sources */,
+				0B3D84FD5B2E90470EDD3D15 /* DrawingVertexEditTests.swift in Sources */,
 			D7A6203FEC6C090F38F35099 /* CesiumCameraSeedTests.swift in Sources */,
 				4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,

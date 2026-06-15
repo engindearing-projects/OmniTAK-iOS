@@ -28,6 +28,9 @@ struct ATAKMapView: View {
     // Issue #60 (move/reposition follow-up) — drives drawing reposition mode,
     // shared by both engines so the move UX is identical on Mapbox + Cesium.
     @StateObject private var drawingMoveSession = DrawingMoveSession()
+    // Issue #84 — drives drawing vertex-edit mode (drag individual vertices /
+    // a circle's radius handle), shared by both engines like the move session.
+    @StateObject private var drawingVertexEditSession = DrawingVertexEditSession()
     @StateObject private var radialMenuCoordinator = RadialMenuMapCoordinator()
     @ObservedObject private var chatManager = ChatManager.shared
     @StateObject private var trackRecordingService = TrackRecordingService()
@@ -263,6 +266,21 @@ struct ATAKMapView: View {
             drawingMoveSession: drawingMoveSession,
             onDrawingMoveDragged: { latDelta, lonDelta in
                 applyDrawingMoveDelta(latDelta: latDelta, lonDelta: lonDelta)
+            },
+            // Issue #84 — vertex-edit session + the drag callbacks the 2D
+            // gesture drives. On touch-down it hit-tests the grabbed vertex at a
+            // map coordinate (returns true if one was grabbed); each frame moves
+            // that vertex to the dragged coordinate. The parent owns the
+            // hit-test + persist so the geometry update lives in one place.
+            drawingVertexEditSession: drawingVertexEditSession,
+            onVertexDragBegan: { coordinate in
+                beginVertexDrag(at: coordinate)
+            },
+            onVertexDragMoved: { coordinate in
+                applyVertexDrag(to: coordinate)
+            },
+            onVertexDragEnded: {
+                endVertexDrag()
             },
             onMapTap: handleMapTap,
             // Issue #72 — forward the north-lock flag so TacticalMapView
@@ -1130,6 +1148,14 @@ struct ATAKMapView: View {
             else { return }
             beginDrawingMove(id: drawingId, type: drawingType)
         }
+        // Issue #84 — Edit Vertices from the drawing radial menu enters
+        // vertex-edit mode for the selected shape on whichever engine is active.
+        .onReceive(NotificationCenter.default.publisher(for: .radialMenuEditVertices)) { notification in
+            guard let drawingId = notification.userInfo?["drawingId"] as? UUID,
+                  let drawingType = notification.userInfo?["drawingType"] as? RadialMenuContext.DrawingType
+            else { return }
+            beginVertexEdit(id: drawingId, type: drawingType)
+        }
         // Issue #60 — bail out of reposition mode if the operator toggles the
         // map engine mid-move. The session is a @StateObject that survives the
         // engine swap, and the outgoing engine unmounts without a chance to
@@ -1143,6 +1169,8 @@ struct ATAKMapView: View {
         // via mapRegion mirroring from Cesium camera-changed events.
         .onChange(of: mapEngineRaw) { newValue in
             if drawingMoveSession.isActive { cancelDrawingMove() }
+            // Issue #84 — same bail-out for vertex-edit mode on engine toggle.
+            if drawingVertexEditSession.isActive { cancelVertexEdit() }
             if newValue == MapEngine.cesium3D.rawValue {
                 // Switching 2D → 3D: capture current Mapbox region as seed.
                 cesiumCameraSeed = mapRegion
@@ -1196,6 +1224,13 @@ struct ATAKMapView: View {
                 // and capture a single-finger drag while a shape is being
                 // repositioned, mirroring the lasso capture pattern.
                 drawingMoveActive: drawingMoveSession.isActive,
+                // Issue #84 — vertex-edit mode: lock the globe camera, render
+                // draggable vertex handles for the active shape, and capture a
+                // single-finger drag (the bridge hit-tests the grabbed vertex
+                // native-side, same logic the 2D path uses). `vertexEditHandles`
+                // are the current draggable points so the globe shows them.
+                drawingVertexEditActive: drawingVertexEditSession.isActive,
+                vertexEditHandles: currentVertexEditHandles,
                 // Base layer (satellite / hybrid / standard) so the layers
                 // panel switches the globe's imagery, not just the 2D style.
                 baseLayer: activeMapLayer,
@@ -1349,6 +1384,7 @@ struct ATAKMapView: View {
         gpsFollowButton
         lassoSelectionPill
         drawingMoveOverlay
+        drawingVertexEditOverlay
         measurementChrome
         routeNavigationChrome
     }
@@ -1388,6 +1424,64 @@ struct ATAKMapView: View {
                     }
                     Button {
                         commitDrawingMove()
+                    } label: {
+                        Text("Done")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(Color(hex: "#FFFC00"))
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+                .background(Color.black.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.top, 110) // clear the top status strip / toolbars
+                Spacer()
+            }
+            .zIndex(2600) // above lasso pill (2000), below radial menu (3000)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Issue #84 — vertex-edit HUD. A top banner (never a side panel) telling
+    /// the operator to drag the handles, with Cancel / Done. Shown on whichever
+    /// engine is active; the per-vertex drag is handled inside each engine.
+    @ViewBuilder
+    private var drawingVertexEditOverlay: some View {
+        if drawingVertexEditSession.isActive {
+            VStack {
+                HStack(spacing: 12) {
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(hex: "#FFFC00"))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Editing \(drawingVertexEditSession.label)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        Text("Drag a vertex to reshape")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "#BBBBBB"))
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        cancelVertexEdit()
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.white.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                    Button {
+                        commitVertexEdit()
                     } label: {
                         Text("Done")
                             .font(.system(size: 13, weight: .semibold))
@@ -1929,6 +2023,18 @@ struct ATAKMapView: View {
             let lonDelta = event.coordinate.longitude - from.longitude
             guard latDelta != 0 || lonDelta != 0 else { return }
             applyDrawingMoveDelta(latDelta: latDelta, lonDelta: lonDelta)
+        case .vertexDragStart:
+            // Issue #84 — touch-down in vertex-edit mode. Hit-test the grabbed
+            // vertex at the touched globe coordinate; the same native logic the
+            // 2D path uses, so picking behaves identically on both engines.
+            beginVertexDrag(at: event.coordinate)
+        case .vertexDrag:
+            // Issue #84 — drag step in vertex-edit mode. Move the grabbed vertex
+            // (or circle radius handle) to the current globe coordinate.
+            applyVertexDrag(to: event.coordinate)
+        case .vertexDragEnd:
+            // Issue #84 — touch-up; release the grabbed vertex.
+            endVertexDrag()
         }
     }
 
@@ -2096,6 +2202,184 @@ struct ATAKMapView: View {
             }
         }
         drawingMoveSession.end()
+    }
+
+    // MARK: - Drawing Vertex Edit (issue #84)
+
+    /// The current set of draggable handles for the shape under vertex edit, or
+    /// empty when not editing. Both engines render these as handles: every
+    /// vertex of a line/polygon, the single point of a marker, or
+    /// `[center, radiusHandle]` for a circle (the radius handle is the draggable
+    /// one). Read live from the store so handles track in-progress drags.
+    private var currentVertexEditHandles: [CLLocationCoordinate2D] {
+        guard drawingVertexEditSession.isActive,
+              let id = drawingVertexEditSession.drawingId,
+              let type = drawingVertexEditSession.drawingType else { return [] }
+        switch type {
+        case .marker:
+            return drawingStore.markers.first(where: { $0.id == id }).map { [$0.coordinate] } ?? []
+        case .line:
+            return drawingStore.lines.first(where: { $0.id == id })?.coordinates ?? []
+        case .circle:
+            guard let c = drawingStore.circles.first(where: { $0.id == id }) else { return [] }
+            return [c.center, c.radiusHandleCoordinate]
+        case .polygon:
+            return drawingStore.polygons.first(where: { $0.id == id })?.coordinates ?? []
+        }
+    }
+
+    /// Zoom-aware grab radius (metres) for picking a vertex — a fixed on-screen
+    /// target translated to ground distance via the current 2D region span, so
+    /// a vertex is equally easy to grab at any zoom. Used by both engines'
+    /// touch-down hit-test.
+    private var vertexGrabRadiusMeters: CLLocationDistance {
+        // ~44 pt finger target. metresPerDegLat ≈ 111_320; the region's latitude
+        // span across the viewport height gives metres-per-point.
+        let metersPerDegLat = 111_320.0
+        let spanMeters = mapRegion.span.latitudeDelta * metersPerDegLat
+        // Assume a ~700 pt tall map; 44 pt of that is the grab target. Clamp so
+        // it never gets uselessly tiny (deep zoom) or huge (whole-globe view).
+        let perPoint = spanMeters / 700.0
+        return min(max(perPoint * 44.0, 5.0), 500_000.0)
+    }
+
+    /// Enter vertex-edit mode for the given drawing. Snapshots the editable
+    /// handles so Cancel can restore them exactly, then arms the shared
+    /// `DrawingVertexEditSession`; both engines lock the camera, render the
+    /// handles, and move the grabbed vertex on drag.
+    private func beginVertexEdit(id: UUID, type: RadialMenuContext.DrawingType) {
+        let label: String
+        let original: [CLLocationCoordinate2D]
+        switch type {
+        case .marker:
+            guard let m = drawingStore.markers.first(where: { $0.id == id }) else { return }
+            label = m.label; original = [m.coordinate]
+        case .line:
+            guard let l = drawingStore.lines.first(where: { $0.id == id }) else { return }
+            label = l.label; original = l.coordinates
+        case .circle:
+            guard let c = drawingStore.circles.first(where: { $0.id == id }) else { return }
+            label = c.label; original = [c.center, c.radiusHandleCoordinate]
+        case .polygon:
+            guard let p = drawingStore.polygons.first(where: { $0.id == id }) else { return }
+            label = p.label; original = p.coordinates
+        }
+        // A drawing tool / measurement shouldn't be mid-flight while editing.
+        drawingManager.cancelDrawing()
+        drawingVertexEditSession.begin(id: id, type: type, label: label, originalCoordinates: original)
+    }
+
+    /// Touch-down in vertex-edit mode — hit-test the nearest handle to the
+    /// touched coordinate and grab it for the drag. Shared by both engines so
+    /// picking is identical. For a circle only the radius handle (index 1) is
+    /// grabbable; the center isn't moved by vertex edit (use Move for that).
+    private func beginVertexDrag(at coordinate: CLLocationCoordinate2D) {
+        guard drawingVertexEditSession.isActive,
+              let id = drawingVertexEditSession.drawingId,
+              let type = drawingVertexEditSession.drawingType else { return }
+        let handles: [CLLocationCoordinate2D]
+        switch type {
+        case .marker:
+            handles = drawingStore.markers.first(where: { $0.id == id }).map { [$0.coordinate] } ?? []
+        case .line:
+            handles = drawingStore.lines.first(where: { $0.id == id })?.coordinates ?? []
+        case .polygon:
+            handles = drawingStore.polygons.first(where: { $0.id == id })?.coordinates ?? []
+        case .circle:
+            // Only the radius handle is draggable in vertex mode.
+            handles = drawingStore.circles.first(where: { $0.id == id }).map { [$0.radiusHandleCoordinate] } ?? []
+        }
+        guard let hit = DrawingVertexHitTest.nearestVertexIndex(
+            in: handles, to: coordinate, withinMeters: vertexGrabRadiusMeters
+        ) else {
+            drawingVertexEditSession.setActiveVertex(nil)
+            return
+        }
+        // For a circle the grabbable handle list held only the radius handle, so
+        // map its index 0 back to the session's handle index 1 (center is 0).
+        drawingVertexEditSession.setActiveVertex(type == .circle ? 1 : hit)
+    }
+
+    /// Drag step in vertex-edit mode — move the grabbed handle to `coordinate`
+    /// and persist live so the shape reshapes under the finger on both engines.
+    private func applyVertexDrag(to coordinate: CLLocationCoordinate2D) {
+        guard drawingVertexEditSession.isActive,
+              let id = drawingVertexEditSession.drawingId,
+              let type = drawingVertexEditSession.drawingType,
+              let vertexIndex = drawingVertexEditSession.activeVertexIndex else { return }
+        switch type {
+        case .marker:
+            guard let m = drawingStore.markers.first(where: { $0.id == id }) else {
+                cancelVertexEdit(); return
+            }
+            drawingStore.updateMarker(m.with(coordinate: coordinate))
+        case .line:
+            guard let l = drawingStore.lines.first(where: { $0.id == id }) else {
+                cancelVertexEdit(); return
+            }
+            drawingStore.updateLine(l.replacingVertex(at: vertexIndex, with: coordinate))
+        case .polygon:
+            guard let p = drawingStore.polygons.first(where: { $0.id == id }) else {
+                cancelVertexEdit(); return
+            }
+            drawingStore.updatePolygon(p.replacingVertex(at: vertexIndex, with: coordinate))
+        case .circle:
+            // Dragging the radius handle (index 1) resizes; center stays put.
+            guard vertexIndex == 1,
+                  let c = drawingStore.circles.first(where: { $0.id == id }) else {
+                if drawingStore.circles.first(where: { $0.id == id }) == nil { cancelVertexEdit() }
+                return
+            }
+            drawingStore.updateCircle(c.resized(toEdgePoint: coordinate))
+        }
+    }
+
+    /// Touch-up — release the grabbed vertex (the next touch-down re-picks).
+    private func endVertexDrag() {
+        guard drawingVertexEditSession.isActive else { return }
+        drawingVertexEditSession.setActiveVertex(nil)
+    }
+
+    /// Commit the vertex edit. Live drags already persisted each step, so this
+    /// just saves once more and closes the session.
+    private func commitVertexEdit() {
+        guard drawingVertexEditSession.isActive else { return }
+        drawingStore.saveAllDrawings()
+        drawingVertexEditSession.end()
+    }
+
+    /// Cancel the vertex edit — restore the shape's geometry to the snapshot
+    /// taken when the mode was entered, then close the session.
+    private func cancelVertexEdit() {
+        guard drawingVertexEditSession.isActive,
+              let id = drawingVertexEditSession.drawingId,
+              let type = drawingVertexEditSession.drawingType else {
+            drawingVertexEditSession.end()
+            return
+        }
+        let original = drawingVertexEditSession.originalCoordinates
+        switch type {
+        case .marker:
+            if let m = drawingStore.markers.first(where: { $0.id == id }), let first = original.first {
+                drawingStore.updateMarker(m.with(coordinate: first))
+            }
+        case .line:
+            if let l = drawingStore.lines.first(where: { $0.id == id }), !original.isEmpty {
+                drawingStore.updateLine(l.with(coordinates: original))
+            }
+        case .polygon:
+            if let p = drawingStore.polygons.first(where: { $0.id == id }), !original.isEmpty {
+                drawingStore.updatePolygon(p.with(coordinates: original))
+            }
+        case .circle:
+            // Snapshot was [center, radiusHandle]; restore both center and the
+            // radius implied by the original handle distance.
+            if let c = drawingStore.circles.first(where: { $0.id == id }),
+               original.count >= 2 {
+                drawingStore.updateCircle(c.with(center: original[0]).resized(toEdgePoint: original[1]))
+            }
+        }
+        drawingVertexEditSession.end()
     }
 
     // MARK: - Marker Actions
