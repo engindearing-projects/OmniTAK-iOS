@@ -139,6 +139,11 @@ struct ATAKMapView: View {
     // both engines on every camera-change event so the compass overlay always
     // reflects the live map rotation (not just device heading).
     @State private var mapBearing: Double = 0
+    // Issue #62 — 2D→3D camera seed. Captured when the operator switches from
+    // Mapbox 2D to the Cesium globe so the globe opens at the operator's last
+    // 2D view. Cleared after each switch (the CesiumMainMap view is recreated on
+    // every engine toggle so passing it once per switch is sufficient).
+    @State private var cesiumCameraSeed: MKCoordinateRegion? = nil
 
     // New ATAK-style UI states
     @State private var isCursorModeActive = false
@@ -1130,8 +1135,22 @@ struct ATAKMapView: View {
         // engine swap, and the outgoing engine unmounts without a chance to
         // release its camera lock; cancelling restores the shape and clears the
         // HUD so the incoming engine starts clean.
-        .onChange(of: mapEngineRaw) { _ in
+        // Issue #62 — capture the 2D camera seed on switch FROM Mapbox to Cesium
+        // so the globe opens at the operator's current view. The seed is passed
+        // into CesiumMainMap.cameraSeed; the bridge-ready handler converts the
+        // region to a Cesium setCamera call (instant, no flyTo animation).
+        // Switching 3D→2D clears the seed — the reverse direction already works
+        // via mapRegion mirroring from Cesium camera-changed events.
+        .onChange(of: mapEngineRaw) { newValue in
             if drawingMoveSession.isActive { cancelDrawingMove() }
+            if newValue == MapEngine.cesium3D.rawValue {
+                // Switching 2D → 3D: capture current Mapbox region as seed.
+                cesiumCameraSeed = mapRegion
+            } else {
+                // Switching 3D → 2D: clear seed (not needed; mapRegion already
+                // mirrors the Cesium camera from camerachanged events).
+                cesiumCameraSeed = nil
+            }
         }
         // Issue #65 — self-position puck tapped from either engine.
         .onReceive(NotificationCenter.default.publisher(for: .selfMarkerTapped)) { _ in
@@ -1225,7 +1244,11 @@ struct ATAKMapView: View {
                 // wherever the operator pressed.
                 onMapEvent: { event in
                     handleCesiumMapEvent(event)
-                }
+                },
+                // Issue #62 — seed the Cesium camera from the 2D Mapbox view when
+                // the operator switches engines. nil on cold start and after 3D→2D.
+                cameraSeed: cesiumCameraSeed,
+                cameraSeedBearing: mapBearing
             )
             .ignoresSafeArea()
     }

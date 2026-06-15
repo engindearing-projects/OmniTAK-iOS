@@ -200,6 +200,19 @@
       v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,(typeof e.range==='number')?e.range:5000),
         orientation:{heading:Cesium.Math.toRadians(e.heading||0),pitch:Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-30),roll:0},duration:1.2});
     },
+    // Issue #62/#78 — instant camera placement (no animation) for engine-switch
+    // seeding from the 2D Mapbox camera. Accepts {lat, lon, height, heading,
+    // pitch}. Uses setView so there is no flyTo animation competing with the
+    // engine-switch transition. Callers that want animation should use flyTo.
+    // height is metres AGL (not the flyTo "range" from camera to target — for a
+    // top-down camera they are the same). pitch defaults to −90 (straight down).
+    setCamera(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
+      const h=typeof e.height==='number'?Math.max(50,e.height):5000;
+      const hd=Cesium.Math.toRadians(typeof e.heading==='number'?e.heading:0);
+      const pt=Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-90);
+      v.camera.setView({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,h),orientation:{heading:hd,pitch:pt,roll:0}});
+      v.scene.requestRender();
+    },
     // GPS follow — frame the operator at SCREEN CENTER even when the
     // globe is tilted. Placing the camera straight over the user with
     // pitch pushed the marker to the bottom edge / off-screen; lookAt

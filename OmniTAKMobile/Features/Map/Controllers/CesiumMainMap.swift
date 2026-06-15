@@ -67,6 +67,51 @@ enum CesiumIonConfig {
         (Bundle.main.object(forInfoDictionaryKey: "CesiumIonToken") as? String) ?? ""
 }
 
+// MARK: - Issue #62 — 2D→3D camera seed math
+
+/// Pure conversion functions for seeding the Cesium camera from a Mapbox
+/// 2D region. Isolated from UIKit/WKWebView so they can be unit-tested
+/// without a simulator.
+///
+/// The height↔latDelta formulas are the algebraic inverse of the pair already
+/// used in MapViewController.handleCesiumMapEvent (3D→2D mirror):
+///   metersVisible = 1.15 * height
+///   latDelta      = metersVisible / 111_320
+/// Inverse: height = latDelta * 111_320 / 1.15
+///
+/// These constants are intentionally kept in sync with that existing code so
+/// round-trips (2D→3D→2D) don't drift the zoom level.
+enum CesiumCameraMath {
+    /// Height above the ellipsoid (metres) that corresponds to the given
+    /// MKCoordinateRegion's latitudeDelta span. Clamped to [50, 20_000_000] m
+    /// so degenerate regions (zero span or world-scale) stay within Cesium's
+    /// supported range.
+    static func heightForRegion(_ region: MKCoordinateRegion) -> Double {
+        let metersVisible = region.span.latitudeDelta * 111_320.0
+        let h = metersVisible / 1.15
+        return min(max(h, 50.0), 20_000_000.0)
+    }
+
+    /// A `window.OmniBridge.setCamera(…)` JS call string that positions the
+    /// Cesium camera directly over the region's center at the derived height,
+    /// top-down (pitch −90°, matching the 2D map's bird's-eye perspective),
+    /// with the given bearing as the heading. The call uses `setCamera`
+    /// (instant `setView`) rather than `flyTo` so there is no animation
+    /// competing with the engine-switch transition.
+    ///
+    /// - Parameters:
+    ///   - region: The Mapbox 2D camera region to mirror.
+    ///   - bearing: Current map bearing in degrees CW from north.
+    static func seedJS(for region: MKCoordinateRegion, bearing: Double) -> String {
+        let lat = region.center.latitude
+        let lon = region.center.longitude
+        let h   = heightForRegion(region)
+        let hd  = bearing
+        // pitch:-90 = straight down, roll always 0 for a 2D seed.
+        return "window.OmniBridge.setCamera({lat:\(lat),lon:\(lon),height:\(h),heading:\(hd),pitch:-90});"
+    }
+}
+
 extension Notification.Name {
     /// Posted by the toolbar zoom buttons so the Cesium coordinator can zoom
     /// the globe's camera (mapRegion can't drive it). userInfo["factor"]: Double.
@@ -166,6 +211,19 @@ struct CesiumMainMap: UIViewRepresentable {
     /// the `omniMapEvent` handler. Optional so older call sites still
     /// compile while the parent wires the radial menu / edit sheet.
     var onMapEvent: ((CesiumMapEvent) -> Void)?
+    /// Issue #62 — 2D→3D camera seed. When the operator switches from the
+    /// Mapbox 2D engine to the Cesium globe, MapViewController passes the
+    /// current `mapRegion` here. The bridge-ready handler converts it to a
+    /// Cesium camera position (instant `setCamera`, no animation) so the
+    /// globe opens at the operator's last 2D view rather than flying to the
+    /// ADSB center or the bootstrap KJFK default.
+    ///
+    /// Set to `nil` on cold start and on 3D→2D toggle (no seed needed going
+    /// back to 2D; that direction already works via mapRegion mirroring).
+    var cameraSeed: MKCoordinateRegion?
+    /// Issue #62 — bearing to carry into the seeded globe heading so the
+    /// operator's rotation (if any) is preserved on engine switch.
+    var cameraSeedBearing: Double = 0
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -474,16 +532,30 @@ struct CesiumMainMap: UIViewRepresentable {
                     "window.OmniBridge.setTrails(\(lastTrailsSnapshot));",
                     completionHandler: nil
                 )
-                // Align Cesium camera with the ADSB search center on
-                // bridge-ready so the aircraft pill count and the entities
-                // on-screen always match — first-launch users never see
-                // "I have 41 aircraft tracked but the map is empty"
-                // because the camera was over DC and the planes are over
-                // KJFK. ADSB's `getSearchCenter()` returns the user's GPS
-                // (real device) or the KJFK fallback (no fix yet); pre-
-                // existing persisted camera state in cesium.lastLat etc.
-                // is intentionally ignored for this initial alignment.
-                if let center = ADSBTrafficService.shared.searchCenterForBridge() {
+                // Issue #62 — 2D→3D camera seed.
+                //
+                // Priority chain (highest wins):
+                //   1. cameraSeed present (operator just switched from 2D) — use
+                //      setCamera (instant, no animation) so the globe opens where
+                //      the 2D map was. Top-down pitch mirrors the 2D perspective.
+                //   2. ADSB center available — flyTo so aircraft on-screen match
+                //      the pill count (existing behaviour for cold-start / ADSB use).
+                //   3. Persisted Cesium pose (cesium.lastLat etc.) — flyTo to
+                //      restore the operator's last globe view (3D→2D→3D toggle).
+                //   4. Bootstrap — HTML's KJFK default (no native action needed).
+                //
+                // The 3D→2D direction is unaffected: mapRegion already mirrors
+                // the Cesium camera on every camerachanged event (MVC ~line 1820).
+                if let seed = parent.cameraSeed {
+                    // Operator switched from 2D — place the globe over the 2D view
+                    // instantly (setCamera = synchronous setView, no flyTo fight).
+                    webView?.evaluateJavaScript(
+                        CesiumCameraMath.seedJS(for: seed, bearing: parent.cameraSeedBearing),
+                        completionHandler: nil
+                    )
+                } else if let center = ADSBTrafficService.shared.searchCenterForBridge() {
+                    // Cold-start or non-engine-switch bridge init: align with ADSB
+                    // search center so aircraft in the pill count are visible on map.
                     let h = max(20000.0, UserDefaults.standard.double(forKey: "cesium.lastHeight"))
                     let hd = UserDefaults.standard.double(forKey: "cesium.lastHeading")
                     let pt = UserDefaults.standard.object(forKey: "cesium.lastPitch") as? Double ?? -60
@@ -492,9 +564,8 @@ struct CesiumMainMap: UIViewRepresentable {
                         completionHandler: nil
                     )
                 } else {
-                    // No ADSB center available — restore last camera pose
-                    // (engine toggle 3D → 2D → back) so we don't snap to
-                    // the bootstrap default.
+                    // No ADSB center — restore last Cesium pose (3D→2D→3D toggle
+                    // without an active cameraSeed, e.g. WebGL process restart).
                     let d = UserDefaults.standard
                     if d.object(forKey: "cesium.lastLat") != nil {
                         let lat = d.double(forKey: "cesium.lastLat")
