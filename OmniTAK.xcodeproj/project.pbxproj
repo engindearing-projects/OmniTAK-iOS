@@ -62,6 +62,9 @@
 		265D7A1D6302893B932347C0 /* VideoSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B30BD78B36AA8556AA3EC4 /* VideoSource.swift */; };
 		26E0ABCFEAF8561E21A3AFC5 /* SFGPU------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 0AE09A8DEEF0138AFC876D09 /* SFGPU------.svg */; };
 		273BAFBDAAB79C39F25835BD /* LassoZipWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D5BB3D4B491EB18FF1D1C01 /* LassoZipWriter.swift */; };
+		8E3D7906ED5C43E9912DF463 /* IconsetPackParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 859A06578E2346468CECC5F3 /* IconsetPackParser.swift */; };
+		B7D15BAB30034EB2B5A1C414 /* IconPackRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1146D35231C446CAA82A869 /* IconPackRegistry.swift */; };
+		0B12FD2AFF0E4DD79F5A8606 /* IconPackImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA05A007A0B243BF9252079B /* IconPackImporter.swift */; };
 		2748B5AB1E5A1703D8ECA259 /* PointDropperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A06A59DC9C712878830E5D23 /* PointDropperView.swift */; };
 		277D46D06A7BF886691B6F5C /* SharedUIComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C96B4A340D4B4628BBDAE89 /* SharedUIComponents.swift */; };
 		27C8F88CAA0E6E88977C276C /* SFGP-------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 0F89B3D56C89FA4871A2956F /* SFGP-------.svg */; };
@@ -86,6 +89,7 @@
 		341184270C1E3D9E6957FC02 /* ChatXMLGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76EE71ECBA829946C5219664 /* ChatXMLGenerator.swift */; };
 		34217C41D584C13B2AE673C7 /* ServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3370233EDA8C5D193E4F794E /* ServerManager.swift */; };
 		355F6BBFA52041BC0B7788FC /* ATAKPluginParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A30B6DE30B0975605C73973B /* ATAKPluginParserTests.swift */; };
+		D366E0C85BE74FCEA8E8C5A3 /* IconsetPackParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFF97D1F93D4F76B58669BC /* IconsetPackParserTests.swift */; };
 		3563F0662BD6434A15A3D821 /* GybManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5906B1EB75DCB9566DB5621 /* GybManager.swift */; };
 		35A17E72BAD1259DBA19945E /* TeamService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 922F25506591914930EEC898 /* TeamService.swift */; };
 		3678FDDE6524CFE84931B1A8 /* PositionBroadcastService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B658D0038B68527525C8D5A3 /* PositionBroadcastService.swift */; };
@@ -441,6 +445,9 @@
 		0DADFB16189D9AD132105CFF /* SNSP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNSP-------.svg"; sourceTree = "<group>"; };
 		0E1F2A3B4C5D6E7F80910A0C /* RootTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RootTabView.swift; path = OmniTAKMobile/Core/App/RootTabView.swift; sourceTree = "<group>"; };
 		0E3E4F244163FBE4214BC0C6 /* LassoExporters.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Services/LassoExporters.swift; sourceTree = "<group>"; };
+		859A06578E2346468CECC5F3 /* IconsetPackParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Services/IconsetPackParser.swift; sourceTree = "<group>"; };
+		E1146D35231C446CAA82A869 /* IconPackRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Services/IconPackRegistry.swift; sourceTree = "<group>"; };
+		AA05A007A0B243BF9252079B /* IconPackImporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Services/IconPackImporter.swift; sourceTree = "<group>"; };
 		0F89B3D56C89FA4871A2956F /* SFGP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGP-------.svg"; sourceTree = "<group>"; };
 		101D7C9B957410F4D6827B09 /* SFGPUST----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPUST----.svg"; sourceTree = "<group>"; };
 		103C33E3B66400D772DDE95F /* SNGP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNGP-------.svg"; sourceTree = "<group>"; };
@@ -658,6 +665,7 @@
 		A1C234567890ABCDEF123457 /* VLCPlayerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VLCPlayerView.swift; path = OmniTAKMobile/Features/Video/Views/VLCPlayerView.swift; sourceTree = "<group>"; };
 		A2C4AE7792EC101310F1483A /* RadialMenuActionExecutor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RadialMenuActionExecutor.swift; path = OmniTAKMobile/Shared/UI/RadialMenu/RadialMenuActionExecutor.swift; sourceTree = "<group>"; };
 		A30B6DE30B0975605C73973B /* ATAKPluginParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ATAKPluginParserTests.swift; path = OmniTAKMobileTests/ATAKPluginParserTests.swift; sourceTree = "<group>"; };
+		ECFF97D1F93D4F76B58669BC /* IconsetPackParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconsetPackParserTests.swift; path = OmniTAKMobileTests/IconsetPackParserTests.swift; sourceTree = "<group>"; };
 		A333467D8B9F8F7BD22809FE /* SFAPMH-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFAPMH-----.svg"; sourceTree = "<group>"; };
 		A4D85637E0B5D71017B5C838 /* SFGPUCC----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPUCC----.svg"; sourceTree = "<group>"; };
 		A5B7E4CB59250C961E37D51A /* DigitalPointerService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DigitalPointerService.swift; path = OmniTAKMobile/Features/Tracking/Services/DigitalPointerService.swift; sourceTree = "<group>"; };
@@ -1065,6 +1073,7 @@
 			isa = PBXGroup;
 			children = (
 				A30B6DE30B0975605C73973B /* ATAKPluginParserTests.swift */,
+				ECFF97D1F93D4F76B58669BC /* IconsetPackParserTests.swift */,
 				7AA427470D4AEB92295081A7 /* CertificateHandlingTests.swift */,
 				9802858282CB5E929AD75F07 /* CoTMessageParserTests.swift */,
 				FACE0003CAFE0003BEEF0003 /* TAKIconSuiteTests.swift */,
@@ -1254,6 +1263,9 @@
 				5E14DC8F84F9C7A9721FDD03 /* LassoSelectionService.swift */,
 				0E3E4F244163FBE4214BC0C6 /* LassoExporters.swift */,
 				7D5BB3D4B491EB18FF1D1C01 /* LassoZipWriter.swift */,
+				859A06578E2346468CECC5F3 /* IconsetPackParser.swift */,
+				E1146D35231C446CAA82A869 /* IconPackRegistry.swift */,
+				AA05A007A0B243BF9252079B /* IconPackImporter.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -2720,6 +2732,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				355F6BBFA52041BC0B7788FC /* ATAKPluginParserTests.swift in Sources */,
+				D366E0C85BE74FCEA8E8C5A3 /* IconsetPackParserTests.swift in Sources */,
 				9931084D104902FBC10263F1 /* CertificateHandlingTests.swift in Sources */,
 				2480140A6ABE1484E42BA0AC /* CoTMessageParserTests.swift in Sources */,
 				FACE0004CAFE0004BEEF0004 /* TAKIconSuiteTests.swift in Sources */,
@@ -2935,6 +2948,9 @@
 				48D6F14168132D11BD618DF3 /* DataPackageBootstrap.swift in Sources */,
 				3C81060D2FFBB72033923002 /* LassoExporters.swift in Sources */,
 				273BAFBDAAB79C39F25835BD /* LassoZipWriter.swift in Sources */,
+				8E3D7906ED5C43E9912DF463 /* IconsetPackParser.swift in Sources */,
+				B7D15BAB30034EB2B5A1C414 /* IconPackRegistry.swift in Sources */,
+				0B12FD2AFF0E4DD79F5A8606 /* IconPackImporter.swift in Sources */,
 				74906A9B2523F0EC9F6AFD80 /* LassoContactPickerSheet.swift in Sources */,
 				7FB3B16574296B84A7731FF4 /* LassoShareSheet.swift in Sources */,
 				C34D49043A5E553DDA359F8A /* ToolbarCustomization.swift in Sources */,

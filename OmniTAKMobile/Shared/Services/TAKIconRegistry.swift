@@ -384,6 +384,11 @@ final class TAKIconRegistry {
                       iconsetPath: String? = nil,
                       argb: Int? = nil,
                       size: CGFloat = 36) -> UIImage? {
+        // 0. Imported custom pack (Phase 2) — checked before bundled packs so
+        //    a user pack with the same uid prefix wins over a bundled one.
+        if let path = iconsetPath, IconPackRegistry.shared.handles(path) {
+            return importedPackImage(iconsetPath: path, size: size)
+        }
         // 1. Explicit iconset path wins. Match against each standard pack.
         if let path = iconsetPath, !path.isEmpty {
             // 1a. Spot Map — colored dot keyed off the path/color.
@@ -409,6 +414,18 @@ final class TAKIconRegistry {
         }
         // 3. No TAK-suite match — caller keeps the MIL-STD-2525 fallback.
         return nil
+    }
+
+    /// Load and cache an image from an imported custom iconset pack.
+    func importedPackImage(iconsetPath: String, size: CGFloat) -> UIImage? {
+        let key = IconPackRegistry.shared.cacheKey(for: iconsetPath) + "|\(Int(size))"
+        if let cached = cached(key) { return cached }
+        guard let (pack, icon) = IconPackRegistry.shared.resolve(iconsetPath) else { return nil }
+        guard let raw = IconPackRegistry.shared.loadImage(pack: pack, icon: icon) else { return nil }
+        // Scale to target size preserving aspect ratio, matching bundled icon behavior.
+        let scaled = raw.scaledToFill(size: CGSize(width: size, height: size))
+        store(key, scaled)
+        return scaled
     }
 
     /// Convenience: the rendered glyph for a selectable Spot Map icon (picker
@@ -558,5 +575,23 @@ private extension UIColor {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         getRed(&r, green: &g, blue: &b, alpha: &a)
         return (0.299 * r + 0.587 * g + 0.114 * b) > 0.6
+    }
+}
+
+// MARK: - UIImage scaling helper
+
+private extension UIImage {
+    /// Scale (fill) to an exact target size, preserving aspect ratio.
+    func scaledToFill(size targetSize: CGSize) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            let scale = max(targetSize.width / max(self.size.width, 1),
+                            targetSize.height / max(self.size.height, 1))
+            let drawSize = CGSize(width: self.size.width * scale,
+                                  height: self.size.height * scale)
+            let origin = CGPoint(x: (targetSize.width - drawSize.width) / 2,
+                                 y: (targetSize.height - drawSize.height) / 2)
+            self.draw(in: CGRect(origin: origin, size: drawSize))
+        }
     }
 }

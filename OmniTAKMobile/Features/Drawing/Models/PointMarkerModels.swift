@@ -60,6 +60,14 @@ struct PointMarker: Identifiable, Codable, Equatable {
     // `{googleUID}/{token}.png` usericon path, and round-trips with ATAK / iTAK.
     var googleIcon: TAKGoogleIcon?
 
+    // Imported custom iconset (issue #75 Phase 2). When set, this marker uses
+    // an icon from a user-imported ATAK iconset pack (iconset.xml + images via
+    // .zip import). The value is the canonical ATAK `iconsetpath` wire format:
+    // `"<pack-uid>/<filename-without-extension>"`. `TAKIconRegistry` resolves
+    // it to an image via `IconPackRegistry`. Mutually exclusive with the bundled
+    // icon fields above; the imported path wins in CoT emission.
+    var importedIconsetPath: String?
+
     // Sharing
     var isBroadcast: Bool
 
@@ -81,6 +89,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         takIcon: TAKSpotIcon? = nil,
         markersIcon: TAKMarkersIcon? = nil,
         googleIcon: TAKGoogleIcon? = nil,
+        importedIconsetPath: String? = nil,
         isBroadcast: Bool = false
     ) {
         self.id = id
@@ -95,10 +104,12 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.saluteReport = saluteReport
         self.createdBy = createdBy
         self.uid = "marker-\(id.uuidString)"
-        // Icon precedence: TAK spot-map → Markers (2525C) → Google place →
-        // FEMA → affiliation default. Each pack emits its own canonical CoT
-        // type; otherwise the affiliation's ground-unit type.
-        self.cotType = takIcon.map { _ in TAKSpotIcon.cotType }
+        // Icon precedence: imported pack → TAK spot-map → Markers (2525C) →
+        // Google place → FEMA → affiliation default. Imported icons don't
+        // mandate a specific CoT type — default to the affiliation's type so the
+        // event is still renderable on peers that don't have the pack.
+        self.cotType = importedIconsetPath.map { _ in affiliation.cotType }
+            ?? takIcon.map { _ in TAKSpotIcon.cotType }
             ?? markersIcon?.cotType
             ?? googleIcon?.cotType
             ?? femaIcon?.cotType
@@ -108,6 +119,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.takIcon = takIcon
         self.markersIcon = markersIcon
         self.googleIcon = googleIcon
+        self.importedIconsetPath = importedIconsetPath
         self.heading = heading
         self.isBroadcast = isBroadcast
     }
@@ -118,7 +130,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         case id, name, affiliation, latitude, longitude, altitude
         case timestamp, modifiedAt, remarks, createdBy, saluteReport
         case uid, cotType, iconName, isBroadcast, femaIcon, takIcon
-        case markersIcon, googleIcon, heading
+        case markersIcon, googleIcon, importedIconsetPath, heading
     }
 
     init(from decoder: Decoder) throws {
@@ -145,6 +157,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         takIcon = try container.decodeIfPresent(TAKSpotIcon.self, forKey: .takIcon)
         markersIcon = try container.decodeIfPresent(TAKMarkersIcon.self, forKey: .markersIcon)
         googleIcon = try container.decodeIfPresent(TAKGoogleIcon.self, forKey: .googleIcon)
+        importedIconsetPath = try container.decodeIfPresent(String.self, forKey: .importedIconsetPath)
         heading = try container.decodeIfPresent(Double.self, forKey: .heading)
     }
 
@@ -169,6 +182,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(takIcon, forKey: .takIcon)
         try container.encodeIfPresent(markersIcon, forKey: .markersIcon)
         try container.encodeIfPresent(googleIcon, forKey: .googleIcon)
+        try container.encodeIfPresent(importedIconsetPath, forKey: .importedIconsetPath)
         try container.encodeIfPresent(heading, forKey: .heading)
     }
 

@@ -276,6 +276,39 @@ class PointDropperService: ObservableObject {
         return "\(icon.displayName.uppercased())-\(count)-\(f.string(from: Date()))"
     }
 
+    /// Quick drop a marker from an imported ATAK iconset pack (issue #75 Phase 2).
+    /// The `iconsetPath` is the canonical ATAK wire format:
+    /// `"<pack-uid>/<filename-without-extension>"`.
+    @discardableResult
+    func quickDropImported(
+        iconsetPath: String,
+        iconName: String,
+        at coordinate: CLLocationCoordinate2D,
+        name: String? = nil,
+        broadcast: Bool = false
+    ) -> PointMarker {
+        let markerName = name ?? generateImportedIconName(iconName: iconName)
+        let marker = PointMarker(
+            name: markerName,
+            affiliation: .unknown,
+            coordinate: coordinate,
+            importedIconsetPath: iconsetPath,
+            isBroadcast: broadcast
+        )
+        markers.append(marker)
+        updateRecentMarkers(marker)
+        saveMarkers()
+        if broadcast { broadcastMarker(marker) }
+        onEvent?(.markerCreated(marker))
+        return marker
+    }
+
+    private func generateImportedIconName(iconName: String) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HHmm"
+        return "\(iconName.uppercased())-\(f.string(from: Date()))"
+    }
+
     /// Get marker by ID
     func getMarker(id: UUID) -> PointMarker? {
         return markers.first { $0.id == id }

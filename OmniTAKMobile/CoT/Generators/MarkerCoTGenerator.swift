@@ -25,7 +25,13 @@ class MarkerCoTGenerator {
         // affiliation-keyed spot-map path the app has always sent.
         let iconsetPath: String
         let argbColor: Int
-        if let takIcon = marker.takIcon {
+        if let importedPath = marker.importedIconsetPath, !importedPath.isEmpty {
+            // Imported custom pack (issue #75 Phase 2): emit the canonical
+            // iconsetpath so ATAK / iTAK peers can resolve it. Color follows
+            // the affiliation (same as Markers pack behavior).
+            iconsetPath = importedPath
+            argbColor = hexToARGB(marker.affiliation.hexColor)
+        } else if let takIcon = marker.takIcon {
             iconsetPath = takIcon.iconsetPath
             argbColor = hexToARGB(takIcon.argbHex)
         } else if let markersIcon = marker.markersIcon {

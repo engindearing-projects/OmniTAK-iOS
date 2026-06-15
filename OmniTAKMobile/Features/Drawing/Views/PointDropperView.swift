@@ -26,6 +26,8 @@ struct PointDropperView: View {
     @State private var showMarkerList: Bool = false
     @State private var selectedMarkerForSALUTE: PointMarker?
     @State private var showAdvanced: Bool = false
+    @State private var showIconPackImporter: Bool = false
+    @State private var importedPacks: [ImportedPack] = []
 
     var body: some View {
         NavigationView {
@@ -61,6 +63,12 @@ struct PointDropperView: View {
                         // "Google" place-icon set, selectable + round-trips.
                         takGooglePaletteSection
 
+                        // Imported ATAK iconset packs (issue #75 Phase 2).
+                        // Only shown when the user has imported at least one pack.
+                        if !importedPacks.isEmpty {
+                            importedPacksSection
+                        }
+
                         // Everything else is optional — collapsed by default.
                         Button {
                             withAnimation { showAdvanced.toggle() }
@@ -88,7 +96,10 @@ struct PointDropperView: View {
                     .padding()
                 }
             }
-            .onAppear { PointDropUIState.shared.isAiming = true }
+            .onAppear {
+                PointDropUIState.shared.isAiming = true
+                importedPacks = IconPackRegistry.shared.allPacks()
+            }
             .onDisappear { PointDropUIState.shared.isAiming = false }
             .navigationTitle("Point Dropper")
             .navigationBarTitleDisplayMode(.inline)
@@ -129,6 +140,11 @@ struct PointDropperView: View {
         }
         .sheet(isPresented: $showMarkerList) {
             MarkerListView(service: service)
+        }
+        .sheet(isPresented: $showIconPackImporter) {
+            IconPackImporterSheet(onImported: { pack in
+                importedPacks = IconPackRegistry.shared.allPacks()
+            })
         }
         // Present as a draggable bottom sheet so the map stays visible (and
         // pannable) above — drop a point while still seeing where it lands.
@@ -288,6 +304,52 @@ struct PointDropperView: View {
                     ForEach(TAKIconRegistry.shared.selectableGoogleIcons) { icon in
                         TAKGoogleIconButton(icon: icon) {
                             quickDropTAKGoogle(icon)
+                        }
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.black.opacity(0.3))
+        .cornerRadius(12)
+    }
+
+    // MARK: - Imported Packs Palette (issue #75 Phase 2)
+
+    /// One horizontal-scroll row per imported pack, mirroring Android PR #112's
+    /// `ImportedPackRow`. Tapping emits the canonical `iconsetpath`.
+    private var importedPacksSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("CUSTOM PACKS")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+                Text("(imported ATAK iconsets)")
+                    .font(.system(size: 9))
+                    .foregroundColor(.gray)
+                Spacer()
+                Button {
+                    showIconPackImporter = true
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color(hex: "#FFFC00"))
+                }
+            }
+
+            ForEach(importedPacks) { pack in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(pack.name)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.7))
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(pack.icons) { icon in
+                                ImportedIconButton(pack: pack, icon: icon) {
+                                    quickDropImportedIcon(pack: pack, icon: icon)
+                                }
+                            }
                         }
                     }
                 }
@@ -616,6 +678,19 @@ struct PointDropperView: View {
         #if DEBUG
         print("📍 TAK google dropped \(icon.displayName) marker: \(marker.name)")
         #endif
+    }
+
+    private func quickDropImportedIcon(pack: ImportedPack, icon: ImportedIcon) {
+        guard let location = mapCenter ?? currentLocation else { return }
+        // Build the canonical ATAK iconsetpath: "<uid>/<filename-no-ext>"
+        let iconsetPath = "\(pack.uid)/\(icon.pathToken)"
+        _ = service.quickDropImported(
+            iconsetPath: iconsetPath,
+            iconName: icon.name,
+            at: location,
+            broadcast: broadcastImmediately
+        )
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     private func quickDrop(affiliation: MarkerAffiliation) {
@@ -1154,6 +1229,101 @@ struct MarkerRowView: View {
             }
         }
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Imported Icon Button (issue #75 Phase 2)
+
+/// Tile for a single icon in an imported ATAK iconset pack. Loads the
+/// image from app-private storage (non-blocking: loads on appear).
+struct ImportedIconButton: View {
+    let pack: ImportedPack
+    let icon: ImportedIcon
+    let action: () -> Void
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        Button {
+            let g = UIImpactFeedbackGenerator(style: .light)
+            g.impactOccurred()
+            action()
+        } label: {
+            VStack(spacing: 4) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 44, height: 44)
+                    if let img = image {
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 36, height: 36)
+                    } else {
+                        Image(systemName: "photo")
+                            .font(.system(size: 18))
+                            .foregroundColor(.gray)
+                    }
+                }
+                Text(icon.name)
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.85))
+                    .lineLimit(1)
+                    .frame(width: 50)
+            }
+        }
+        .buttonStyle(.plain)
+        .task {
+            // Load off the main thread.
+            let loaded = await Task.detached(priority: .utility) {
+                IconPackRegistry.shared.loadImage(pack: pack, icon: icon)
+            }.value
+            image = loaded
+        }
+    }
+}
+
+// MARK: - Icon Pack Importer Sheet (issue #75 Phase 2)
+
+/// Presents a `UIDocumentPicker` for `.zip` files, then calls `IconPackImporter`
+/// and reports the result. The import runs on a background task so the UI stays
+/// responsive.
+struct IconPackImporterSheet: UIViewControllerRepresentable {
+    let onImported: (ImportedPack) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(
+            forOpeningContentTypes: [.zip],
+            asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        picker.modalPresentationStyle = .formSheet
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController,
+                                context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImported: onImported)
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onImported: (ImportedPack) -> Void
+        init(onImported: @escaping (ImportedPack) -> Void) {
+            self.onImported = onImported
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController,
+                            didPickDocumentsAt urls: [URL]) {
+            guard let url = urls.first else { return }
+            Task.detached(priority: .userInitiated) {
+                let result = IconPackImporter.importZip(at: url)
+                if case .success(let pack) = result {
+                    await MainActor.run { self.onImported(pack) }
+                }
+            }
+        }
     }
 }
 
