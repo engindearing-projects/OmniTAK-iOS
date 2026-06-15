@@ -65,6 +65,8 @@ struct ATAKMapView: View {
     // Radial menu → Edit on a PointMarker posts .radialMenuEditMarker;
     // we hold the marker id here so a sheet can open the edit form.
     @State private var editingPointMarkerID: UUID?
+    // Issue #65 — self-position edit sheet (manual position override).
+    @State private var showSelfPositionEdit: Bool = false
     @State private var mapType: MKMapType = .standard
     @State private var showToolsMenu = false
     @State private var showLoadingScreen = true
@@ -1106,6 +1108,16 @@ struct ATAKMapView: View {
                 drawingManager.pendingRenameID = drawingId
             }
         }
+        // Issue #65 — self-position puck tapped from either engine.
+        .onReceive(NotificationCenter.default.publisher(for: .selfMarkerTapped)) { _ in
+            showSelfPositionEdit = true
+        }
+        .sheet(isPresented: $showSelfPositionEdit) {
+            SelfPositionEditSheet(
+                locationManager: locationManager,
+                isPresented: $showSelfPositionEdit
+            )
+        }
     }
 
     /// The bare 3D engine — the Cesium scene and nothing else. All shared
@@ -1708,7 +1720,12 @@ struct ATAKMapView: View {
             // `rring-…`, `meas-…`, `trail-…`, `:v<idx>` vertex labels)
             // for non-contact entities. None of those have a CoT event
             // behind them, so skip the marker-context menu for them.
-            if uid == "__self__" { return }
+            if uid == "__self__" {
+                // Issue #65 — tap on own Cesium pip opens the self-position
+                // edit sheet (same sheet the Mapbox puck tap triggers).
+                NotificationCenter.default.post(name: .selfMarkerTapped, object: nil)
+                return
+            }
             let nonContactPrefixes = ["ads-", "line-", "poly-", "circ-", "rring-", "meas-", "trail-", "route-"]
             if nonContactPrefixes.contains(where: { uid.hasPrefix($0) }) { return }
             if uid.contains(":v") { return }

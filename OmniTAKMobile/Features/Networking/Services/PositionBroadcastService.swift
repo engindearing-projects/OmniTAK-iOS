@@ -89,6 +89,22 @@ class PositionBroadcastService: ObservableObject {
     // Not @Published — mutated on ppliQueue; expose internal for @testable access.
     internal var lastMeshPPLISend: Date?
 
+    // MARK: - Issue #65: Manual Position Override
+    //
+    // When the operator taps their self-pip and sets a manual coordinate,
+    // `manualPosition` becomes non-nil and CoT generation uses it instead of
+    // the GPS location. Cleared by toggling `isManualPositionActive = false`
+    // or by tapping "Return to GPS" in the SelfPositionEditSheet.
+
+    @Published var manualPosition: CLLocationCoordinate2D? = nil
+    @Published var isManualPositionActive: Bool = false {
+        didSet {
+            if !isManualPositionActive {
+                manualPosition = nil
+            }
+        }
+    }
+
     @Published var lastBroadcastTime: Date?
     @Published var broadcastCount: Int = 0
     @Published var lastError: String?
@@ -238,12 +254,20 @@ class PositionBroadcastService: ObservableObject {
 
     private func sendAutoPPLITick() {
         guard let takService = takService else { return }
-        guard let location = locationManager?.location else {
-            // No GPS fix yet — skip this tick rather than sending stale zeros.
-            return
+
+        // Issue #65 — manual position override takes priority over GPS.
+        let effectiveLocation: CLLocation
+        if isManualPositionActive, let manualCoord = manualPosition {
+            effectiveLocation = CLLocation(latitude: manualCoord.latitude, longitude: manualCoord.longitude)
+        } else {
+            guard let location = locationManager?.location else {
+                // No GPS fix yet — skip this tick rather than sending stale zeros.
+                return
+            }
+            effectiveLocation = location
         }
 
-        let cotXML = generateSelfSACoT(location: location)
+        let cotXML = generateSelfSACoT(location: effectiveLocation)
         let _ = takService.sendCoT(xml: cotXML)
 
         // --- Mesh off-grid PPLI ---
@@ -291,13 +315,20 @@ class PositionBroadcastService: ObservableObject {
             return
         }
 
-        guard let location = locationManager?.location else {
-            print("❌ broadcastPosition: No location available (locationManager: \(locationManager != nil ? "exists" : "nil"))")
-            lastError = "No location available"
-            return
+        // Issue #65 — manual position override takes priority over GPS.
+        let effectiveLocation: CLLocation
+        if isManualPositionActive, let manualCoord = manualPosition {
+            effectiveLocation = CLLocation(latitude: manualCoord.latitude, longitude: manualCoord.longitude)
+        } else {
+            guard let location = locationManager?.location else {
+                print("❌ broadcastPosition: No location available (locationManager: \(locationManager != nil ? "exists" : "nil"))")
+                lastError = "No location available"
+                return
+            }
+            effectiveLocation = location
         }
 
-        let cotXML = generateSelfSACoT(location: location)
+        let cotXML = generateSelfSACoT(location: effectiveLocation)
 
         #if DEBUG
         print("📡 Sending PLI CoT for UID: \(userUID), callsign: \(userCallsign)")
@@ -310,7 +341,7 @@ class PositionBroadcastService: ObservableObject {
             lastBroadcastTime = Date()
             broadcastCount += 1
             lastError = nil
-            print("Position broadcast #\(broadcastCount) at \(location.coordinate)")
+            print("Position broadcast #\(broadcastCount) at \(effectiveLocation.coordinate)")
         } else {
             lastError = "Failed to send position"
             print("Failed to broadcast position")

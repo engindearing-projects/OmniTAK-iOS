@@ -104,6 +104,7 @@
 "settings.coord.bngHelp" = "BNG 針對英國/愛爾蘭最佳化（49°N-61°N, 9°W-2°E）。使用 OSGB36 基準與 SU、TQ、NT 等網格方格。";
 "settings.marker.milstd" = "MIL-STD 符號";
 "settings.marker.bullseye" = "靶心（舊版）";
+"settings.marker.arrow" = "箭頭（方向）";
 "settings.color.cyan" = "青色";
 "settings.color.green" = "綠色";
 "settings.color.orange" = "橘色";

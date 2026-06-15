@@ -213,6 +213,10 @@ struct SettingsView: View {
                     Picker(loc.t("settings.selfPositionMarker"), selection: $selfMarkerStyle) {
                         Text(loc.t("settings.marker.milstd")).tag("milstd")
                         Text(loc.t("settings.marker.bullseye")).tag("bullseye")
+                        // Issue #66 — heading-indicating arrow puck. Mapbox
+                        // rotates the puck via puckBearing = .heading so the
+                        // triangle always points in the device's heading direction.
+                        Text(loc.t("settings.marker.arrow")).tag("arrow")
                     }
                 }
 

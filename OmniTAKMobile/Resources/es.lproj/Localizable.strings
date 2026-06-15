@@ -103,6 +103,7 @@
 "settings.coord.bngHelp" = "BNG está optimizada para el Reino Unido e Irlanda (49°-61° N, 9° O - 2° E). Usa el datum OSGB36 con cuadrados de cuadrícula como SU, TQ, NT.";
 "settings.marker.milstd" = "Símbolo MIL-STD";
 "settings.marker.bullseye" = "Diana (heredado)";
+"settings.marker.arrow" = "Flecha (rumbo)";
 "settings.color.cyan" = "Cian";
 "settings.color.green" = "Verde";
 "settings.color.orange" = "Naranja";

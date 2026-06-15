@@ -56,6 +56,11 @@ class MarkerCoTGenerator {
             detail += generateSALUTEElement(salute)
         }
 
+        // Issue #68 — emit track element when operator has set a heading on the marker.
+        if let heading = marker.heading {
+            detail += "\n        <track speed=\"0.0\" course=\"\(String(format: "%.2f", heading))\"/>"
+        }
+
         // Add marker metadata
         detail += """
 

@@ -146,6 +146,7 @@
 		62F0E99E6E6CC7D48A777176 /* RadialMenuActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C4AE7792EC101310F1483A /* RadialMenuActionExecutor.swift */; };
 		636ABF73E9E4AF843491777E /* SFGPEVC----.svg in Resources */ = {isa = PBXBuildFile; fileRef = EE2FC006021B8F5CE7D6554F /* SFGPEVC----.svg */; };
 		636B2050F7414B9F51ED24C1 /* CoordinateEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9EF53FB6EBD8EDF3F86897D /* CoordinateEntryView.swift */; };
+		AA65001BB2347C8D9E001234 /* SelfPositionEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA65001AB2347C8D9E001234 /* SelfPositionEditSheet.swift */; };
 		65F8AEA3C407443E418A537F /* MeshCoreFrameCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55FD474B6A8250F778891C09 /* MeshCoreFrameCodec.swift */; };
 		664F8613B5F60B743FBF798E /* SUA---------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 8D6AFD4385B2CB747A74C320 /* SUA---------.svg */; };
 		6671B330ED4920A501C466DB /* SHSPN------.svg in Resources */ = {isa = PBXBuildFile; fileRef = B1A726FDC5E3383C783799A5 /* SHSPN------.svg */; };
@@ -735,6 +736,7 @@
 		D9B49FD9370499A376CCF228 /* zh-Hant */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = "zh-Hant"; path = "OmniTAKMobile/Resources/zh-Hant.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		D9BD8FABAF37BB1D8BCFEBCB /* DataPackageImportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DataPackageImportView.swift; path = OmniTAKMobile/Features/DataPackages/Views/DataPackageImportView.swift; sourceTree = "<group>"; };
 		D9EF53FB6EBD8EDF3F86897D /* CoordinateEntryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Map/Views/CoordinateEntryView.swift; sourceTree = "<group>"; };
+		AA65001AB2347C8D9E001234 /* SelfPositionEditSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SelfPositionEditSheet.swift; path = OmniTAKMobile/Features/Map/Views/SelfPositionEditSheet.swift; sourceTree = "<group>"; };
 		DAD02BBDBC955E7953E23B56 /* SFAPMHC----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFAPMHC----.svg"; sourceTree = "<group>"; };
 		DB52A8F022DBCC0F3709FDA2 /* ADSBTrafficService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ADSBTrafficService.swift; path = OmniTAKMobile/Features/ADSB/Services/ADSBTrafficService.swift; sourceTree = "<group>"; };
 		DB5771FBA69E70A6E4BD4764 /* MeasurementToolView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeasurementToolView.swift; path = OmniTAKMobile/Features/Measurement/Views/MeasurementToolView.swift; sourceTree = "<group>"; };
@@ -1298,6 +1300,7 @@
 				6A0A793E185CC30595DAB79B /* CoordinateDisplayView.swift */,
 				448D0EBEFF3E2A71669016D1 /* ScaleBarView.swift */,
 				D9EF53FB6EBD8EDF3F86897D /* CoordinateEntryView.swift */,
+				AA65001AB2347C8D9E001234 /* SelfPositionEditSheet.swift */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -2934,6 +2937,7 @@
 				5D471A897ED1FBD0C5BEB754 /* GybDetectorView.swift in Sources */,
 				A0E27883B3902B6F2FF2FE1C /* TWD97Converter.swift in Sources */,
 				636B2050F7414B9F51ED24C1 /* CoordinateEntryView.swift in Sources */,
+				AA65001BB2347C8D9E001234 /* SelfPositionEditSheet.swift in Sources */,
 				617462BB009B1420CCADF5C6 /* ATAKMapChrome.swift in Sources */,
 				A94B9754063A94BA0CF96C37 /* LocationManager.swift in Sources */,
 				F16F23716C9A564FD3B17635 /* TacticalMapView.swift in Sources */,

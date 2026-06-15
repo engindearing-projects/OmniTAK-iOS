@@ -103,6 +103,7 @@
 "settings.coord.bngHelp" = "Le BNG est optimisé pour le Royaume-Uni et l'Irlande (49°-61° N, 9° O - 2° E). Utilise le datum OSGB36 avec des carrés de grille comme SU, TQ, NT.";
 "settings.marker.milstd" = "Symbole MIL-STD";
 "settings.marker.bullseye" = "Cible (ancien)";
+"settings.marker.arrow" = "Flèche (cap)";
 "settings.color.cyan" = "Cyan";
 "settings.color.green" = "Vert";
 "settings.color.orange" = "Orange";

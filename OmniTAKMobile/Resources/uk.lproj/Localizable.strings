@@ -103,6 +103,7 @@
 "settings.coord.bngHelp" = "BNG оптимізовано для Великої Британії та Ірландії (49°-61° пн. ш., 9° зх. д. - 2° сх. д.). Використовує датум OSGB36 із квадратами сітки на кшталт SU, TQ, NT.";
 "settings.marker.milstd" = "Символ MIL-STD";
 "settings.marker.bullseye" = "Мішень (застарілий)";
+"settings.marker.arrow" = "Стрілка (напрям)";
 "settings.color.cyan" = "Блакитний";
 "settings.color.green" = "Зелений";
 "settings.color.orange" = "Помаранчевий";

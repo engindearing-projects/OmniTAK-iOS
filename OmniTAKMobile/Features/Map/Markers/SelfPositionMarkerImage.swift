@@ -52,6 +52,47 @@ enum SelfPositionMarkerImage {
         }
     }()
 
+    /// Issue #66 — 40×40 north-pointing equilateral arrow (triangle) for the
+    /// heading-aware puck style. The arrow points north in the image coordinate
+    /// system; Mapbox rotates the puck via `puckBearing = .heading` so it always
+    /// indicates the device's actual heading. The anchor is the geometric center
+    /// so Mapbox keeps the tip on the GPS coordinate regardless of rotation.
+    ///
+    /// Call `arrowMarker(heading:)` to get the image — the heading parameter is
+    /// ignored here (Mapbox rotates for us) but kept so callers can pass it for
+    /// potential future Cesium billboard use.
+    static func arrowMarker(heading: Double? = nil) -> UIImage {
+        let size = CGSize(width: 40, height: 40)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            // Equilateral-ish north-pointing triangle: tip at top center,
+            // base at ~70% down from top. Center of mass is at ~50% height
+            // so Mapbox's default center anchor keeps the tip above the coordinate.
+            let cx = size.width / 2
+            let tip = CGPoint(x: cx, y: 3)          // top tip
+            let baseLeft  = CGPoint(x: 5, y: 37)    // bottom-left
+            let baseRight = CGPoint(x: 35, y: 37)   // bottom-right
+
+            let path = UIBezierPath()
+            path.move(to: tip)
+            path.addLine(to: baseRight)
+            path.addLine(to: baseLeft)
+            path.close()
+
+            // Fill with tactical accent green, stroke with dark navy.
+            tacticalAccent.setFill()
+            path.fill()
+            tacticalDark.setStroke()
+            path.lineWidth = 2.0
+            path.stroke()
+
+            // Small center dot to anchor the GPS coordinate visually.
+            let centerDotRect = CGRect(x: cx - 3, y: 22, width: 6, height: 6)
+            tacticalDark.setFill()
+            UIBezierPath(ovalIn: centerDotRect).fill()
+        }
+    }
+
     /// 36×36 friendly-combat ground frame: cyan fill, saturated-blue
     /// stroke, simple rectangle (no echelon, no function modifier).
     /// Matches the SFGPUC------ family of MIL-STD-2525B symbols and

@@ -18,6 +18,10 @@ import UIKit
 extension Notification.Name {
     /// Posted by ATAKMapView to snap the Mapbox camera heading to 0° (north).
     static let mapboxResetNorth = Notification.Name("mapboxResetNorth")
+    /// Issue #65 — posted when the operator taps their own self-position puck
+    /// (either the Mapbox 2D puck or the Cesium 3D `__self__` entity). The
+    /// MapViewController observes this and presents `SelfPositionEditSheet`.
+    static let selfMarkerTapped = Notification.Name("selfMarkerTapped")
 }
 
 // MARK: - Tactical Map View (Mapbox Maps SDK v3 — native)
@@ -86,6 +90,7 @@ struct TacticalMapView: UIViewRepresentable {
         // marker" picker (selfMarkerStyle). Previously the picker persisted
         // a value nothing read and the puck was always the default dot.
         mapView.location.options.puckType = TacticalMapView.selfPuckType()
+        TacticalMapView.applyPuckBearing(to: mapView)
         context.coordinator.lastSelfMarkerStyle =
             UserDefaults.standard.string(forKey: "selfMarkerStyle") ?? "milstd"
         if !showsUserLocation { mapView.location.options.puckType = nil }
@@ -235,6 +240,9 @@ struct TacticalMapView: UIViewRepresentable {
             if context.coordinator.lastSelfMarkerStyle != style {
                 context.coordinator.lastSelfMarkerStyle = style
                 mapView.location.options.puckType = TacticalMapView.selfPuckType()
+                // Issue #66 — also update the bearing mode so the arrow puck
+                // rotates with device heading when the user switches to it.
+                TacticalMapView.applyPuckBearing(to: mapView)
             }
         }
 
@@ -251,16 +259,35 @@ struct TacticalMapView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     /// User-location puck honoring the Settings "Self-position marker"
-    /// picker: "milstd" → MIL-STD-2525 friendly-combat frame, "bullseye" →
-    /// legacy tactical bullseye (both from `SelfPositionMarkerImage`).
+    /// picker:
+    ///   "milstd"   → MIL-STD-2525 friendly-combat frame (default)
+    ///   "bullseye" → legacy tactical bullseye
+    ///   "arrow"    → heading-indicating triangle (Issue #66). Puck bearing
+    ///                is set to .heading via `applyPuckBearing(_:)` after
+    ///                this returns.
     static func selfPuckType() -> PuckType {
         let style = UserDefaults.standard.string(forKey: "selfMarkerStyle") ?? "milstd"
-        let image = style == "bullseye"
-            ? SelfPositionMarkerImage.bullseye
-            : SelfPositionMarkerImage.milStdFriendlyCombat
+        let image: UIImage
+        switch style {
+        case "bullseye":
+            image = SelfPositionMarkerImage.bullseye
+        case "arrow":
+            image = SelfPositionMarkerImage.arrowMarker()
+        default:
+            image = SelfPositionMarkerImage.milStdFriendlyCombat
+        }
         var config = Puck2DConfiguration(topImage: image)
         config.showsAccuracyRing = true
         return .puck2D(config)
+    }
+
+    /// Apply the bearing-tracking option that pairs with the chosen puck style.
+    /// "arrow" uses .heading (north-relative, rotates with device heading);
+    /// other styles keep puckBearingEnabled false so the puck stays upright.
+    static func applyPuckBearing(to mapView: MapView) {
+        let style = UserDefaults.standard.string(forKey: "selfMarkerStyle") ?? "milstd"
+        mapView.location.options.puckBearing = .heading
+        mapView.location.options.puckBearingEnabled = (style == "arrow")
     }
 
     // MARK: - Style mapping
@@ -1350,6 +1377,22 @@ struct TacticalMapView: UIViewRepresentable {
             guard let mapView = mapView else { return }
             let point = gesture.location(in: mapView)
             let coordinate = mapView.mapboxMap.coordinate(for: point)
+
+            // Issue #65 — tap the self-position puck to open the manual
+            // position edit sheet. The puck center is the GPS coordinate
+            // projected to screen; we use a 28pt hit radius (larger than
+            // the smallest puck image so it's easy to tap).
+            if !parent.drawingManager.isDrawingActive && !parent.measurementManager.isActive {
+                if let gpsCoord = mapView.location.latestLocation?.coordinate {
+                    let puckScreenPoint = mapView.mapboxMap.point(for: gpsCoord)
+                    let dx = point.x - puckScreenPoint.x
+                    let dy = point.y - puckScreenPoint.y
+                    if sqrt(dx * dx + dy * dy) < 28 {
+                        NotificationCenter.default.post(name: .selfMarkerTapped, object: nil)
+                        return
+                    }
+                }
+            }
 
             // Bug #1: tap (not just long-press) on a marker / shape body or
             // its floating name label should open the radial context menu.

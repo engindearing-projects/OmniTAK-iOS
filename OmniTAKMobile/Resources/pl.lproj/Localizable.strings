@@ -103,6 +103,7 @@
 "settings.coord.bngHelp" = "BNG jest zoptymalizowana dla Wielkiej Brytanii i Irlandii (49°-61° N, 9° W - 2° E). Używa układu odniesienia OSGB36 z kwadratami siatki takimi jak SU, TQ, NT.";
 "settings.marker.milstd" = "Symbol MIL-STD";
 "settings.marker.bullseye" = "Tarcza (starszy)";
+"settings.marker.arrow" = "Strzałka (kierunek)";
 "settings.color.cyan" = "Cyjan";
 "settings.color.green" = "Zielony";
 "settings.color.orange" = "Pomarańczowy";

@@ -103,6 +103,7 @@
 "settings.coord.bngHelp" = "BNG ist für Großbritannien/Irland optimiert (49°-61° N, 9° W - 2° O). Verwendet das OSGB36-Datum mit Gitterquadraten wie SU, TQ, NT.";
 "settings.marker.milstd" = "MIL-STD-Symbol";
 "settings.marker.bullseye" = "Zielscheibe (klassisch)";
+"settings.marker.arrow" = "Pfeil (Richtung)";
 "settings.color.cyan" = "Cyan";
 "settings.color.green" = "Grün";
 "settings.color.orange" = "Orange";

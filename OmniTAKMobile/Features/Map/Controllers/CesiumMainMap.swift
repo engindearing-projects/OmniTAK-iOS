@@ -716,6 +716,14 @@ struct CesiumMainMap: UIViewRepresentable {
         var all: [BridgeEntity] = []
 
         if let loc = selfLocation {
+            // Issue #66 — supply GPS course as heading when the arrow style is
+            // active (non-negative course = valid heading from CoreLocation).
+            // The HTML billboard rotates the entity icon by `heading` degrees
+            // clockwise from north, same as aircraft entities.
+            let selfHeading: Double? = (selfMarkerStyle == "arrow" && loc.course >= 0)
+                ? loc.course
+                : nil
+
             all.append(BridgeEntity(
                 uid: "__self__",
                 lat: loc.coordinate.latitude,
@@ -724,13 +732,15 @@ struct CesiumMainMap: UIViewRepresentable {
                 callsign: selfCallsign,
                 affiliation: "f",
                 kind: "self",
-                heading: nil,
+                heading: selfHeading,
                 // Self renders as a friendly ground combat unit so milsymbol
                 // draws the standard friendly frame the operator expects.
                 // The "bullseye" Settings style suppresses the SIDC so the
                 // HTML falls back to the green disc + center-dot canvas
                 // billboard — the globe's bullseye analog.
-                sidc: selfMarkerStyle == "bullseye" ? nil : "SFGPUCI----",
+                // The "arrow" style also suppresses the SIDC in favour of
+                // the heading-rotated arrow billboard from the HTML side.
+                sidc: (selfMarkerStyle == "bullseye" || selfMarkerStyle == "arrow") ? nil : "SFGPUCI----",
                 spot: nil,
                 icon: nil,
                 leader: false

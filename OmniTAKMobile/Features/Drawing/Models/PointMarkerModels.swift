@@ -63,12 +63,17 @@ struct PointMarker: Identifiable, Codable, Equatable {
     // Sharing
     var isBroadcast: Bool
 
+    // Issue #68 — optional heading / course in degrees (0–360 CW from north).
+    // When non-nil the CoT generator emits <track speed="0.0" course="{heading}"/>.
+    var heading: Double?
+
     init(
         id: UUID = UUID(),
         name: String,
         affiliation: MarkerAffiliation,
         coordinate: CLLocationCoordinate2D,
         altitude: Double? = nil,
+        heading: Double? = nil,
         remarks: String? = nil,
         saluteReport: SALUTEReport? = nil,
         createdBy: String? = nil,
@@ -83,6 +88,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.affiliation = affiliation
         self.coordinate = coordinate
         self.altitude = altitude
+        self.heading = heading
         self.timestamp = Date()
         self.modifiedAt = Date()
         self.remarks = remarks
@@ -102,6 +108,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         self.takIcon = takIcon
         self.markersIcon = markersIcon
         self.googleIcon = googleIcon
+        self.heading = heading
         self.isBroadcast = isBroadcast
     }
 
@@ -111,7 +118,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         case id, name, affiliation, latitude, longitude, altitude
         case timestamp, modifiedAt, remarks, createdBy, saluteReport
         case uid, cotType, iconName, isBroadcast, femaIcon, takIcon
-        case markersIcon, googleIcon
+        case markersIcon, googleIcon, heading
     }
 
     init(from decoder: Decoder) throws {
@@ -138,6 +145,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         takIcon = try container.decodeIfPresent(TAKSpotIcon.self, forKey: .takIcon)
         markersIcon = try container.decodeIfPresent(TAKMarkersIcon.self, forKey: .markersIcon)
         googleIcon = try container.decodeIfPresent(TAKGoogleIcon.self, forKey: .googleIcon)
+        heading = try container.decodeIfPresent(Double.self, forKey: .heading)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -161,6 +169,7 @@ struct PointMarker: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(takIcon, forKey: .takIcon)
         try container.encodeIfPresent(markersIcon, forKey: .markersIcon)
         try container.encodeIfPresent(googleIcon, forKey: .googleIcon)
+        try container.encodeIfPresent(heading, forKey: .heading)
     }
 
     // MARK: - Equatable

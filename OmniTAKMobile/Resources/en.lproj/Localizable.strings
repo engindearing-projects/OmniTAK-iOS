@@ -104,6 +104,7 @@
 "settings.coord.bngHelp" = "BNG is optimized for UK/Ireland (49°N-61°N, 9°W-2°E). Uses OSGB36 datum with grid squares like SU, TQ, NT.";
 "settings.marker.milstd" = "MIL-STD Symbol";
 "settings.marker.bullseye" = "Bullseye (Legacy)";
+"settings.marker.arrow" = "Arrow (Heading)";
 "settings.color.cyan" = "Cyan";
 "settings.color.green" = "Green";
 "settings.color.orange" = "Orange";
