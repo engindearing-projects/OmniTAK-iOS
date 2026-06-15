@@ -83,7 +83,7 @@ struct ATAKStatusBar: View {
                     HStack(spacing: 2) {
                         Image(systemName: "server.rack")
                             .font(.system(size: 9))
-                        Text(serverName ?? "Offi...")
+                        Text(serverName ?? (isConnected ? "Connected" : "Offline"))
                             .font(.system(size: 10, weight: .medium))
                             .lineLimit(1)
                     }
