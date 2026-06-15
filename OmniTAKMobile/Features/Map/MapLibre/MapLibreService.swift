@@ -195,6 +195,10 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
     case satellite = "Satellite"
     case dark      = "Dark"
     case light     = "Light"
+    /// Custom XYZ/WMTS tile URL supplied by the operator in Settings.
+    /// The tile URL template is stored in UserDefaults under
+    /// "customTileURL" and loaded by the 2D engine on style activation.
+    case custom    = "Custom"
 
     var id: String { rawValue }
 
@@ -206,9 +210,13 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
         case .satellite: return "globe"
         case .dark:      return "moon.fill"
         case .light:     return "sun.max.fill"
+        case .custom:    return "link.circle.fill"
         }
     }
 
+    /// StyleURI for Mapbox-hosted styles. `.custom` returns `.streets` as
+    /// the initial load target — the TacticalMapView coordinator then overlays
+    /// the custom RasterSource on top once the base style finishes loading.
     var styleURI: StyleURI {
         switch self {
         case .standard:  return .standard
@@ -217,6 +225,7 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
         case .satellite: return .satelliteStreets
         case .dark:      return .dark
         case .light:     return .light
+        case .custom:    return .streets   // base; custom layer added post-load
         }
     }
 
@@ -226,6 +235,47 @@ enum MapLibreStyle: String, CaseIterable, Identifiable {
     static let liberty:  MapLibreStyle = .standard
     static let bright:   MapLibreStyle = .outdoors
     static let positron: MapLibreStyle = .light
+}
+
+// MARK: - Custom Tile URL Validator
+
+/// Pure utility — no MapView dependency — so it can be unit-tested in isolation.
+///
+/// Accepts XYZ tile URL templates with `{z}`, `{x}`, `{y}` placeholders
+/// (canonical) and ATAK-style `{$z}`, `{$x}`, `{$y}` variants.
+/// Only `http://` and `https://` schemes are accepted.
+struct CustomTileURLValidator {
+
+    /// Normalise ATAK-style `{$z}/{$x}/{$y}` placeholders to the canonical
+    /// `{z}/{x}/{y}` form expected by the Mapbox raster-source tiles array.
+    static func normalize(_ urlTemplate: String) -> String {
+        urlTemplate
+            .replacingOccurrences(of: "{$z}", with: "{z}")
+            .replacingOccurrences(of: "{$x}", with: "{x}")
+            .replacingOccurrences(of: "{$y}", with: "{y}")
+    }
+
+    /// Returns `nil` if the template is valid, or a human-readable error string.
+    static func validate(_ urlTemplate: String) -> String? {
+        guard !urlTemplate.isEmpty else { return "URL must not be empty." }
+        let normalized = normalize(urlTemplate)
+        guard normalized.hasPrefix("http://") || normalized.hasPrefix("https://") else {
+            return "URL must use http:// or https://."
+        }
+        guard normalized.contains("{z}") else { return "URL must contain {z} placeholder." }
+        guard normalized.contains("{x}") else { return "URL must contain {x} placeholder." }
+        guard normalized.contains("{y}") else { return "URL must contain {y} placeholder." }
+        return nil
+    }
+
+    /// Substitute real tile coordinates into a validated (and already-normalised)
+    /// template. Returns the concrete tile URL string.
+    static func rasterTileURL(_ template: String, zoom: Int, x: Int, y: Int) -> String {
+        template
+            .replacingOccurrences(of: "{z}", with: "\(zoom)")
+            .replacingOccurrences(of: "{x}", with: "\(x)")
+            .replacingOccurrences(of: "{y}", with: "\(y)")
+    }
 }
 
 // MARK: - Flyover

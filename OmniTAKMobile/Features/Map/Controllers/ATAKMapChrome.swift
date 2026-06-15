@@ -288,6 +288,15 @@ struct ATAKSidePanel: View {
                 LayerButton(icon: "map.circle", title: "Standard", isActive: activeMapLayer == "standard", compact: true) {
                     onLayerToggle("standard")
                 }
+                // Issue #57 — custom WMTS/XYZ basemap (2D only). Only
+                // shown when the operator has already saved a URL in
+                // Settings → Custom Tile Basemap, so the button is
+                // actionable the moment it appears.
+                if !(UserDefaults.standard.string(forKey: "customTileURL") ?? "").isEmpty {
+                    LayerButton(icon: "link.circle.fill", title: "Custom", isActive: activeMapLayer == "custom", compact: true) {
+                        onLayerToggle("custom")
+                    }
+                }
                 // Photorealistic 3D tiles (Google) — globe only, loaded on
                 // demand. Heavy on GPU/network, so it's opt-in rather than
                 // always-on: picking another base unloads it.

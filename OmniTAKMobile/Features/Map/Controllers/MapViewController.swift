@@ -2585,6 +2585,13 @@ struct ATAKMapView: View {
             case "satellite": mapType = .satellite
             case "hybrid": mapType = .hybrid
             case "standard": mapType = .standard
+            // Issue #57 — custom WMTS/XYZ tile basemap. Use the .standard
+            // style as the Mapbox base (vector labels kept), then the
+            // coordinator's refreshCustomTileBasemap() adds the raster
+            // layer on top once the style load settles. Forcing a style
+            // reload here (even to the same URI) clears any previously
+            // installed custom layer, which refreshAll then re-installs.
+            case "custom": mapType = .standard
             default: break
             }
         }
