@@ -137,6 +137,21 @@ class ChatPersistence {
         }
     }
 
+    // MARK: - Marker participant scrub
+
+    /// Remove stale entries left by pre-fix builds where locally-dropped point
+    /// markers (uid prefix "marker-") and drone detections (uid prefix "RID-")
+    /// were incorrectly stored in the chat participants list.
+    ///
+    /// Called at startup by ChatManager.init() so the Chat contact list is
+    /// clean on every launch even for users upgrading from an affected build.
+    /// Android #118/#119 parity — Patrick Coyle field report 2026-06-12.
+    static func scrubMarkerParticipants(_ participants: [ChatParticipant]) -> [ChatParticipant] {
+        participants.filter {
+            !$0.id.isDroppedPointMarkerUID && !$0.id.hasPrefix("RID-")
+        }
+    }
+
     // MARK: - Clear All Data
 
     func clearAllData() {

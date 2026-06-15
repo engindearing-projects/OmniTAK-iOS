@@ -197,12 +197,19 @@ class CoTEventHandler: ObservableObject {
         // Update participant info for chat, tagged with the source server so
         // the contact list + DM routing are server-aware (multi-server).
         //
-        // Skip detected drones (RID-{uasId}): they render on the map and
-        // federate to servers like any CoT contact, but they are not EUDs and
-        // can't receive DMs, so they must not pollute the "KNOWN CONTACTS"
-        // list / New-Chat sheet. The `RID-` prefix is assigned only by
-        // RemoteIdAppBridge for on-device + gyb-sensor drone detections.
-        if !event.uid.hasPrefix("RID-") {
+        // Skip detected drones (RID-{uasId}) and locally-dropped point markers
+        // (marker-{uuid}) from the participant/chat-contact feed.
+        //
+        // • RID- UIDs: drone detections from RemoteIdAppBridge / gyb sensor.
+        //   They appear on the map and federate to servers but cannot receive DMs.
+        //
+        // • marker- UIDs: user-dropped tactical point markers (PointMarker.uid).
+        //   They share the same CoT position-update pipeline when broadcast, but
+        //   are static map annotations, not chat-capable EUDs.  Feeding them into
+        //   ChatManager.participants causes them to appear in the Chat contact list
+        //   and the New-Chat sheet — field report: Patrick Coyle 2026-06-12
+        //   (Android #118 parity).
+        if !event.uid.hasPrefix("RID-") && !event.uid.isDroppedPointMarkerUID {
             // Map the parsed event straight onto a ChatParticipant — the
             // previous implementation serialized the event back to XML just
             // to re-parse it with ChatXMLParser (the two parsers shared no

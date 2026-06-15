@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		9C2486130A64424C8DA9EE7B /* MarkerLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A7BF0F8036A4641AE333F42 /* MarkerLifecycleTests.swift */; };
 		00110BD286D75FD2DB51A9F8 /* MapContextMenus.swift in Sources */ = {isa = PBXBuildFile; fileRef = F657BBEE985D0EA477B0233E /* MapContextMenus.swift */; };
 		009E60B0DFCDE840692E67BA /* GybBLEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C274F219D8969E574394579 /* GybBLEClient.swift */; };
 		0123DD83F4B3A860CC2EF51E /* RemoteIdScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00CFB4EE06C47225356099DC /* RemoteIdScanner.swift */; };
@@ -421,6 +422,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		3A7BF0F8036A4641AE333F42 /* MarkerLifecycleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MarkerLifecycleTests.swift; path = OmniTAKMobileTests/MarkerLifecycleTests.swift; sourceTree = "<group>"; };
 		0006B84C15765B63E17797BD /* MeshFrameworkDevicePickerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshFrameworkDevicePickerView.swift; path = OmniTAKMobile/Features/MeshCore/Views/MeshFrameworkDevicePickerView.swift; sourceTree = "<group>"; };
 		00359DE8F222FE7021D1936A /* SFFPG------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFFPG------.svg"; sourceTree = "<group>"; };
 		00459F49871153410DCE6A67 /* SHGPUCI----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPUCI----.svg"; sourceTree = "<group>"; };
@@ -1091,6 +1093,7 @@
 			2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
 								CF000005A000000000000001 /* ConfigProfileTests.swift */,
+				3A7BF0F8036A4641AE333F42 /* MarkerLifecycleTests.swift */,
 				A99C500AFB1B09E55ABEDBBF /* Info.plist */,
 			);
 			name = OmniTAKMobileTests;
@@ -2752,6 +2755,7 @@
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
 				C5C06A972D151475A44BC316 /* MeshCoreFrameCodecTests.swift in Sources */,
 				CF000005B000000000000001 /* ConfigProfileTests.swift in Sources */,
+				9C2486130A64424C8DA9EE7B /* MarkerLifecycleTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

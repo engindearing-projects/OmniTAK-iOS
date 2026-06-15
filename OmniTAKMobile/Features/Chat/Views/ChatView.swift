@@ -43,7 +43,9 @@ struct ChatView: View {
                 .filter { !$0.isGroupChat }
                 .compactMap { $0.participants.first?.id }
         )
-        return chatManager.participants
+        // Use chatableParticipants (excludes dropped markers and drone UIDs)
+        // so static map annotations never appear as chat-able contacts.
+        return chatManager.chatableParticipants
             .filter { $0.id != chatManager.currentUserId && !existingUids.contains($0.id) }
             .sorted { $0.callsign < $1.callsign }
     }
@@ -306,7 +308,9 @@ struct NewChatView: View {
     @State private var selectedParticipant: ChatParticipant?
 
     var availableParticipants: [ChatParticipant] {
-        chatManager.participants.filter { $0.id != chatManager.currentUserId }
+        // chatableParticipants filters out dropped markers and drone UIDs so
+        // only real EUDs appear in the New Chat contact picker.
+        chatManager.chatableParticipants.filter { $0.id != chatManager.currentUserId }
     }
 
     var body: some View {

@@ -28,6 +28,19 @@ extension String {
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&apos;")
     }
+
+    /// Returns true when this CoT UID belongs to a locally-dropped point
+    /// marker.  All PointMarker instances set `uid = "marker-<UUID>"` in
+    /// their initialiser — that prefix is the canonical discriminant used
+    /// to distinguish user-dropped map markers from real EUDs (units that
+    /// can receive chat messages) and from drone detections (prefix "RID-").
+    ///
+    /// Used by CoTEventHandler to skip the participant-store feed, and by
+    /// ChatManager to scrub stale entries from the persisted participants
+    /// list on launch.
+    var isDroppedPointMarkerUID: Bool {
+        hasPrefix("marker-")
+    }
 }
 
 // MARK: - CoT XML Builder

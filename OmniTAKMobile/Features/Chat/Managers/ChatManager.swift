@@ -49,7 +49,14 @@ class ChatManager: ObservableObject {
             guard let self else { return }
             let loadedConversations = self.persistence.loadConversations()
             let loadedMessages      = self.persistence.loadMessages()
-            let loadedParticipants  = self.persistence.loadParticipants()
+            // Scrub any marker- or RID- UIDs that may have been persisted into
+            // participants.json before this fix landed.  These entries are
+            // harmless in cotEvents (map rendering) but must never appear in the
+            // chat contact list (Android #118/#119 parity; Patrick Coyle
+            // 2026-06-12).
+            let loadedParticipants  = ChatPersistence.scrubMarkerParticipants(
+                self.persistence.loadParticipants()
+            )
             DispatchQueue.main.async {
                 self.conversations = loadedConversations
                 self.messages      = loadedMessages
@@ -57,6 +64,22 @@ class ChatManager: ObservableObject {
                 print("ChatManager loaded: \(loadedConversations.count) conversations, \(loadedMessages.count) messages, \(loadedParticipants.count) participants")
                 self.setupDefaultConversations()
             }
+        }
+    }
+
+    // MARK: - Chat-capable contact filter
+
+    /// The subset of `participants` that are real EUDs capable of receiving a
+    /// GeoChat DM.  Excludes locally-dropped point markers (UID prefix
+    /// "marker-") and drone detections (UID prefix "RID-") — neither is a
+    /// chat endpoint.
+    ///
+    /// Use this list for the Chat contact picker and the "KNOWN CONTACTS"
+    /// section in ChatView instead of `participants` directly.
+    /// Bug fix: field report from Patrick Coyle 2026-06-12 (Android #118 parity).
+    var chatableParticipants: [ChatParticipant] {
+        participants.filter {
+            !$0.id.isDroppedPointMarkerUID && !$0.id.hasPrefix("RID-")
         }
     }
 
