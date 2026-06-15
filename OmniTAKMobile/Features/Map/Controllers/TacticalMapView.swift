@@ -105,6 +105,20 @@ struct TacticalMapView: UIViewRepresentable {
         // native one produced a double scale bar on the 2D map.
         mapView.ornaments.options.scaleBar.visibility = .hidden
 
+        // Issue #64 — the built-in rotate-compass ornament keeps the SDK
+        // default (.topTrailing, 8pt margins, adaptive visibility), so when the
+        // operator rotates the map it pops UNDER the full-width opaque status
+        // strip and is unreachable. Push it down below the status bar so the
+        // tap-to-reset-north affordance is visible. OmniTAK's own
+        // CompassOverlayView (also top-trailing) only mounts when the compass
+        // overlay toggle or north-lock is on; this keeps the native rotate
+        // affordance usable the rest of the time without the two stacking.
+        // The y margin clears the status strip (~44pt) plus a small gap; x
+        // keeps it off the right edge a touch more than the 8pt default so it
+        // doesn't sit directly beneath OmniTAK's compass when both are shown.
+        mapView.ornaments.options.compass.position = .topTrailing
+        mapView.ornaments.options.compass.margins = CGPoint(x: 12, y: 96)
+
         // Tap → contact hit-test / map-tap fan-out
         let tap = UITapGestureRecognizer(
             target: context.coordinator,
