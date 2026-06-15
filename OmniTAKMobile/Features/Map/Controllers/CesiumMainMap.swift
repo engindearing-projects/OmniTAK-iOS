@@ -89,6 +89,12 @@ struct CesiumMainMap: UIViewRepresentable {
     let lineDrawings: [LineDrawing]
     let circleDrawings: [CircleDrawing]
     let polygonDrawings: [PolygonDrawing]
+    // Drawing-tool point markers (DrawingStore.markers — MarkerDrawing).
+    // The 2D Mapbox path renders these via refreshDrawingMarkers(); without
+    // this parameter the 3D engine never saw a drawing marker, so a dropped
+    // drawing-tool pin was invisible on the globe (issue #61). Distinct from
+    // `pointMarkers` (PointDropperService) — these come from the Draw tools.
+    let markerDrawings: [MarkerDrawing]
     let rangeRings: [RangeRing]
     // Dropped point markers (PointDropperService). The 2D Mapbox path
     // renders these via refreshPointMarkers(); without this the 3D
@@ -123,6 +129,20 @@ struct CesiumMainMap: UIViewRepresentable {
     // as it's built — parity with the Mapbox path's systemYellow temp line.
     // Empty when no measurement is active.
     var liveMeasurementPoints: [CLLocationCoordinate2D] = []
+    // Live in-progress DRAWING vertices (DrawingToolsManager.temporaryPoints
+    // while a line/polygon/circle is being placed). Mirrored as a solid line
+    // + vertex dots in the active drawing color so the globe shows the shape
+    // as the operator taps — parity with the Mapbox temp overlay (issue #63).
+    // Empty when no drawing is in progress. `liveDrawingMode` tells the bridge
+    // whether to close the ring (polygon) and how to render a circle preview.
+    var liveDrawingPoints: [CLLocationCoordinate2D] = []
+    /// "line" | "polygon" | "circle" | nil — the in-progress drawing kind so
+    /// the temp overlay matches the committed shape (closed ring for polygon,
+    /// radius preview for circle). Nil when no drawing is active.
+    var liveDrawingMode: String? = nil
+    /// Active drawing color as "#RRGGBB" so the temp shape reads the same as
+    /// the committed drawing. Defaults to the systemBlue the 2D temp line uses.
+    var liveDrawingColor: String = "#007AFF"
     // Active navigation route (RoutePlanningService.activeRoute) — bridged
     // as a polyline + waypoint billboards so starting navigation on the 3D
     // globe shows the route instead of silently rendering nothing.
@@ -223,10 +243,12 @@ struct CesiumMainMap: UIViewRepresentable {
         let entities = buildEntityJSON()
         let drawings = buildDrawingJSON()
         let measurementsJSON = buildMeasurementJSON()
+        let tempDrawingJSON = buildTempDrawingJSON()
         let trailsJSON = buildTrailJSON()
         context.coordinator.lastSnapshot = entities
         context.coordinator.lastDrawingsSnapshot = drawings
         context.coordinator.lastMeasurementsSnapshot = measurementsJSON
+        context.coordinator.lastTempDrawingSnapshot = tempDrawingJSON
         context.coordinator.lastTrailsSnapshot = trailsJSON
         if context.coordinator.isReady {
             // Dedup ALL the bulk bridge calls — `updateUIView` fires on every
@@ -247,6 +269,13 @@ struct CesiumMainMap: UIViewRepresentable {
             }
             if context.coordinator.shouldPublishBridge(call: "setMeasurements", signature: measurementsJSON.hashValue) {
                 webView.evaluateJavaScript("window.OmniBridge.setMeasurements(\(measurementsJSON));", completionHandler: nil)
+            }
+            // Issue #63 — in-progress drawing preview (solid line + vertices in
+            // the drawing color). Deduped like the others; the `draw-live` uid
+            // makes each vertex replace the prior preview, and an empty payload
+            // on complete/cancel clears it.
+            if context.coordinator.shouldPublishBridge(call: "setTempDrawing", signature: tempDrawingJSON.hashValue) {
+                webView.evaluateJavaScript("window.OmniBridge.setTempDrawing(\(tempDrawingJSON));", completionHandler: nil)
             }
             if context.coordinator.shouldPublishBridge(call: "setTrails", signature: trailsJSON.hashValue) {
                 webView.evaluateJavaScript("window.OmniBridge.setTrails(\(trailsJSON));", completionHandler: nil)
@@ -307,6 +336,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var lastSnapshot: String = "[]"
         var lastDrawingsSnapshot: String = "[]"
         var lastMeasurementsSnapshot: String = "[]"
+        /// Last in-progress drawing preview pushed to the globe (issue #63).
+        var lastTempDrawingSnapshot: String = "[]"
         var lastTrailsSnapshot: String = "[]"
         /// Last coordinate we recentered on in follow mode (dedupe key).
         var lastFollowKey: String?
@@ -405,6 +436,10 @@ struct CesiumMainMap: UIViewRepresentable {
                 )
                 webView?.evaluateJavaScript(
                     "window.OmniBridge.setMeasurements(\(lastMeasurementsSnapshot));",
+                    completionHandler: nil
+                )
+                webView?.evaluateJavaScript(
+                    "window.OmniBridge.setTempDrawing(\(lastTempDrawingSnapshot));",
                     completionHandler: nil
                 )
                 webView?.evaluateJavaScript(
@@ -817,6 +852,32 @@ struct CesiumMainMap: UIViewRepresentable {
             ))
         }
 
+        // Drawing-tool markers (DrawingStore.markers — MarkerDrawing). The 2D
+        // Mapbox path renders these via refreshDrawingMarkers() as a colored
+        // disc; the Cesium bridge never received them, so a drawing-tool pin was
+        // invisible on the 3D engine (issue #61). They carry no CoT type / SIDC
+        // — render the affiliation-shape billboard in the drawing's color via a
+        // friendly affiliation fallback, and tag them with a `dmark-` uid so the
+        // tap handler can open the drawing edit/delete menu (issue #60).
+        for dm in markerDrawings {
+            all.append(BridgeEntity(
+                uid: "dmark-\(dm.id.uuidString)",
+                lat: dm.coordinate.latitude,
+                lon: dm.coordinate.longitude,
+                hae: nil,
+                callsign: dm.label,
+                affiliation: "f",
+                kind: "marker",
+                heading: nil,
+                // No SIDC — fall through to the dot billboard, recolored to the
+                // drawing's tactical color so it matches the 2D disc.
+                sidc: nil,
+                spot: CesiumMainMap.hex(forDrawingColor: dm.color),
+                icon: nil,
+                leader: false
+            ))
+        }
+
         // Active-route waypoints — labelled billboards so the operator can
         // see where the route goes on the globe (the 2D path renders these
         // via RouteOverlayCoordinator's MKAnnotations). Friendly affiliation
@@ -915,6 +976,38 @@ struct CesiumMainMap: UIViewRepresentable {
         }
 
         guard let data = try? JSONEncoder().encode(all),
+              let str = String(data: data, encoding: .utf8) else { return "[]" }
+        return str
+    }
+
+    // MARK: - Live drawing bridge (issue #63)
+
+    /// In-progress drawing geometry for the globe — a solid polyline + vertex
+    /// dots in the active drawing color, so multi-tap line/polygon placement
+    /// shows feedback BEFORE the operator hits Complete (parity with the 2D
+    /// Mapbox temp overlay). Single fixed uid (`draw-live`) so each new vertex
+    /// replaces the prior preview; cleared (empty payload) on complete/cancel.
+    private struct BridgeTempDrawing: Encodable {
+        let uid: String
+        let kind: String          // "line" | "polygon" | "circle"
+        let coords: [[Double]]    // [lon, lat] per vertex
+        let color: String
+        let width: Double
+    }
+
+    private func buildTempDrawingJSON() -> String {
+        // Need an active mode and at least one placed vertex. A circle with a
+        // center but no radius point still shows its center dot; a line/polygon
+        // needs its growing vertex chain.
+        guard let mode = liveDrawingMode, !liveDrawingPoints.isEmpty else { return "[]" }
+        let temp = BridgeTempDrawing(
+            uid: "draw-live",
+            kind: mode,
+            coords: liveDrawingPoints.map { [$0.longitude, $0.latitude] },
+            color: liveDrawingColor,
+            width: 2
+        )
+        guard let data = try? JSONEncoder().encode([temp]),
               let str = String(data: data, encoding: .utf8) else { return "[]" }
         return str
     }

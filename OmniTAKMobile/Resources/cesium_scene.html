@@ -28,7 +28,7 @@
 <script src="https://unpkg.com/milsymbol@2.2.0/dist/milsymbol.js"></script>
 <script>
   Cesium.Ion.defaultAccessToken='__CESIUM_ION_TOKEN__';
-  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},northLocked:false,northSnapping:false};
+  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},northLocked:false,northSnapping:false};
   // Lasso multi-select drag (issue #16, 3D parity). Camera pan is
   // disabled while the lasso is enabled; the freehand path is drawn on
   // a 2D overlay canvas and the screen points are picked to lat/lon on
@@ -341,6 +341,37 @@
       for(const m of list)if(m&&m.uid){seen.add(m.uid);window.OmniBridge.upsertMeasurement(m);}
       const v=_state.viewer;if(!v)return;
       for(const uid of Array.from(_state.measurements.keys()))if(!seen.has(uid)){const rec=_state.measurements.get(uid);if(rec.entity)v.entities.remove(rec.entity);(rec.vertexEntities||[]).forEach(ve=>v.entities.remove(ve));_state.measurements.delete(uid);}
+    },
+    // Issue #63 — in-progress drawing preview. Renders the partial shape the
+    // operator is placing (before Complete) so multi-tap line/polygon and the
+    // circle center→radius flow give live feedback on the globe, matching the
+    // 2D Mapbox temp overlay. Solid line + vertex dots in the drawing color;
+    // a polygon closes its ring, a circle (center+edge) previews its disc.
+    upsertTempDrawing(arg){const d=_parse(arg);if(!d||!d.uid||!d.kind||!Array.isArray(d.coords)||d.coords.length===0)return;const v=_state.viewer;if(!v)return;
+      const color=_drawColor(d.color||'#007AFF',0.95),fillC=_drawColor(d.color||'#007AFF',0.25),width=typeof d.width==='number'?d.width:2;
+      const prior=_state.tempDrawings.get(d.uid);if(prior){if(prior.line)v.entities.remove(prior.line);if(prior.shape)v.entities.remove(prior.shape);(prior.vertexEntities||[]).forEach(ve=>v.entities.remove(ve));}
+      let line=null,shape=null;
+      if(d.kind==='circle'&&d.coords.length>=2){
+        // Center + radius point → preview disc (parity with the 2D temp circle).
+        const center=d.coords[0],edge=d.coords[1],radius=_havDist(center,edge);
+        shape=v.entities.add({id:d.uid+':disc',position:Cesium.Cartesian3.fromDegrees(center[0],center[1],0),
+          ellipse:{semiMajorAxis:radius,semiMinorAxis:radius,material:fillC,outline:true,outlineColor:color,outlineWidth:width,heightReference:Cesium.HeightReference.CLAMP_TO_GROUND}});
+      }else if(d.coords.length>=2){
+        // Line / polygon → solid polyline; close the ring for a polygon so the
+        // shape reads as the area it will become.
+        const pts=d.coords.slice();if(d.kind==='polygon'&&pts.length>=3)pts.push(pts[0]);
+        line=v.entities.add({id:d.uid+':line',polyline:{positions:pts.map(c=>Cesium.Cartesian3.fromDegrees(c[0],c[1],0)),width:width,material:color,clampToGround:true}});
+      }
+      // Vertex dots on every placed point (including a lone circle center or the
+      // first line point) so the operator sees each tap land.
+      const vertexEntities=d.coords.map((c,i)=>v.entities.add({id:d.uid+':v'+i,position:Cesium.Cartesian3.fromDegrees(c[0],c[1],0),
+        point:{pixelSize:10,color:Cesium.Color.fromCssColorString('#FFFC00'),outlineColor:Cesium.Color.WHITE,outlineWidth:2,heightReference:Cesium.HeightReference.CLAMP_TO_GROUND,disableDepthTestDistance:Number.POSITIVE_INFINITY}}));
+      _state.tempDrawings.set(d.uid,{line:line,shape:shape,vertexEntities:vertexEntities});
+    },
+    setTempDrawing(arg){const list=_parse(arg);if(!Array.isArray(list))return;const seen=new Set();
+      for(const d of list)if(d&&d.uid){seen.add(d.uid);window.OmniBridge.upsertTempDrawing(d);}
+      const v=_state.viewer;if(!v)return;
+      for(const uid of Array.from(_state.tempDrawings.keys()))if(!seen.has(uid)){const rec=_state.tempDrawings.get(uid);if(rec.line)v.entities.remove(rec.line);if(rec.shape)v.entities.remove(rec.shape);(rec.vertexEntities||[]).forEach(ve=>v.entities.remove(ve));_state.tempDrawings.delete(uid);}
     },
     upsertTrail(arg){const t=_parse(arg);if(!t||!t.uid||!Array.isArray(t.coords)||t.coords.length<2)return;const v=_state.viewer;if(!v)return;
       const color=_drawColor(t.color||'#FFC107',0.85),width=typeof t.width==='number'?t.width:3;

@@ -1121,6 +1121,10 @@ struct ATAKMapView: View {
                 lineDrawings: drawingStore.lines,
                 circleDrawings: drawingStore.circles,
                 polygonDrawings: drawingStore.polygons,
+                // Issue #61 — drawing-tool markers (DrawingStore.markers). The
+                // 2D path renders these as colored discs; feed the same source
+                // so a drawing-tool pin shows on the globe too.
+                markerDrawings: drawingStore.markers,
                 rangeRings: measurementManager.rangeRings,
                 // Dropped pins — same source the 2D Mapbox path reads, so
                 // a pin shows on whichever engine is active.
@@ -1151,6 +1155,15 @@ struct ATAKMapView: View {
                 liveMeasurementPoints: measurementManager.isActive
                     ? measurementManager.temporaryPoints
                     : [],
+                // Issue #63 — in-progress drawing → solid line + vertices on
+                // the globe so multi-tap line/polygon (and the circle center
+                // tap) show feedback before Complete, matching the 2D temp
+                // overlay. Empty / nil while no shape is being placed.
+                liveDrawingPoints: drawingManager.isDrawingActive
+                    ? drawingManager.temporaryPoints
+                    : [],
+                liveDrawingMode: cesiumLiveDrawingMode,
+                liveDrawingColor: cesiumLiveDrawingColorHex,
                 // Active navigation route → polyline + waypoint billboards.
                 activeRoute: routeService.activeRoute,
                 // Phase 3b — operator's own recorded breadcrumb trail.
@@ -1174,6 +1187,33 @@ struct ATAKMapView: View {
                 }
             )
             .ignoresSafeArea()
+    }
+
+    /// Issue #63 — the in-progress drawing kind for the Cesium temp overlay,
+    /// or nil when no shape is being placed. Lasso doesn't create a shape, so
+    /// it's excluded (its selection feedback rides the lasso path).
+    private var cesiumLiveDrawingMode: String? {
+        guard drawingManager.isDrawingActive, let mode = drawingManager.currentMode else { return nil }
+        switch mode {
+        case .line:    return "line"
+        case .polygon: return "polygon"
+        case .circle:  return "circle"
+        case .marker, .lasso: return nil
+        }
+    }
+
+    /// Issue #63 — active drawing color as "#RRGGBB" for the Cesium temp
+    /// overlay, so the preview shape matches the committed drawing's color.
+    private var cesiumLiveDrawingColorHex: String {
+        let c = drawingManager.currentColor.uiColor
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return String(
+            format: "#%02X%02X%02X",
+            Int((max(0, min(1, r)) * 255).rounded()),
+            Int((max(0, min(1, g)) * 255).rounded()),
+            Int((max(0, min(1, b)) * 255).rounded())
+        )
     }
 
     /// Compact measurement HUD (ATAK-style) — engine-agnostic SwiftUI
@@ -1686,6 +1726,11 @@ struct ATAKMapView: View {
             // Mapbox long-press path produces. Empty-map and other
             // entities fall through to the map-context menu.
             if openCesiumPointMarkerMenu(uid: event.entityUid, at: event) { return }
+            // Issue #60 — a long-press on a drawing (line / polygon / circle /
+            // drawing-marker) opens its Edit/Delete radial menu, same as the 2D
+            // Mapbox long-press path. Without this the 3D engine dropped the
+            // drawing uid and the shape was unselectable.
+            if openCesiumDrawingMenu(uid: event.entityUid, at: event) { return }
             radialMenuCoordinator.showContextMenu(
                 at: event.screenPoint,
                 for: event.coordinate,
@@ -1703,13 +1748,18 @@ struct ATAKMapView: View {
             // operator can edit it without hunting for the long-press —
             // the 3D engine has no MKMapView callout to lean on.
             if openCesiumPointMarkerMenu(uid: uid, at: event) { return }
+            // Issue #60 — a tap on a drawing (line / polygon / circle /
+            // drawing-marker) opens its Edit/Delete radial menu, mirroring the
+            // 2D Mapbox tap-to-select. These uids were previously dropped, so
+            // the operator could never select/edit/delete a shape on the globe.
+            if openCesiumDrawingMenu(uid: uid, at: event) { return }
             // The HTML emits `__self__` for the operator's own pip and
-            // namespaced uids (`ads-…`, `line-…`, `poly-…`, `circ-…`,
-            // `rring-…`, `meas-…`, `trail-…`, `:v<idx>` vertex labels)
-            // for non-contact entities. None of those have a CoT event
-            // behind them, so skip the marker-context menu for them.
+            // namespaced uids (`ads-…`, `rring-…`, `meas-…`, `trail-…`,
+            // `route-…`, `:v<idx>` vertex labels) for entities with no CoT
+            // event and no editable model behind them — skip the marker-context
+            // menu for those. (line-/poly-/circ-/dmark- are handled above.)
             if uid == "__self__" { return }
-            let nonContactPrefixes = ["ads-", "line-", "poly-", "circ-", "rring-", "meas-", "trail-", "route-"]
+            let nonContactPrefixes = ["ads-", "rring-", "meas-", "trail-", "route-"]
             if nonContactPrefixes.contains(where: { uid.hasPrefix($0) }) { return }
             if uid.contains(":v") { return }
             // CoT contact match — open the marker-context radial menu
@@ -1755,6 +1805,47 @@ struct ATAKMapView: View {
             at: event.screenPoint,
             coordinate: pm.coordinate,
             marker: pm
+        )
+        return true
+    }
+
+    /// Issue #60 — if `uid` is a Cesium drawing entity (`line-`, `poly-`,
+    /// `circ-`, or `dmark-` followed by the drawing's UUID), open the
+    /// Edit/Delete radial menu for that shape and return true. Mirrors the 2D
+    /// Mapbox path, which passes `drawingId` + `drawingType` into
+    /// `showContextMenu(...)`; the radial Edit/Delete actions then route through
+    /// the shared `RadialMenuActionExecutor` drawing handlers. Returns false for
+    /// any uid that isn't an editable drawing so the caller can fall through.
+    private func openCesiumDrawingMenu(uid: String?, at event: CesiumMapEvent) -> Bool {
+        guard let uid else { return false }
+        // The bridge namespaces drawing uids as "<prefix>-<UUID>".
+        let mapping: [(prefix: String, type: RadialMenuContext.DrawingType)] = [
+            ("line-",  .line),
+            ("poly-",  .polygon),
+            ("circ-",  .circle),
+            ("dmark-", .marker),
+        ]
+        guard let match = mapping.first(where: { uid.hasPrefix($0.prefix) }) else { return false }
+        let idString = String(uid.dropFirst(match.prefix.count))
+        guard let drawingId = UUID(uuidString: idString) else { return false }
+
+        // Confirm the drawing still exists in the store (it may have been
+        // deleted between the snapshot and the tap) before popping the menu.
+        let exists: Bool
+        switch match.type {
+        case .line:    exists = drawingStore.lines.contains { $0.id == drawingId }
+        case .polygon: exists = drawingStore.polygons.contains { $0.id == drawingId }
+        case .circle:  exists = drawingStore.circles.contains { $0.id == drawingId }
+        case .marker:  exists = drawingStore.markers.contains { $0.id == drawingId }
+        }
+        guard exists else { return false }
+
+        radialMenuCoordinator.showContextMenu(
+            at: event.screenPoint,
+            for: event.coordinate,
+            menuType: .markerContext,
+            drawingId: drawingId,
+            drawingType: match.type
         )
         return true
     }
