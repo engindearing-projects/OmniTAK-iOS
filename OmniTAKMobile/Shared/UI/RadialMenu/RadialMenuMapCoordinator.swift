@@ -336,8 +336,13 @@ class RadialMenuMapCoordinator: ObservableObject {
                 pressedDrawingType: drawingType,
                 contextType: .drawing
             )
-            // Use marker context menu for drawn shapes
-            menuConfiguration = RadialMenuPresets.markerContextMenu
+            // Drawing shapes get the drawing menu (Edit / Move / Delete / Info).
+            // The Move action (issue #60) is drawing-only, so it never shows for
+            // point markers. Fall back to the marker menu if, defensively, this
+            // .markerContext call carried no drawing id.
+            menuConfiguration = (drawingId != nil)
+                ? RadialMenuPresets.drawingContextMenu
+                : RadialMenuPresets.markerContextMenu
         }
 
         currentContext = context

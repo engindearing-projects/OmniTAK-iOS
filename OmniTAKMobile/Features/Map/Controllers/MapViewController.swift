@@ -25,6 +25,9 @@ struct ATAKMapView: View {
     @StateObject private var locationManager = LocationManager()
     @StateObject private var drawingStore: DrawingStore
     @StateObject private var drawingManager: DrawingToolsManager
+    // Issue #60 (move/reposition follow-up) — drives drawing reposition mode,
+    // shared by both engines so the move UX is identical on Mapbox + Cesium.
+    @StateObject private var drawingMoveSession = DrawingMoveSession()
     @StateObject private var radialMenuCoordinator = RadialMenuMapCoordinator()
     @ObservedObject private var chatManager = ChatManager.shared
     @StateObject private var trackRecordingService = TrackRecordingService()
@@ -250,6 +253,12 @@ struct ATAKMapView: View {
             mapStateManager: mapStateManager,
             measurementManager: measurementManager,
             lassoService: lassoService,
+            // Issue #60 (move/reposition follow-up) — reposition session +
+            // the rigid-translate callback the 2D drag gesture drives.
+            drawingMoveSession: drawingMoveSession,
+            onDrawingMoveDragged: { latDelta, lonDelta in
+                applyDrawingMoveDelta(latDelta: latDelta, lonDelta: lonDelta)
+            },
             onMapTap: handleMapTap,
             // Issue #72 — forward the north-lock flag so TacticalMapView
             // can disable rotation gestures when engaged.
@@ -1108,6 +1117,22 @@ struct ATAKMapView: View {
                 drawingManager.pendingRenameID = drawingId
             }
         }
+        // Issue #60 (move/reposition follow-up) — Move from the drawing radial
+        // menu enters reposition mode for the selected shape on both engines.
+        .onReceive(NotificationCenter.default.publisher(for: .radialMenuMoveDrawing)) { notification in
+            guard let drawingId = notification.userInfo?["drawingId"] as? UUID,
+                  let drawingType = notification.userInfo?["drawingType"] as? RadialMenuContext.DrawingType
+            else { return }
+            beginDrawingMove(id: drawingId, type: drawingType)
+        }
+        // Issue #60 — bail out of reposition mode if the operator toggles the
+        // map engine mid-move. The session is a @StateObject that survives the
+        // engine swap, and the outgoing engine unmounts without a chance to
+        // release its camera lock; cancelling restores the shape and clears the
+        // HUD so the incoming engine starts clean.
+        .onChange(of: mapEngineRaw) { _ in
+            if drawingMoveSession.isActive { cancelDrawingMove() }
+        }
         // Issue #65 — self-position puck tapped from either engine.
         .onReceive(NotificationCenter.default.publisher(for: .selfMarkerTapped)) { _ in
             showSelfPositionEdit = true
@@ -1148,6 +1173,10 @@ struct ATAKMapView: View {
                 // Lasso multi-select — lock the globe camera and capture the
                 // freehand drag when the operator is in lasso mode.
                 lassoActive: drawingManager.currentMode == .lasso && drawingManager.isDrawingActive,
+                // Issue #60 (move/reposition follow-up) — lock the globe camera
+                // and capture a single-finger drag while a shape is being
+                // repositioned, mirroring the lasso capture pattern.
+                drawingMoveActive: drawingMoveSession.isActive,
                 // Base layer (satellite / hybrid / standard) so the layers
                 // panel switches the globe's imagery, not just the 2D style.
                 baseLayer: activeMapLayer,
@@ -1296,8 +1325,68 @@ struct ATAKMapView: View {
         radialMenu
         gpsFollowButton
         lassoSelectionPill
+        drawingMoveOverlay
         measurementChrome
         routeNavigationChrome
+    }
+
+    /// Issue #60 (move/reposition follow-up) — reposition HUD. A top banner
+    /// (never a side panel — the full-screen map stays uncovered) telling the
+    /// operator to drag the shape, with Cancel / Done. Shown on whichever
+    /// engine is active; the drag itself is handled inside each engine.
+    @ViewBuilder
+    private var drawingMoveOverlay: some View {
+        if drawingMoveSession.isActive {
+            VStack {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(hex: "#FFFC00"))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Moving \(drawingMoveSession.label)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        Text("Drag the shape to reposition")
+                            .font(.system(size: 11))
+                            .foregroundColor(Color(hex: "#BBBBBB"))
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        cancelDrawingMove()
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color.white.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                    Button {
+                        commitDrawingMove()
+                    } label: {
+                        Text("Done")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(Color(hex: "#FFFC00"))
+                            .clipShape(Capsule())
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+                .background(Color.black.opacity(0.55))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, 16)
+                .padding(.top, 110) // clear the top status strip / toolbars
+                Spacer()
+            }
+            .zIndex(2600) // above lasso pill (2000), below radial menu (3000)
+            .transition(.move(edge: .top).combined(with: .opacity))
+        }
     }
 
     /// Plugin SDK map-overlay seam. Renders every overlay a plugin registered
@@ -1807,6 +1896,16 @@ struct ATAKMapView: View {
                 drawingStore.polygons.map { LassoDrawing(id: $0.id, coordinates: $0.coordinates) } +
                 drawingStore.circles.map { LassoDrawing(id: $0.id, coordinates: [$0.center]) }
             _ = lassoService.endLasso(markers: markers, drawings: drawings)
+        case .move:
+            // Issue #60 (move/reposition follow-up) — the globe reported a drag
+            // step in reposition mode. Translate the active shape by the
+            // previous→current globe-coordinate delta. The 2D engine drives the
+            // same applyDrawingMoveDelta via its onDrawingMoveDragged closure.
+            guard let from = event.moveFromCoordinate else { return }
+            let latDelta = event.coordinate.latitude - from.latitude
+            let lonDelta = event.coordinate.longitude - from.longitude
+            guard latDelta != 0 || lonDelta != 0 else { return }
+            applyDrawingMoveDelta(latDelta: latDelta, lonDelta: lonDelta)
         }
     }
 
@@ -1865,6 +1964,115 @@ struct ATAKMapView: View {
             drawingType: match.type
         )
         return true
+    }
+
+    // MARK: - Drawing Move (issue #60 — move/reposition follow-up)
+
+    /// Enter reposition mode for the given drawing. Resolves its label for the
+    /// move HUD and arms the shared `DrawingMoveSession`; both engines watch
+    /// that session, lock the camera, and translate the shape on drag.
+    private func beginDrawingMove(id: UUID, type: RadialMenuContext.DrawingType) {
+        // Resolve the shape's label + starting geometry so Cancel can restore
+        // it exactly. Bail if it vanished between menu-open and Move.
+        let label: String
+        let original: [CLLocationCoordinate2D]
+        switch type {
+        case .marker:
+            guard let m = drawingStore.markers.first(where: { $0.id == id }) else { return }
+            label = m.label; original = [m.coordinate]
+        case .line:
+            guard let l = drawingStore.lines.first(where: { $0.id == id }) else { return }
+            label = l.label; original = l.coordinates
+        case .circle:
+            guard let c = drawingStore.circles.first(where: { $0.id == id }) else { return }
+            label = c.label; original = [c.center]
+        case .polygon:
+            guard let p = drawingStore.polygons.first(where: { $0.id == id }) else { return }
+            label = p.label; original = p.coordinates
+        }
+        // A drawing tool / measurement shouldn't be mid-flight while moving.
+        drawingManager.cancelDrawing()
+        drawingMoveSession.begin(id: id, type: type, label: label, originalCoordinates: original)
+    }
+
+    /// Apply an incremental drag delta to the shape under move — rigidly
+    /// translates every vertex (or the circle center / marker point) and
+    /// persists it live, so the shape tracks the finger on both engines.
+    /// Called by the per-engine drag handlers via the `.drawingMoveDragged`
+    /// notification so the geometry update lives in one place.
+    private func applyDrawingMoveDelta(latDelta: CLLocationDegrees, lonDelta: CLLocationDegrees) {
+        guard drawingMoveSession.isActive,
+              let id = drawingMoveSession.drawingId,
+              let type = drawingMoveSession.drawingType else { return }
+        // Normalize the longitude step to the shortest path so a single drag
+        // frame that straddles the ±180° antimeridian (e.g. 179.9 → -179.9,
+        // a raw −359.8° step) translates the shape smoothly across the seam
+        // instead of teleporting it nearly all the way around the globe.
+        var lon = lonDelta
+        if lon > 180 { lon -= 360 } else if lon < -180 { lon += 360 }
+        switch type {
+        case .marker:
+            guard let m = drawingStore.markers.first(where: { $0.id == id }) else {
+                cancelDrawingMove(); return
+            }
+            drawingStore.updateMarker(m.translated(latDelta: latDelta, lonDelta: lon))
+        case .line:
+            guard let l = drawingStore.lines.first(where: { $0.id == id }) else {
+                cancelDrawingMove(); return
+            }
+            drawingStore.updateLine(l.translated(latDelta: latDelta, lonDelta: lon))
+        case .circle:
+            guard let c = drawingStore.circles.first(where: { $0.id == id }) else {
+                cancelDrawingMove(); return
+            }
+            drawingStore.updateCircle(c.translated(latDelta: latDelta, lonDelta: lon))
+        case .polygon:
+            guard let p = drawingStore.polygons.first(where: { $0.id == id }) else {
+                cancelDrawingMove(); return
+            }
+            drawingStore.updatePolygon(p.translated(latDelta: latDelta, lonDelta: lon))
+        }
+    }
+
+    /// Commit the reposition. The live drags already persisted each step, so
+    /// this just closes the session (and saves once more for good measure).
+    private func commitDrawingMove() {
+        guard drawingMoveSession.isActive else { return }
+        drawingStore.saveAllDrawings()
+        drawingMoveSession.end()
+    }
+
+    /// Cancel the reposition — restore the shape's geometry to the snapshot
+    /// taken when Move began (exact, so a drag that clamped at a pole or crossed
+    /// the antimeridian still lands precisely back where it started), then close
+    /// the session.
+    private func cancelDrawingMove() {
+        guard drawingMoveSession.isActive,
+              let id = drawingMoveSession.drawingId,
+              let type = drawingMoveSession.drawingType else {
+            drawingMoveSession.end()
+            return
+        }
+        let original = drawingMoveSession.originalCoordinates
+        switch type {
+        case .marker:
+            if let m = drawingStore.markers.first(where: { $0.id == id }), let first = original.first {
+                drawingStore.updateMarker(m.with(coordinate: first))
+            }
+        case .line:
+            if let l = drawingStore.lines.first(where: { $0.id == id }), !original.isEmpty {
+                drawingStore.updateLine(l.with(coordinates: original))
+            }
+        case .circle:
+            if let c = drawingStore.circles.first(where: { $0.id == id }), let first = original.first {
+                drawingStore.updateCircle(c.with(center: first))
+            }
+        case .polygon:
+            if let p = drawingStore.polygons.first(where: { $0.id == id }), !original.isEmpty {
+                drawingStore.updatePolygon(p.with(coordinates: original))
+            }
+        }
+        drawingMoveSession.end()
     }
 
     // MARK: - Marker Actions

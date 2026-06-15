@@ -27,8 +27,10 @@ import UIKit
 /// struct so the SwiftUI shell can drive the radial menu and contact
 /// edit flows the same way the 2D Mapbox path does.
 struct CesiumMapEvent {
-    enum Kind { case tap, longpress, cameraChanged, lasso }
+    enum Kind { case tap, longpress, cameraChanged, lasso, move }
     let kind: Kind
+    /// For `.move`, this is the drag's CURRENT globe point; `moveFromCoordinate`
+    /// is the previous one, so the delta is (coordinate − moveFromCoordinate).
     let coordinate: CLLocationCoordinate2D
     let screenPoint: CGPoint
     /// Cesium Entity id that was picked under the cursor, or nil for an
@@ -42,6 +44,10 @@ struct CesiumMapEvent {
     let centerCoordinate: CLLocationCoordinate2D?
     /// Freehand lasso polygon (lat/lon vertices) for a `.lasso` event.
     let polygon: [CLLocationCoordinate2D]?
+    /// Drag origin for a `.move` event (issue #60) — the globe point under the
+    /// finger on the PREVIOUS frame. `coordinate` holds the current frame, so
+    /// the rigid-translate delta is (coordinate − moveFromCoordinate).
+    let moveFromCoordinate: CLLocationCoordinate2D?
 
     struct CameraState {
         let height: Double      // metres above ellipsoid
@@ -108,6 +114,11 @@ struct CesiumMainMap: UIViewRepresentable {
     /// When true (lasso mode), lock the globe camera and capture a freehand
     /// drag for multi-select; the polygon is posted back as a `.lasso` event.
     var lassoActive: Bool = false
+    /// Issue #60 (move/reposition follow-up) — when true (drawing reposition
+    /// mode), lock the globe camera and capture a single-finger drag; each
+    /// step is posted back as a `.move` event carrying the previous→current
+    /// globe coordinates so the native side rigidly translates the shape.
+    var drawingMoveActive: Bool = false
     /// Base imagery layer for the globe ("satellite" | "hybrid" | "standard").
     var baseLayer: String = "satellite"
     /// Issue #72 — north-up lock. When true the globe is pinned north-up
@@ -311,6 +322,14 @@ struct CesiumMainMap: UIViewRepresentable {
                 webView.evaluateJavaScript("window.OmniBridge.setLassoMode({on:\(lassoActive)});", completionHandler: nil)
             }
 
+            // Issue #60 (move/reposition follow-up) — reposition mode toggle.
+            // Same transition-only pattern as lasso; the bridge locks the
+            // camera and captures the single-finger drag, posting `move` events.
+            if drawingMoveActive != context.coordinator.moveWasActive {
+                context.coordinator.moveWasActive = drawingMoveActive
+                webView.evaluateJavaScript("window.OmniBridge.setMoveMode({on:\(drawingMoveActive)});", completionHandler: nil)
+            }
+
             // Base layer (imagery) — swap the globe's imagery on change so the
             // layers panel's Satellite/Hybrid/Standard work on 3D too.
             if baseLayer != context.coordinator.lastBaseLayer {
@@ -345,6 +364,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var wasFollowing = false
         /// Whether lasso mode was active last render (to toggle on transition).
         var lassoWasActive = false
+        /// Issue #60 — whether drawing reposition mode was active last render.
+        var moveWasActive = false
         /// Last base imagery layer pushed to the globe (swap on change).
         var lastBaseLayer = "satellite"
         /// Observer token for toolbar zoom commands forwarded to the bridge.
@@ -422,6 +443,13 @@ struct CesiumMainMap: UIViewRepresentable {
                 // so the globe comes back north-up and stays locked.
                 if northLocked {
                     webView?.evaluateJavaScript("window.OmniBridge.setNorthLock({on:true});", completionHandler: nil)
+                }
+                // Issue #60 — if reposition mode was active before this bridge
+                // (re)initialized (e.g. a WebGL process restart mid-move),
+                // re-engage it so the globe camera comes back locked and the
+                // drag capture is restored, mirroring the north-lock re-apply.
+                if moveWasActive {
+                    webView?.evaluateJavaScript("window.OmniBridge.setMoveMode({on:true});", completionHandler: nil)
                 }
                 // Drain the latest snapshots the moment the HTML signals it
                 // has the OmniBridge alive — anything queued during page
@@ -501,6 +529,7 @@ struct CesiumMainMap: UIViewRepresentable {
                 case "longpress": kind = .longpress
                 case "camerachanged": kind = .cameraChanged
                 case "lasso": kind = .lasso
+                case "move": kind = .move
                 default: return
                 }
                 let cameraState: CesiumMapEvent.CameraState?
@@ -520,6 +549,12 @@ struct CesiumMainMap: UIViewRepresentable {
                 let polygon: [CLLocationCoordinate2D]? = payload.polygon?.compactMap {
                     $0.count == 2 ? CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) : nil
                 }
+                let moveFrom: CLLocationCoordinate2D?
+                if let fLat = payload.fromLat, let fLon = payload.fromLon {
+                    moveFrom = CLLocationCoordinate2D(latitude: fLat, longitude: fLon)
+                } else {
+                    moveFrom = nil
+                }
                 let event = CesiumMapEvent(
                     kind: kind,
                     coordinate: CLLocationCoordinate2D(latitude: payload.lat, longitude: payload.lon),
@@ -527,7 +562,8 @@ struct CesiumMainMap: UIViewRepresentable {
                     entityUid: payload.uid,
                     camera: cameraState,
                     centerCoordinate: centerCoord,
-                    polygon: polygon
+                    polygon: polygon,
+                    moveFromCoordinate: moveFrom
                 )
                 parent.onMapEvent?(event)
             default:
@@ -558,6 +594,10 @@ struct CesiumMainMap: UIViewRepresentable {
             let centerLon: Double?
             // Freehand lasso polygon as [[lat,lon],...] for a 'lasso' event.
             let polygon: [[Double]]?
+            // Drag origin (previous frame globe point) for a 'move' event
+            // (issue #60). `lat`/`lon` carry the current frame.
+            let fromLat: Double?
+            let fromLon: Double?
         }
     }
 

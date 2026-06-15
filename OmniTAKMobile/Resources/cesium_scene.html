@@ -28,7 +28,7 @@
 <script src="https://unpkg.com/milsymbol@2.2.0/dist/milsymbol.js"></script>
 <script>
   Cesium.Ion.defaultAccessToken='__CESIUM_ION_TOKEN__';
-  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},northLocked:false,northSnapping:false};
+  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},move:{enabled:false,dragging:false,last:null},northLocked:false,northSnapping:false};
   // Lasso multi-select drag (issue #16, 3D parity). Camera pan is
   // disabled while the lasso is enabled; the freehand path is drawn on
   // a 2D overlay canvas and the screen points are picked to lat/lon on
@@ -42,6 +42,18 @@
   function _lassoTouchStart(e){if(!_state.lasso.enabled)return;e.preventDefault();const t=e.touches[0];if(!t)return;_state.lasso.dragging=true;_state.lasso.pts=[[t.clientX,t.clientY]];_drawLasso();}
   function _lassoTouchMove(e){if(!_state.lasso.enabled||!_state.lasso.dragging)return;e.preventDefault();const t=e.touches[0];if(!t)return;_state.lasso.pts.push([t.clientX,t.clientY]);_drawLasso();}
   function _lassoTouchEnd(e){if(!_state.lasso.enabled||!_state.lasso.dragging)return;e.preventDefault();_finishLasso();}
+  // Issue #60 (move/reposition follow-up) — single-finger drag in reposition
+  // mode. We translate each touch position to a globe coordinate and post a
+  // 'move' event carrying the previous→current point so the native side rigidly
+  // translates the whole shape (parity with the 2D Mapbox move gesture). Camera
+  // inputs are disabled while move mode is on (see setMoveMode), so the globe
+  // stays put under the dragged shape.
+  function _moveCarto(t){const v=_state.viewer;if(!v)return null;return _cartoFor(v,new Cesium.Cartesian2(t.clientX,t.clientY));}
+  function _moveTouchStart(e){if(!_state.move.enabled)return;e.preventDefault();const t=e.touches[0];if(!t)return;const c=_moveCarto(t);if(!c)return;_state.move.dragging=true;_state.move.last=c;}
+  function _moveTouchMove(e){if(!_state.move.enabled||!_state.move.dragging)return;e.preventDefault();const t=e.touches[0];if(!t)return;const c=_moveCarto(t);if(!c||!_state.move.last)return;
+    _postMapEvent({event:'move',lat:c.lat,lon:c.lon,hae:c.hae,fromLat:_state.move.last.lat,fromLon:_state.move.last.lon});
+    _state.move.last=c;}
+  function _moveTouchEnd(e){if(!_state.move.enabled)return;e.preventDefault();_state.move.dragging=false;_state.move.last=null;}
   function _drawColor(hex,a){try{const c=Cesium.Color.fromCssColorString(hex||'#4ADE80');return a!==undefined?c.withAlpha(a):c}catch(e){return Cesium.Color.CYAN}}
   function _havDist(a,b){const R=6371000,lat1=a[1]*Math.PI/180,lat2=b[1]*Math.PI/180,dLat=(b[1]-a[1])*Math.PI/180,dLon=(b[0]-a[0])*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.min(1,Math.sqrt(s)))}
   function _fitViewport(){
@@ -272,6 +284,32 @@
         cv.removeEventListener('touchmove',_lassoTouchMove);
         cv.removeEventListener('touchend',_lassoTouchEnd);
         cv.removeEventListener('touchcancel',_lassoTouchEnd);
+        const ctx=cv.getContext('2d');ctx&&ctx.clearRect(0,0,cv.width,cv.height);
+        cv.style.display='none';cv.style.pointerEvents='none';
+        if(v)v.scene.screenSpaceCameraController.enableInputs=true;
+      }
+    },
+    // Issue #60 (move/reposition follow-up) — drawing reposition mode. While
+    // on, the same overlay canvas the lasso uses captures the single-finger
+    // drag (so the globe camera stays put) and camera inputs are disabled as a
+    // backup; each drag step posts a 'move' event with the previous→current
+    // globe point. No marquee is drawn — the shape itself tracks the finger via
+    // the native store update + setDrawings re-render.
+    setMoveMode(arg){const e=_parse(arg);const on=!!(e&&e.on);const v=_state.viewer;const cv=document.getElementById('lassoCanvas');if(!cv)return;
+      if(on){
+        _state.move.enabled=true;_state.move.dragging=false;_state.move.last=null;
+        cv.width=window.innerWidth;cv.height=window.innerHeight;cv.style.display='block';cv.style.pointerEvents='auto';
+        cv.addEventListener('touchstart',_moveTouchStart,{passive:false});
+        cv.addEventListener('touchmove',_moveTouchMove,{passive:false});
+        cv.addEventListener('touchend',_moveTouchEnd,{passive:false});
+        cv.addEventListener('touchcancel',_moveTouchEnd,{passive:false});
+        if(v)v.scene.screenSpaceCameraController.enableInputs=false;
+      }else{
+        _state.move.enabled=false;_state.move.dragging=false;_state.move.last=null;
+        cv.removeEventListener('touchstart',_moveTouchStart);
+        cv.removeEventListener('touchmove',_moveTouchMove);
+        cv.removeEventListener('touchend',_moveTouchEnd);
+        cv.removeEventListener('touchcancel',_moveTouchEnd);
         const ctx=cv.getContext('2d');ctx&&ctx.clearRect(0,0,cv.width,cv.height);
         cv.style.display='none';cv.style.pointerEvents='none';
         if(v)v.scene.screenSpaceCameraController.enableInputs=true;

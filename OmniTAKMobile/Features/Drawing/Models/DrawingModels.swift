@@ -95,7 +95,10 @@ struct MarkerDrawing: DrawingObject {
     var label: String  // User-editable label for marker
     var color: DrawingColor
     let createdAt: Date
-    let coordinate: CLLocationCoordinate2D
+    // `var` so a placed marker can be repositioned (issue #60 move/reposition
+    // follow-up). The reposition flow rigidly translates the coordinate and
+    // persists it through DrawingStore.updateMarker(_:).
+    var coordinate: CLLocationCoordinate2D
 
     var coordinates: [CLLocationCoordinate2D] {
         [coordinate]
@@ -210,7 +213,9 @@ struct CircleDrawing: DrawingObject {
     var label: String  // User-editable label
     var color: DrawingColor
     let createdAt: Date
-    let center: CLLocationCoordinate2D
+    // `var` so a placed circle can be repositioned (issue #60 move/reposition
+    // follow-up) — move translates the center; radius is unchanged.
+    var center: CLLocationCoordinate2D
     var radius: CLLocationDistance
 
     var coordinates: [CLLocationCoordinate2D] {
@@ -326,5 +331,130 @@ extension CLLocationCoordinate2D {
         let from = CLLocation(latitude: self.latitude, longitude: self.longitude)
         let to = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         return from.distance(from: to)
+    }
+
+    /// Offset this coordinate by a degree delta. Used by the drawing
+    /// reposition flow to rigidly translate a whole shape by the same
+    /// (latΔ, lonΔ) the operator dragged. Longitude wraps across the
+    /// antimeridian; latitude is clamped to the poles.
+    func offset(latDelta: CLLocationDegrees, lonDelta: CLLocationDegrees) -> CLLocationCoordinate2D {
+        var lon = longitude + lonDelta
+        if lon > 180 { lon -= 360 } else if lon < -180 { lon += 360 }
+        let lat = max(-90, min(90, latitude + latDelta))
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+}
+
+// MARK: - Rigid Translate (issue #60 — move/reposition follow-up)
+
+// Each drawing type can be rigidly translated by a degree delta — every
+// vertex (or the circle center / marker point) shifts by the same offset,
+// so the shape's geometry is preserved exactly and only its position moves.
+// Mirrors Android's DrawingMoveOverlay rigid-translate behavior.
+
+extension MarkerDrawing {
+    func translated(latDelta: CLLocationDegrees, lonDelta: CLLocationDegrees) -> MarkerDrawing {
+        var copy = self
+        copy.coordinate = coordinate.offset(latDelta: latDelta, lonDelta: lonDelta)
+        return copy
+    }
+}
+
+extension LineDrawing {
+    func translated(latDelta: CLLocationDegrees, lonDelta: CLLocationDegrees) -> LineDrawing {
+        var copy = self
+        copy.coordinates = coordinates.map { $0.offset(latDelta: latDelta, lonDelta: lonDelta) }
+        return copy
+    }
+}
+
+extension PolygonDrawing {
+    func translated(latDelta: CLLocationDegrees, lonDelta: CLLocationDegrees) -> PolygonDrawing {
+        var copy = self
+        copy.coordinates = coordinates.map { $0.offset(latDelta: latDelta, lonDelta: lonDelta) }
+        return copy
+    }
+}
+
+extension CircleDrawing {
+    func translated(latDelta: CLLocationDegrees, lonDelta: CLLocationDegrees) -> CircleDrawing {
+        var copy = self
+        copy.center = center.offset(latDelta: latDelta, lonDelta: lonDelta)
+        return copy
+    }
+}
+
+// Restore-from-snapshot helpers — used by the move Cancel path to put a
+// shape's geometry back exactly as it was when Move began (see
+// DrawingMoveSession.originalCoordinates), independent of any clamping or
+// antimeridian wrap the drag applied.
+
+extension MarkerDrawing {
+    func with(coordinate: CLLocationCoordinate2D) -> MarkerDrawing {
+        var copy = self; copy.coordinate = coordinate; return copy
+    }
+}
+
+extension LineDrawing {
+    func with(coordinates: [CLLocationCoordinate2D]) -> LineDrawing {
+        var copy = self; copy.coordinates = coordinates; return copy
+    }
+}
+
+extension PolygonDrawing {
+    func with(coordinates: [CLLocationCoordinate2D]) -> PolygonDrawing {
+        var copy = self; copy.coordinates = coordinates; return copy
+    }
+}
+
+extension CircleDrawing {
+    func with(center: CLLocationCoordinate2D) -> CircleDrawing {
+        var copy = self; copy.center = center; return copy
+    }
+}
+
+// MARK: - Drawing Move Session (issue #60 — move/reposition follow-up)
+
+/// Drives "reposition mode" for a single placed drawing, shared by both the
+/// 2D Mapbox and 3D Cesium engines so the move UX is identical on each. The
+/// operator enters it from the drawing radial menu's **Move** action; while
+/// active the map camera is locked and a single-finger drag rigidly
+/// translates the whole shape. A committed move persists the new geometry to
+/// the DrawingStore; cancel restores the original.
+final class DrawingMoveSession: ObservableObject {
+    /// True while the operator is repositioning a shape — engines lock the
+    /// camera and capture the drag, and the move HUD shows.
+    @Published private(set) var isActive: Bool = false
+    /// The shape being moved.
+    @Published private(set) var drawingId: UUID?
+    @Published private(set) var drawingType: RadialMenuContext.DrawingType?
+    /// Human-readable name for the move HUD ("Move <label>").
+    @Published private(set) var label: String = ""
+
+    /// The shape's exact geometry at the moment Move was entered. Cancel
+    /// restores this verbatim rather than reversing accumulated drag deltas —
+    /// so a move that clamped at a pole or crossed the antimeridian still
+    /// returns the shape precisely to where it started. For a circle this is
+    /// `[center]`; for a marker `[point]`; for a line/polygon every vertex.
+    private(set) var originalCoordinates: [CLLocationCoordinate2D] = []
+
+    /// Begin repositioning the given drawing, snapshotting its starting
+    /// geometry so Cancel can restore it exactly.
+    func begin(id: UUID, type: RadialMenuContext.DrawingType, label: String,
+               originalCoordinates: [CLLocationCoordinate2D]) {
+        drawingId = id
+        drawingType = type
+        self.label = label
+        self.originalCoordinates = originalCoordinates
+        isActive = true
+    }
+
+    /// End the session (commit or after the caller has reverted). Clears state.
+    func end() {
+        isActive = false
+        drawingId = nil
+        drawingType = nil
+        label = ""
+        originalCoordinates = []
     }
 }

@@ -51,6 +51,11 @@ struct TacticalMapView: UIViewRepresentable {
     @ObservedObject var mapStateManager: MapStateManager
     @ObservedObject var measurementManager: MeasurementManager
     @ObservedObject var lassoService: LassoSelectionService = LassoSelectionService.shared
+    // Issue #60 (move/reposition follow-up) — reposition session shared with
+    // the parent + Cesium engine. When active, a single-finger drag rigidly
+    // translates the shape via `onDrawingMoveDragged` (the parent persists it).
+    @ObservedObject var drawingMoveSession: DrawingMoveSession
+    var onDrawingMoveDragged: ((CLLocationDegrees, CLLocationDegrees) -> Void)? = nil
     @ObservedObject var kmlVectorStore: KMLVectorOverlayStore = KMLVectorOverlayStore.shared
     @ObservedObject var rasterStore: RasterOverlayStore = RasterOverlayStore.shared
     @ObservedObject var mbtilesStore: MBTilesOverlayStore = MBTilesOverlayStore.shared
@@ -157,6 +162,21 @@ struct TacticalMapView: UIViewRepresentable {
         mapView.addGestureRecognizer(lasso)
         context.coordinator.lassoGesture = lasso
 
+        // Issue #60 (move/reposition follow-up) — drag-to-reposition gesture,
+        // gated on DrawingMoveSession.isActive. When inactive it no-ops; when
+        // active it captures the single-finger pan and rigidly translates the
+        // selected shape. `updateUIView` also disables map pan while moving so
+        // the camera stays put under the dragged shape.
+        let movePan = UIPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleMovePanGesture(_:))
+        )
+        movePan.maximumNumberOfTouches = 1
+        movePan.cancelsTouchesInView = true
+        movePan.delegate = context.coordinator
+        mapView.addGestureRecognizer(movePan)
+        context.coordinator.movePanGesture = movePan
+
         // Lifecycle hooks — load terrain + atmosphere on style load
         // so the operator gets immediate 3D depth without a settings
         // detour, and mirror camera changes back into the SwiftUI
@@ -217,6 +237,11 @@ struct TacticalMapView: UIViewRepresentable {
         // re-enable when released. The Mapbox API exposes this cleanly on
         // gestures.options without tearing down the whole gesture stack.
         mapView.gestures.options.rotateEnabled = !isNorthLocked
+
+        // Issue #60 (move/reposition follow-up) — while repositioning a shape,
+        // disable the map's own pan so the single-finger drag moves the SHAPE
+        // (via the movePan recognizer), not the camera. Restore pan on exit.
+        mapView.gestures.options.panEnabled = !drawingMoveSession.isActive
 
         // Region sync — only push to Mapbox if the SwiftUI region
         // diverges from the camera state by more than a hair. This is
@@ -418,6 +443,12 @@ struct TacticalMapView: UIViewRepresentable {
         weak var lassoGesture: UILongPressGestureRecognizer?
         private var lassoPathLayer: CAShapeLayer?
         private var lassoViewPoints: [CGPoint] = []
+
+        // Issue #60 (move/reposition follow-up) — drag-to-reposition recognizer
+        // and the last screen point we translated from (to derive per-frame
+        // lat/lon deltas as the finger moves).
+        weak var movePanGesture: UIPanGestureRecognizer?
+        private var lastMovePanPoint: CGPoint?
 
         // MIL-STD-2525 symbol cache — UIHostingController snapshots
         // keyed by (cotType, callsign) so we don't rebuild the image
@@ -1643,6 +1674,11 @@ struct TacticalMapView: UIViewRepresentable {
                 return parent.drawingManager.isDrawingActive &&
                        parent.drawingManager.currentMode == .lasso
             }
+            // Issue #60 — the reposition pan only begins while a move session is
+            // active; otherwise it stands down so normal pan/tap work.
+            if gestureRecognizer === movePanGesture {
+                return parent.drawingMoveSession.isActive
+            }
             return true
         }
 
@@ -1673,6 +1709,36 @@ struct TacticalMapView: UIViewRepresentable {
                 _ = service.endLasso(markers: markers, drawings: drawings)
                 removeLassoOverlay(on: mapView)
                 parent.drawingManager.cancelDrawing()
+            default:
+                break
+            }
+        }
+
+        // MARK: - Drawing move gesture (issue #60 — move/reposition follow-up)
+
+        /// Single-finger drag in reposition mode → rigidly translate the
+        /// selected shape. We convert the previous and current screen points to
+        /// map coordinates and forward the (latΔ, lonΔ) to the parent, which
+        /// updates the store live. Using a coordinate delta (rather than a fixed
+        /// metres-per-pixel) keeps the shape under the finger at any zoom/pitch.
+        @objc func handleMovePanGesture(_ gesture: UIPanGestureRecognizer) {
+            guard let mapView = mapView, parent.drawingMoveSession.isActive else { return }
+            let point = gesture.location(in: mapView)
+            switch gesture.state {
+            case .began:
+                lastMovePanPoint = point
+            case .changed:
+                guard let last = lastMovePanPoint else { lastMovePanPoint = point; return }
+                let fromCoord = mapView.mapboxMap.coordinate(for: last)
+                let toCoord = mapView.mapboxMap.coordinate(for: point)
+                let latDelta = toCoord.latitude - fromCoord.latitude
+                let lonDelta = toCoord.longitude - fromCoord.longitude
+                if latDelta != 0 || lonDelta != 0 {
+                    parent.onDrawingMoveDragged?(latDelta, lonDelta)
+                }
+                lastMovePanPoint = point
+            case .ended, .cancelled, .failed:
+                lastMovePanPoint = nil
             default:
                 break
             }
