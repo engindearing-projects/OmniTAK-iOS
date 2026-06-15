@@ -40,6 +40,10 @@ struct ATAKMapView: View {
     @StateObject private var mapStateManager = MapStateManager()
     @StateObject private var measurementManager = MeasurementManager()
     @ObservedObject private var adsbService = ADSBTrafficService.shared
+    // UAS video PIP — shown when a video source is active and the vehicle
+    // is connected. Mirrors Android MapScreen's videoSource + videoVisible state.
+    @ObservedObject private var uasManager = UASManager.shared
+    @State private var videoVisible: Bool = true
     // Plugin SDK — registered map overlays render in the engine-agnostic
     // chrome (see `registeredPluginOverlays`), so they appear on BOTH engines.
     @ObservedObject private var pluginHost = AppPluginHost.shared
@@ -1379,6 +1383,7 @@ struct ATAKMapView: View {
         sidePanels
         statusIndicators
         mapOverlayComponents
+        videoPipOverlay
         registeredPluginOverlays
         radialMenu
         gpsFollowButton
@@ -1503,6 +1508,43 @@ struct ATAKMapView: View {
             }
             .zIndex(2600) // above lasso pill (2000), below radial menu (3000)
             .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// Live video PIP. Anchored to the bottom-right of the map, above the
+    /// callsign card (zIndex 1003) and ADS-B pill (1002), below the radial
+    /// menu (3000). Mirrors Android MapScreen's UasVideoPip placement:
+    ///
+    ///   val videoSource by uas.videoSource.collectAsState()
+    ///   var videoVisible by remember { mutableStateOf(true) }
+    ///   if (droneState.isConnected() && videoSource.isActive && videoVisible) {
+    ///       Box(…) { UasVideoPip(source = videoSource, onDismiss = { videoVisible = false }) }
+    ///   }
+    ///
+    /// Reset videoVisible whenever the source changes so a new source always
+    /// auto-shows even if the operator dismissed a previous one.
+    @ViewBuilder
+    private var videoPipOverlay: some View {
+        let source = uasManager.videoSource
+        if uasManager.state.isConnected() && source.isActive && videoVisible {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    UasVideoPipView(source: source) {
+                        videoVisible = false
+                    }
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 90) // clear the bottom toolbar
+                }
+            }
+            .allowsHitTesting(true)
+            .zIndex(1100)
+            .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
+            .onChange(of: source) { _ in
+                // Re-show whenever the operator picks a different source.
+                videoVisible = true
+            }
         }
     }
 
