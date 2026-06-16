@@ -8,6 +8,14 @@ OmniTAK speaks Cursor-on-Target (CoT) over TLS to any TAK Server, supports data-
 
 > **Bring your own TAK Server.** OmniTAK is a client. Stand up [TAK Server](https://tak.gov) (community CIV edition), [OpenTAKServer](https://github.com/brian7704/OpenTAKServer), or [taky](https://github.com/tkuester/taky) and point OmniTAK at it.
 
+## Install
+
+[![App Store](https://img.shields.io/badge/App_Store-OmniTAK-0D96F6?logo=apple&logoColor=white)](https://apps.apple.com/us/app/omnitakmobile/id6755246992)
+
+**OmniTAK is live on the [App Store](https://apps.apple.com/us/app/omnitakmobile/id6755246992)** — current release **2.38.0**: KML placemarks as labeled yellow pins + a red-framed coordinate readout, UAS H.264 video with picture-in-picture, custom icon-pack import, expanded drawing tools (vertex / radius edit, drag-to-reposition, full 3D parity), lasso line/polygon selection, self-marker upgrades, and TAK/ATAK QR enrollment.
+
+Free, no ads, Apache-2.0. Requires iOS 17+.
+
 ## Features
 
 - **TAK Server connectivity** — TCP / TLS / mTLS with client-certificate enrollment
