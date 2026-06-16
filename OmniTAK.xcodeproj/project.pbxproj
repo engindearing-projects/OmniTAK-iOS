@@ -58,6 +58,7 @@
 		247A9FAC7C300DD219A5A332 /* AppModePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F863C9B3920784C32F6416D /* AppModePreferences.swift */; };
 		2480140A6ABE1484E42BA0AC /* CoTMessageParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9802858282CB5E929AD75F07 /* CoTMessageParserTests.swift */; };
 		FACE0004CAFE0004BEEF0004 /* TAKIconSuiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FACE0003CAFE0003BEEF0003 /* TAKIconSuiteTests.swift */; };
+		KML0002CAFE0002BEEF0002 /* KMLPlacemarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = KML0001CAFE0001BEEF0001 /* KMLPlacemarkTests.swift */; };
 		2623ABB8B5C9B206C974B9E9 /* SNGPUULC---.svg in Resources */ = {isa = PBXBuildFile; fileRef = 701980E052FA63176EC5337E /* SNGPUULC---.svg */; };
 		263C73CB7A111BC62A38D6C1 /* CertificateEnrollmentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C27B3788362A7692A3F6B70 /* CertificateEnrollmentView.swift */; };
 		265D7A1D6302893B932347C0 /* VideoSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B30BD78B36AA8556AA3EC4 /* VideoSource.swift */; };
@@ -652,6 +653,7 @@
 		9540F19EA7E0D4D8F98FC80F /* TAKRestAPIClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKRestAPIClient.swift; path = OmniTAKMobile/Features/Networking/Services/TAKRestAPIClient.swift; sourceTree = "<group>"; };
 		9802858282CB5E929AD75F07 /* CoTMessageParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoTMessageParserTests.swift; path = OmniTAKMobileTests/CoTMessageParserTests.swift; sourceTree = "<group>"; };
 		FACE0003CAFE0003BEEF0003 /* TAKIconSuiteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKIconSuiteTests.swift; path = OmniTAKMobileTests/TAKIconSuiteTests.swift; sourceTree = "<group>"; };
+		KML0001CAFE0001BEEF0001 /* KMLPlacemarkTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = KMLPlacemarkTests.swift; path = OmniTAKMobileTests/KMLPlacemarkTests.swift; sourceTree = "<group>"; };
 		98FDD932AB0896DCFA82D9BD /* ToolsLauncherSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Views/ToolsLauncherSheet.swift; sourceTree = "<group>"; };
 		9A9BEB1C723F75F83398705E /* SHSPCL-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHSPCL-----.svg"; sourceTree = "<group>"; };
 		9F574EC82B38F9A8107A6205 /* SFGPUUL----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPUUL----.svg"; sourceTree = "<group>"; };
@@ -1079,6 +1081,7 @@
 				7AA427470D4AEB92295081A7 /* CertificateHandlingTests.swift */,
 				9802858282CB5E929AD75F07 /* CoTMessageParserTests.swift */,
 				FACE0003CAFE0003BEEF0003 /* TAKIconSuiteTests.swift */,
+				KML0001CAFE0001BEEF0001 /* KMLPlacemarkTests.swift */,
 				450330F089409385FE975F3E /* CSREnrollmentTests.swift */,
 				0A7FB9C4E1E1A57D761DBE6B /* MeshBroadcastTests.swift */,
 				C644AA06A8883B0013638A4E /* OpenDroneIdParserTests.swift */,
@@ -2739,6 +2742,7 @@
 				9931084D104902FBC10263F1 /* CertificateHandlingTests.swift in Sources */,
 				2480140A6ABE1484E42BA0AC /* CoTMessageParserTests.swift in Sources */,
 				FACE0004CAFE0004BEEF0004 /* TAKIconSuiteTests.swift in Sources */,
+				KML0002CAFE0002BEEF0002 /* KMLPlacemarkTests.swift in Sources */,
 				024BC7A13B382321ECAF2933 /* CSREnrollmentTests.swift in Sources */,
 				6FE43BA548D82C170FEE6275 /* MeshBroadcastTests.swift in Sources */,
 				A351A8B77C3983E18499A04F /* OpenDroneIdParserTests.swift in Sources */,

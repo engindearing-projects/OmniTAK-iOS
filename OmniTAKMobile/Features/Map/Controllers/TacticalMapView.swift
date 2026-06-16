@@ -657,7 +657,85 @@ struct TacticalMapView: UIViewRepresentable {
         }
 
         private func kmlLayerIDs(_ overlayID: String) -> [String] {
-            ["kmlfill-\(overlayID)", "kmlline-\(overlayID)", "kmlpt-\(overlayID)"]
+            // Issue #93 — kmlsym- replaces kmlpt- (circle) for Point placemarks.
+            ["kmlfill-\(overlayID)", "kmlline-\(overlayID)", "kmlpt-\(overlayID)", "kmlsym-\(overlayID)"]
+        }
+
+        // MARK: - KML pushpin image (Issue #93)
+        //
+        // A classic teardrop pin rendered once and reused across all KML overlays.
+        // Yellow fill (#FFD400), dark outline, white centre dot — matches ATAK /
+        // Google Earth style. Registered into the map style by image ID so the
+        // SymbolLayer can reference it by name.
+        private static let kmlPushpinImageID = "kml-pushpin"
+
+        /// Draw the yellow pushpin and register it in the map style. Idempotent:
+        /// skips registration if the image is already present.
+        private func ensureKMLPushpinImage(map: MapboxMap) {
+            guard !map.imageExists(withId: Self.kmlPushpinImageID) else { return }
+            let pinSize = CGSize(width: 28, height: 40)
+            let renderer = UIGraphicsImageRenderer(size: pinSize)
+            let pinImage = renderer.image { ctx in
+                let cgCtx = ctx.cgContext
+                let w = pinSize.width
+                let h = pinSize.height
+                // Teardrop body: rounded top half + triangular bottom tip.
+                // The tip touches the bottom-centre; the round cap sits at the top.
+                let radius: CGFloat = w / 2.0
+                let bodyBottom: CGFloat = h * 0.58   // where the circle meets the stem
+                let tipY: CGFloat = h - 1            // pin tip
+
+                let path = UIBezierPath()
+                // Start at the top-left of the circle
+                path.move(to: CGPoint(x: 0, y: radius))
+                // Top arc (full circle at the top)
+                path.addArc(withCenter: CGPoint(x: w / 2, y: radius),
+                            radius: radius,
+                            startAngle: .pi,
+                            endAngle: 0,
+                            clockwise: true)
+                // Right side down to the tip
+                path.addLine(to: CGPoint(x: w / 2 + radius * 0.25, y: bodyBottom))
+                // Curve to the tip
+                path.addQuadCurve(to: CGPoint(x: w / 2, y: tipY),
+                                  controlPoint: CGPoint(x: w / 2 + radius * 0.12, y: tipY - 4))
+                // Left side from tip back up
+                path.addQuadCurve(to: CGPoint(x: w / 2 - radius * 0.25, y: bodyBottom),
+                                  controlPoint: CGPoint(x: w / 2 - radius * 0.12, y: tipY - 4))
+                path.addLine(to: CGPoint(x: 0, y: radius))
+                path.close()
+
+                // Dark outline
+                UIColor(red: 0.18, green: 0.12, blue: 0.0, alpha: 1.0).setFill()
+                path.fill()
+
+                // Yellow fill (inset by stroke width)
+                let fillPath = UIBezierPath()
+                let s: CGFloat = 2.0   // stroke width
+                let fr = radius - s
+                fillPath.move(to: CGPoint(x: s, y: radius))
+                fillPath.addArc(withCenter: CGPoint(x: w / 2, y: radius),
+                                radius: fr,
+                                startAngle: .pi,
+                                endAngle: 0,
+                                clockwise: true)
+                fillPath.addLine(to: CGPoint(x: w / 2 + fr * 0.25, y: bodyBottom))
+                fillPath.addQuadCurve(to: CGPoint(x: w / 2, y: tipY - s),
+                                      controlPoint: CGPoint(x: w / 2 + fr * 0.12, y: tipY - s - 3))
+                fillPath.addQuadCurve(to: CGPoint(x: w / 2 - fr * 0.25, y: bodyBottom),
+                                      controlPoint: CGPoint(x: w / 2 - fr * 0.12, y: tipY - s - 3))
+                fillPath.addLine(to: CGPoint(x: s, y: radius))
+                fillPath.close()
+                UIColor(red: 1.0, green: 0.831, blue: 0.0, alpha: 1.0).setFill()  // #FFD400
+                fillPath.fill()
+
+                // White centre dot
+                let dotR: CGFloat = radius * 0.28
+                let dotRect = CGRect(x: w / 2 - dotR, y: radius - dotR, width: dotR * 2, height: dotR * 2)
+                cgCtx.setFillColor(UIColor.white.cgColor)
+                cgCtx.fillEllipse(in: dotRect)
+            }
+            try? map.addImage(pinImage, id: Self.kmlPushpinImageID, sdf: false)
         }
 
         private func addKMLOverlayLayers(map: MapboxMap, overlay: KMLVectorOverlay, sourceID: String) {
@@ -676,10 +754,36 @@ struct TacticalMapView: UIViewRepresentable {
             line.lineCap = .constant(.round)
             line.lineJoin = .constant(.round)
             try? map.addLayer(line)
+
+            // Issue #93 — Point placemarks render as yellow pushpin + name label
+            // via a SymbolLayer. The legacy CircleLayer (kmlpt-) is kept hidden
+            // under it as a fallback; the SymbolLayer (kmlsym-) is the visible layer.
             var circle = CircleLayer(id: "kmlpt-\(overlay.id)", source: sourceID)
             circle.circleStrokeColor = .constant(StyleColor(.white))
             circle.circleStrokeWidth = .constant(1.0)
+            // Point-only filter — lines and polygons generate centroid points in
+            // Mapbox tiling; hide those from the circle layer too.
+            circle.filter = Exp(.eq) { Exp(.geometryType); "Point" }
             try? map.addLayer(circle)
+
+            ensureKMLPushpinImage(map: map)
+
+            // SymbolLayer: yellow pushpin + placemark name label for Point features.
+            var sym = SymbolLayer(id: "kmlsym-\(overlay.id)", source: sourceID)
+            sym.filter = Exp(.eq) { Exp(.geometryType); "Point" }
+            sym.iconImage = .constant(.name(Self.kmlPushpinImageID))
+            sym.iconAnchor = .constant(.bottom)
+            sym.iconAllowOverlap = .constant(true)
+            sym.textField = .expression(Exp(.get) { "name" })
+            sym.textColor = .constant(StyleColor(.white))
+            sym.textHaloColor = .constant(StyleColor(.black))
+            sym.textHaloWidth = .constant(1.2)
+            sym.textSize = .constant(12)
+            sym.textAnchor = .constant(.top)
+            sym.textOffset = .constant([0, 0.6])
+            sym.textOptional = .constant(true)
+            sym.textAllowOverlap = .constant(false)
+            try? map.addLayer(sym)
         }
 
         /// Apply the overlay's color / opacity / line width / visibility to its
@@ -702,10 +806,15 @@ struct TacticalMapView: UIViewRepresentable {
             try? map.setLayerProperty(for: lineID, property: "line-color", value: hex)
             try? map.setLayerProperty(for: lineID, property: "line-opacity", value: overlay.opacity)
             try? map.setLayerProperty(for: lineID, property: "line-width", value: widthExpr)
+            // Issue #93 — circle layer hidden; symbol layer drives point visibility.
+            // Keep the circle properties synced anyway so toggling still works if
+            // the symbol layer ever needs a fallback.
             let ptID = "kmlpt-\(overlay.id)"
-            try? map.setLayerProperty(for: ptID, property: "visibility", value: vis)
+            try? map.setLayerProperty(for: ptID, property: "visibility", value: "none")
             try? map.setLayerProperty(for: ptID, property: "circle-color", value: hex)
             try? map.setLayerProperty(for: ptID, property: "circle-opacity", value: overlay.opacity)
+            let symID = "kmlsym-\(overlay.id)"
+            try? map.setLayerProperty(for: symID, property: "visibility", value: vis)
         }
 
         // MARK: - Raster / imagery overlays (ImageSource + RasterLayer)

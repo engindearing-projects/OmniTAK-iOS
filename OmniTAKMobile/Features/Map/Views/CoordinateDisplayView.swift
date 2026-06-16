@@ -49,6 +49,8 @@ struct CoordinateDisplayView: View {
         .padding(.vertical, 6)
         .background(Color.black.opacity(0.7))
         .cornerRadius(6)
+        // Issue #94 — ATAK-style red frame around the coordinate chip.
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.red, lineWidth: 2))
         .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.3)) {
@@ -126,6 +128,8 @@ struct CoordinateDisplayView: View {
         .padding(12)
         .background(Color.black.opacity(0.7))
         .cornerRadius(8)
+        // Issue #94 — ATAK-style red frame around the expanded coordinate panel.
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red, lineWidth: 2))
         .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.3)) {
