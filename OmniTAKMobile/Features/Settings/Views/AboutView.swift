@@ -9,6 +9,14 @@ import SwiftUI
 
 struct AboutView: View {
     @Environment(\.dismiss) var dismiss
+    @Environment(\.openURL) private var openURL
+
+    // App version + build pulled from the bundle (never hard-code — it rots).
+    private var versionText: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+        return "Version \(v) (Build \(b))"
+    }
 
     var body: some View {
         NavigationView {
@@ -24,7 +32,7 @@ struct AboutView: View {
                             .font(.system(size: 32, weight: .bold))
                             .foregroundColor(Color(hex: "#FFFC00"))
 
-                        Text("Version 1.3.4 (Build 3)")
+                        Text(versionText)
                             .font(.system(size: 14))
                             .foregroundColor(.gray)
                     }
@@ -102,7 +110,7 @@ struct AboutView: View {
                     // Links
                     VStack(spacing: 12) {
                         Button(action: {
-                            // Open website
+                            if let url = URL(string: "https://omnitak.engindearing.soy") { openURL(url) }
                         }) {
                             HStack {
                                 Image(systemName: "globe")
@@ -114,7 +122,7 @@ struct AboutView: View {
                         }
 
                         Button(action: {
-                            // Open documentation
+                            if let url = URL(string: "https://github.com/engindearing-projects/OmniTAK-iOS#readme") { openURL(url) }
                         }) {
                             HStack {
                                 Image(systemName: "book.fill")
@@ -126,7 +134,7 @@ struct AboutView: View {
                         }
 
                         Button(action: {
-                            // Open GitHub
+                            if let url = URL(string: "https://github.com/engindearing-projects/OmniTAK-iOS") { openURL(url) }
                         }) {
                             HStack {
                                 Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -147,7 +155,7 @@ struct AboutView: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(Color(hex: "#FFFC00"))
 
-                        Text("2024 All Rights Reserved")
+                        Text("© \(Calendar.current.component(.year, from: Date())) All Rights Reserved")
                             .font(.system(size: 10))
                             .foregroundColor(.gray)
                     }

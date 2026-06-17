@@ -74,32 +74,16 @@ struct NetworkPreferencesView: View {
                                 description: "Enable connection health monitoring",
                                 isOn: $monitorServerConnections
                             )
-
-                            // Note: Additional settings (TrustStore, Client Certs, Network, Datalink)
-                            // will be added here when implemented
                         }
                     }
                 }
             }
-            .navigationTitle("ATAK v5.5.1.8 (7f381e4d)")
+            .navigationTitle("Network Preferences")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .navigationBarLeading) {
-                    Button(action: { dismiss() }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text("Settings/My Preferences")
-                                .font(.system(size: 14))
-                        }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
                         .foregroundColor(.white)
-                    }
-                }
-
-                ToolbarItemGroup(placement: .navigationBarTrailing) {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "house.fill")
-                            .foregroundColor(.white)
-                    }
                 }
             }
         }
