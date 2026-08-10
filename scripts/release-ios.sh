@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SCHEME="OmniTAKMobile"
-PROJECT="OmniTAKMobile.xcodeproj"
+PROJECT="OmniTAK.xcodeproj"
 ARCHIVE="/tmp/OmniTAK.xcarchive"
 EXPORT_DIR="/tmp/OmniTAK-export"
 NO_UPLOAD="${1:-}"

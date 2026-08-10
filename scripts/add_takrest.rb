@@ -1,5 +1,5 @@
 require 'xcodeproj'
-p = Xcodeproj::Project.open(File.expand_path('../OmniTAKMobile.xcodeproj', __dir__))
+p = Xcodeproj::Project.open(File.expand_path('../OmniTAK.xcodeproj', __dir__))
 t = p.targets.find { |x| x.name == 'OmniTAKMobile' }
 m = p.main_group['OmniTAKMobile']; f = m['Features']; n = f['Networking']; s = n['Services']
 [f,n,s].each { |g| g.path=nil; g.source_tree='<group>' } if s

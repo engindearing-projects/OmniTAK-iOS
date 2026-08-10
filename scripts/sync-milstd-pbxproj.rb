@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Sync the MIL-STD SVG asset bundle in OmniTAKMobile.xcodeproj.
+# Sync the MIL-STD SVG asset bundle in OmniTAK.xcodeproj.
 #
 # Scans `OmniTAKMobile/Shared/Resources/MilStdIcons/*.svg`, removes
 # any pbxproj entries for files that no longer exist on disk, and
@@ -16,7 +16,7 @@ require 'xcodeproj'
 require 'pathname'
 
 ROOT = Pathname.new(__dir__).parent.realpath
-PROJ_PATH = ROOT.join('OmniTAKMobile.xcodeproj')
+PROJ_PATH = ROOT.join('OmniTAK.xcodeproj')
 ASSETS_DIR = ROOT.join('OmniTAKMobile/Shared/Resources/MilStdIcons')
 
 project = Xcodeproj::Project.open(PROJ_PATH)

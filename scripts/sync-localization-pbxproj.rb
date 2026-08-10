@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 #
 # Register the Localizable.strings variant group in
-# OmniTAKMobile.xcodeproj — one PBXVariantGroup with a child file
+# OmniTAK.xcodeproj — one PBXVariantGroup with a child file
 # reference per language .lproj, added to the app target's
 # resources build phase, plus the language codes in knownRegions.
 #
@@ -14,7 +14,7 @@ require 'xcodeproj'
 require 'pathname'
 
 ROOT = Pathname.new(__dir__).parent.realpath
-PROJ_PATH = ROOT.join('OmniTAKMobile.xcodeproj')
+PROJ_PATH = ROOT.join('OmniTAK.xcodeproj')
 LANGS = %w[en uk pl de fr es]
 
 project = Xcodeproj::Project.open(PROJ_PATH)

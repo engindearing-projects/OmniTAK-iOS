@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 #
-# Register the RemoteID feature's Swift sources in OmniTAKMobile.xcodeproj.
+# Register the RemoteID feature's Swift sources in OmniTAK.xcodeproj.
 #
 # Run once after adding files under
 # `OmniTAKMobile/Features/RemoteID/{Models,Services}` and
@@ -14,7 +14,7 @@ require 'xcodeproj'
 require 'pathname'
 
 ROOT = Pathname.new(__dir__).parent.realpath
-PROJ_PATH = ROOT.join('OmniTAKMobile.xcodeproj')
+PROJ_PATH = ROOT.join('OmniTAK.xcodeproj')
 
 project = Xcodeproj::Project.open(PROJ_PATH)
 

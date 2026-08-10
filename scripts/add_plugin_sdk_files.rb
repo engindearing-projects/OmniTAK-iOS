@@ -3,7 +3,7 @@
 # Idempotent — safe to run multiple times.
 require 'xcodeproj'
 
-project_path = File.expand_path('../OmniTAKMobile.xcodeproj', __dir__)
+project_path = File.expand_path('../OmniTAK.xcodeproj', __dir__)
 project = Xcodeproj::Project.open(project_path)
 
 app_target  = project.targets.find { |t| t.name == 'OmniTAKMobile' }

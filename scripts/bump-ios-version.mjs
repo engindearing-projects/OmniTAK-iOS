@@ -32,7 +32,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 const ROOT = path.resolve(new URL("..", import.meta.url).pathname);
-const PBXPROJ = path.join(ROOT, "OmniTAKMobile.xcodeproj", "project.pbxproj");
+const PBXPROJ = path.join(ROOT, "OmniTAK.xcodeproj", "project.pbxproj");
 const DEFAULT_BUNDLE_ID = "com.engindearing.omnitak.mobile";
 const DRY = process.argv.includes("--dry-run");
 const FORCE_MINOR = process.argv.includes("--minor");

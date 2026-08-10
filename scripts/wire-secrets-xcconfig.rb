@@ -15,7 +15,7 @@ require 'xcodeproj'
 require 'pathname'
 
 ROOT = Pathname.new(__dir__).parent.realpath
-PROJ_PATH = ROOT.join('OmniTAKMobile.xcodeproj')
+PROJ_PATH = ROOT.join('OmniTAK.xcodeproj')
 XCCONFIG_NAME = 'Config.base.xcconfig'
 
 project = Xcodeproj::Project.open(PROJ_PATH)

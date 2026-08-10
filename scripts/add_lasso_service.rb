@@ -3,7 +3,7 @@
 # with the OmniTAKMobile target. Idempotent — safe to re-run.
 require 'xcodeproj'
 
-project_path = File.expand_path('../OmniTAKMobile.xcodeproj', __dir__)
+project_path = File.expand_path('../OmniTAK.xcodeproj', __dir__)
 project = Xcodeproj::Project.open(project_path)
 target = project.targets.find { |t| t.name == 'OmniTAKMobile' } or abort 'OmniTAKMobile target not found'
 
