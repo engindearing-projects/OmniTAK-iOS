@@ -374,3 +374,111 @@ class ErrorContextTests: XCTestCase {
         XCTAssertNotEqual(String(describing: connection), String(describing: dataSync))
     }
 }
+
+// MARK: - CA Config XML Parsing Tests (regression for issue #102)
+//
+// Background: rick51231 reported that /Marti/api/tls/config was parsed with a
+// positional regex that assumed <nameEntry name="…" value="…"/>. XML attribute
+// order is not significant, so a server emitting <nameEntry value="TAK" name="O"/>
+// (value first) silently produced an EMPTY CA config → a wrong/blank CSR subject
+// DN and a failed or mis-identified enrollment. parseCAConfigXML now uses
+// XMLParser, which reads attributes by name regardless of order.
+
+class CAConfigXMLParsingTests: XCTestCase {
+
+    private var service: CSREnrollmentService!
+    override func setUp() { super.setUp(); service = CSREnrollmentService() }
+    override func tearDown() { service = nil; super.tearDown() }
+
+    private func parse(_ xml: String) -> CAConfiguration {
+        service.parseCAConfigXML(data: Data(xml.utf8))
+    }
+
+    func testCanonicalOrderNameThenValue() {
+        let ca = parse(#"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <certificateConfig validityDays="365">
+          <nameEntries>
+            <nameEntry name="O" value="TAK"/>
+            <nameEntry name="OU" value="TAK-OU"/>
+          </nameEntries>
+        </certificateConfig>
+        """#)
+        XCTAssertEqual(ca.organizationNames, ["TAK"])
+        XCTAssertEqual(ca.organizationalUnitNames, ["TAK-OU"])
+    }
+
+    /// The exact regression rick51231 filed: value BEFORE name. The old regex
+    /// produced an empty config here; the parser must recover both RDNs.
+    func testValueBeforeNameOrderIssue102() {
+        let ca = parse(#"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <certificateConfig validityDays="3650">
+          <nameEntries>
+            <nameEntry value="TAK" name="O"/>
+            <nameEntry value="OUTEST" name="OU"/>
+          </nameEntries>
+        </certificateConfig>
+        """#)
+        XCTAssertEqual(ca.organizationNames, ["TAK"],
+                       "O must parse regardless of attribute order (issue #102)")
+        XCTAssertEqual(ca.organizationalUnitNames, ["OUTEST"],
+                       "OU must parse regardless of attribute order (issue #102)")
+    }
+
+    func testExtraAttributesAndNonNameEntryElementsIgnored() {
+        let ca = parse(#"""
+        <certificateConfig validityDays="3650" foo="bar">
+          <nameEntries>
+            <nameEntry name="O" value="ACME" extra="x"/>
+            <somethingElse name="O" value="SHOULD-IGNORE"/>
+          </nameEntries>
+        </certificateConfig>
+        """#)
+        XCTAssertEqual(ca.organizationNames, ["ACME"])
+        XCTAssertFalse(ca.organizationNames.contains("SHOULD-IGNORE"),
+                       "Only <nameEntry> elements should contribute RDNs")
+    }
+
+    func testAllRDNTypesAndMultiplesCollectedInOrder() {
+        let ca = parse(#"""
+        <certificateConfig>
+          <nameEntry name="O" value="Org1"/>
+          <nameEntry value="Org2" name="O"/>
+          <nameEntry name="OU" value="Unit1"/>
+          <nameEntry name="C" value="US"/>
+          <nameEntry name="DC" value="example"/>
+          <nameEntry name="DC" value="com"/>
+        </certificateConfig>
+        """#)
+        XCTAssertEqual(ca.organizationNames, ["Org1", "Org2"])
+        XCTAssertEqual(ca.organizationalUnitNames, ["Unit1"])
+        XCTAssertEqual(ca.countryNames, ["US"])
+        XCTAssertEqual(ca.domainComponents, ["example", "com"])
+    }
+
+    func testUnknownRDNKeysIgnored() {
+        let ca = parse(#"<certificateConfig><nameEntry name="CN" value="ignore-me"/><nameEntry name="O" value="Keep"/></certificateConfig>"#)
+        XCTAssertEqual(ca.organizationNames, ["Keep"])
+        XCTAssertTrue(ca.countryNames.isEmpty)
+    }
+
+    func testMalformedXMLReturnsEmptyConfigWithoutCrashing() {
+        // Truncated / not well-formed — must fail closed to an empty config, not crash.
+        let ca = parse(#"<certificateConfig><nameEntry name="O" value="TAK""#)
+        XCTAssertTrue(ca.organizationNames.isEmpty)
+        XCTAssertTrue(ca.organizationalUnitNames.isEmpty)
+    }
+
+    func testEmptyDataReturnsEmptyConfig() {
+        let ca = service.parseCAConfigXML(data: Data())
+        XCTAssertTrue(ca.organizationNames.isEmpty)
+        XCTAssertTrue(ca.countryNames.isEmpty)
+    }
+
+    func testAttributesSplitAcrossNewlinesTolerated() {
+        // A positional regex is fragile when attributes wrap; XMLParser is not.
+        let ca = parse("<certificateConfig>\n  <nameEntry\n     value=\"TAK\"\n     name=\"O\"\n  />\n</certificateConfig>")
+        XCTAssertEqual(ca.organizationNames, ["TAK"])
+    }
+}

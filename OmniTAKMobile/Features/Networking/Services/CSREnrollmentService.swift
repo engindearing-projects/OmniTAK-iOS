@@ -149,6 +149,30 @@ struct EnrollmentResponse {
     let privateKeyTag: String           // Tag to retrieve private key from keychain
 }
 
+// MARK: - CA Config XML Parsing
+
+/// Collects `<nameEntry>` name/value pairs from a TAK `/Marti/api/tls/config`
+/// document, independent of attribute order or case (issue #102).
+private final class NameEntryXMLCollector: NSObject, XMLParserDelegate {
+    /// (name, value) pairs in document order.
+    private(set) var entries: [(name: String, value: String)] = []
+
+    func parser(_ parser: XMLParser,
+                didStartElement elementName: String,
+                namespaceURI: String?,
+                qualifiedName qName: String?,
+                attributes attributeDict: [String: String]) {
+        guard elementName.caseInsensitiveCompare("nameEntry") == .orderedSame else { return }
+        // XML attribute names are case-sensitive per spec and TAK emits lowercase
+        // `name`/`value`; match case-insensitively to be forgiving of variants.
+        let name = attributeDict.first { $0.key.caseInsensitiveCompare("name") == .orderedSame }?.value
+        let value = attributeDict.first { $0.key.caseInsensitiveCompare("value") == .orderedSame }?.value
+        if let name = name, let value = value {
+            entries.append((name: name, value: value))
+        }
+    }
+}
+
 // MARK: - CSR Enrollment Service
 
 class CSREnrollmentService {
@@ -359,54 +383,45 @@ class CSREnrollmentService {
         }
     }
 
-    /// Parse CA configuration XML response
-    /// Format: <nameEntry name="O" value="Organization"/>
-    private func parseCAConfigXML(data: Data) -> CAConfiguration {
-        var caConfig = CAConfiguration()
-
-        guard let xmlString = String(data: data, encoding: .utf8) else {
-            print("[CSREnroll] Warning: Could not decode config response as UTF-8")
-            return caConfig
-        }
-
+    /// Parse CA configuration XML response from `/Marti/api/tls/config`.
+    ///
+    /// Uses an event-driven `XMLParser` rather than a positional regex: TAK
+    /// servers do not guarantee attribute order, so `<nameEntry value="TAK"
+    /// name="O"/>` is just as valid as `<nameEntry name="O" value="TAK"/>` and
+    /// both must parse identically (issue #102). Non-`nameEntry` elements and
+    /// extra attributes (e.g. `certificateConfig validityDays="…"`) are ignored.
+    ///
+    /// `internal` (not `private`) so unit tests can exercise it directly.
+    func parseCAConfigXML(data: Data) -> CAConfiguration {
         print("[CSREnroll] Parsing CA config XML...")
 
-        // Simple XML parsing for nameEntry elements
-        // Format: <nameEntry name="O" value="OrganizationName"/>
-        let pattern = #"<nameEntry\s+name="([^"]+)"\s+value="([^"]+)"/?"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            print("[CSREnroll] Warning: Failed to create regex for XML parsing")
-            return caConfig
+        let collector = NameEntryXMLCollector()
+        let parser = XMLParser(data: data)
+        parser.delegate = collector
+        guard parser.parse() else {
+            print("[CSREnroll] Warning: Could not parse config response as XML: "
+                  + (parser.parserError?.localizedDescription ?? "unknown error"))
+            return CAConfiguration()
         }
 
-        let range = NSRange(xmlString.startIndex..., in: xmlString)
-        let matches = regex.matches(in: xmlString, options: [], range: range)
-
-        for match in matches {
-            guard match.numberOfRanges == 3,
-                  let nameRange = Range(match.range(at: 1), in: xmlString),
-                  let valueRange = Range(match.range(at: 2), in: xmlString) else {
-                continue
-            }
-
-            let name = String(xmlString[nameRange]).uppercased()
-            let value = String(xmlString[valueRange])
-
+        var caConfig = CAConfiguration()
+        for entry in collector.entries {
+            let name = entry.name.uppercased()
             switch name {
             case "O":
-                caConfig.organizationNames.append(value)
-                print("[CSREnroll] Found O: \(value)")
+                caConfig.organizationNames.append(entry.value)
+                print("[CSREnroll] Found O: \(entry.value)")
             case "OU":
-                caConfig.organizationalUnitNames.append(value)
-                print("[CSREnroll] Found OU: \(value)")
+                caConfig.organizationalUnitNames.append(entry.value)
+                print("[CSREnroll] Found OU: \(entry.value)")
             case "C":
-                caConfig.countryNames.append(value)
-                print("[CSREnroll] Found C: \(value)")
+                caConfig.countryNames.append(entry.value)
+                print("[CSREnroll] Found C: \(entry.value)")
             case "DC":
-                caConfig.domainComponents.append(value)
-                print("[CSREnroll] Found DC: \(value)")
+                caConfig.domainComponents.append(entry.value)
+                print("[CSREnroll] Found DC: \(entry.value)")
             default:
-                print("[CSREnroll] Ignoring nameEntry: \(name)=\(value)")
+                print("[CSREnroll] Ignoring nameEntry: \(name)=\(entry.value)")
             }
         }
 
