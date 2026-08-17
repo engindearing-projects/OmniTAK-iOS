@@ -49,7 +49,7 @@ struct SimpleEnrollView: View {
     @Environment(\.dismiss) private var dismiss
 
     // Form fields
-    @State private var serverHost = "public.opentakserver.io"
+    @State private var serverHost = ""
     @State private var username = ""
     @State private var password = ""
     @State private var showPassword = false
@@ -59,6 +59,10 @@ struct SimpleEnrollView: View {
     @State private var streamingPort = "8089"
     @State private var enrollmentPort = "8446"  // TAK Server standard CSR enrollment port
     @State private var trustSelfSignedCerts = true  // true = accept any cert, false = require valid CA (Let's Encrypt, etc.)
+    // "ssl" (TLS + cert enrollment, the TAK default) or "tcp" (plain, no
+    // enrollment). QUIC is not offered: the connection stack has no QUIC
+    // transport, and a choice that can't connect is worse than none (#103).
+    @State private var streamingProtocol = "ssl"
 
     // UI state
     @State private var enrollmentState: EnrollmentState = .idle
@@ -158,7 +162,9 @@ struct SimpleEnrollView: View {
                     .frame(maxWidth: 200)
             }
 
-            Text("Enter your server credentials to enroll and connect")
+            Text(streamingProtocol == "tcp"
+                ? "Connect directly over plain TCP — no account or certificate needed"
+                : "Enter your server credentials to enroll and connect")
                 .font(.system(size: 14))
                 .foregroundColor(Color(hex: "#CCCCCC"))
                 .multilineTextAlignment(.center)
@@ -187,6 +193,9 @@ struct SimpleEnrollView: View {
                     .foregroundColor(.secondary)
             }
 
+            // Credentials only exist for the SSL enrollment path — a plain-TCP
+            // server has no enrollment endpoint or account to log into.
+            if streamingProtocol != "tcp" {
             // Username (ATAK-style)
             VStack(alignment: .leading, spacing: 8) {
                 Text("Username")
@@ -244,6 +253,7 @@ struct SimpleEnrollView: View {
 
                 Spacer()
             }
+            }
         }
     }
 
@@ -286,7 +296,8 @@ struct SimpleEnrollView: View {
     }
 
     private var isFormValid: Bool {
-        !serverHost.isEmpty && !username.isEmpty && !password.isEmpty
+        if streamingProtocol == "tcp" { return !serverHost.isEmpty }
+        return !serverHost.isEmpty && !username.isEmpty && !password.isEmpty
     }
 
     // MARK: - Advanced Section (ATAK-style)
@@ -320,31 +331,32 @@ struct SimpleEnrollView: View {
 
             if showAdvanced {
                 VStack(spacing: 16) {
-                    // Streaming Protocol (ATAK-style radio buttons - simplified as dropdown)
+                    // Streaming Protocol — a real choice, not a label (#103).
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Streaming Protocol")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(Color(hex: "#00BCD4"))
 
                         HStack(spacing: 8) {
-                            Text("TCP")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#999999"))
-                            Text("/")
-                                .foregroundColor(Color(hex: "#666666"))
-                            Text("SSL")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(Color(hex: "#00BCD4"))
-                            Text("/")
-                                .foregroundColor(Color(hex: "#666666"))
-                            Text("QUIC")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(hex: "#999999"))
+                            protocolChoice("TCP", value: "tcp")
+                            protocolChoice("SSL", value: "ssl")
                         }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(white: 0.08))
-                        .cornerRadius(8)
+
+                        if streamingProtocol == "tcp" {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(Color(hex: "#FFFC00"))
+                                    .font(.system(size: 12))
+                                Text("Unencrypted — positions and chat cross the network in the clear. LAN and testing only.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Color(hex: "#FFFC00"))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(8)
+                            .background(Color(hex: "#FFFC00").opacity(0.1))
+                            .cornerRadius(6)
+                        }
                     }
 
                     HStack(spacing: 12) {
@@ -359,7 +371,8 @@ struct SimpleEnrollView: View {
                                 .keyboardType(.numberPad)
                         }
 
-                        // Enrollment Port
+                        // Enrollment Port (SSL enrollment only)
+                        if streamingProtocol != "tcp" {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Enrollment Port")
                                 .font(.system(size: 13, weight: .semibold))
@@ -369,9 +382,11 @@ struct SimpleEnrollView: View {
                                 .textFieldStyle(TAKTextFieldStyle())
                                 .keyboardType(.numberPad)
                         }
+                        }
                     }
 
                     // SSL Certificate Trust Toggle
+                    if streamingProtocol != "tcp" {
                     Toggle(isOn: $trustSelfSignedCerts) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Trust Self-Signed Certificates")
@@ -402,12 +417,43 @@ struct SimpleEnrollView: View {
                         .background(Color(hex: "#FFFC00").opacity(0.1))
                         .cornerRadius(6)
                     }
+                    }
                 }
                 .padding(16)
                 .background(Color(white: 0.08))
                 .cornerRadius(10)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+    }
+
+    /// One option in the Streaming Protocol selector.
+    private func protocolChoice(_ label: String, value: String) -> some View {
+        let selected = streamingProtocol == value
+        return Button(action: { selectProtocol(value) }) {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(selected ? .black : Color(hex: "#999999"))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(selected ? Color(hex: "#00BCD4") : Color(white: 0.08))
+                .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(selected ? Color(hex: "#00BCD4") : Color(white: 0.2), lineWidth: 1)
+                )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    /// Switch protocol, nudging the port between the TAK conventions (8087
+    /// plain TCP, 8089 TLS) only while it still sits on the other default.
+    private func selectProtocol(_ value: String) {
+        guard streamingProtocol != value else { return }
+        withAnimation(.spring(response: 0.3)) {
+            if value == "tcp" && streamingPort == "8089" { streamingPort = "8087" }
+            if value == "ssl" && streamingPort == "8087" { streamingPort = "8089" }
+            streamingProtocol = value
         }
     }
 
@@ -631,6 +677,13 @@ struct SimpleEnrollView: View {
     }
 
     private func performEnrollment() async {
+        // Plain-TCP path (#103): no enrollment handshake exists — save the
+        // server and connect directly.
+        if streamingProtocol == "tcp" {
+            await connectPlainTCP()
+            return
+        }
+
         await MainActor.run { enrollmentState = .connecting }
 
         do {
@@ -694,6 +747,29 @@ struct SimpleEnrollView: View {
             print("[SimpleEnroll] Enrollment failed: \(error)")
         }
     }
+
+    /// Save + connect a plain-TCP server (no certs, no credentials).
+    private func connectPlainTCP() async {
+        let host = serverHost
+            .replacingOccurrences(of: "tcp://", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let port = UInt16(streamingPort) ?? 8087
+
+        await MainActor.run {
+            enrollmentState = .creatingServer
+            let server = ServerManager.shared.addServer(TAKServer(
+                name: host,
+                host: host,
+                port: port,
+                protocolType: "tcp",
+                useTLS: false
+            ))
+            ServerManager.shared.setActiveServer(server)
+            TAKService.shared.connect(host: server.host, port: server.port, protocolType: "tcp", useTLS: false)
+            enrollmentState = .success
+        }
+        print("[SimpleEnroll] Added plain-TCP server \(host):\(port) and connecting")
+    }
 }
 
 // MARK: - Enrollment Step Row
@@ -754,399 +830,6 @@ struct TAKTextFieldStyle: TextFieldStyle {
             )
     }
 }
-
-// MARK: - Simple Enroll View Content (Embeddable)
-
-struct SimpleEnrollViewContent: View {
-    @Environment(\.dismiss) private var dismiss
-
-    // Form fields
-    @State private var serverHost = "public.opentakserver.io"
-    @State private var username = ""
-    @State private var password = ""
-    @State private var showPassword = false
-
-    // Advanced options (collapsed by default)
-    @State private var showAdvanced = false
-    @State private var streamingPort = "8089"
-    @State private var enrollmentPort = "8446"  // TAK Server standard CSR enrollment port
-    @State private var trustSelfSignedCerts = true  // true = accept any cert, false = require valid CA (Let's Encrypt, etc.)
-
-    // UI state
-    @State private var enrollmentState: EnrollmentState = .idle
-    @State private var showQRScanner = false
-
-    // Services
-    private let csrService = CSREnrollmentService()
-
-    private var isFailed: Bool {
-        if case .failed = enrollmentState { return true }
-        return false
-    }
-
-    private var isFormValid: Bool {
-        !serverHost.isEmpty && !username.isEmpty && !password.isEmpty
-    }
-
-    var body: some View {
-        VStack(spacing: 20) {
-            // Feature card
-            FeatureCard(
-                icon: "person.badge.key.fill",
-                title: "Sign In to TAK Server",
-                description: "Enter your server credentials to enroll and connect automatically.",
-                color: Color(hex: "#FFFC00")
-            )
-
-            // Main form (only show when idle or failed)
-            if enrollmentState == .idle || isFailed {
-                formSection
-                connectButton
-                advancedSection
-            }
-
-            // Progress display
-            if enrollmentState.isInProgress {
-                progressSection
-            }
-
-            // Success display
-            if enrollmentState == .success {
-                successSection
-            }
-
-            // Error display
-            if case .failed(let message) = enrollmentState {
-                errorSection(message)
-            }
-        }
-        .sheet(isPresented: $showQRScanner) {
-            CertificateEnrollmentView()
-        }
-    }
-
-    // MARK: - Form Section
-
-    private var formSection: some View {
-        VStack(spacing: 16) {
-            // Server Host
-            FormField(label: "Server", text: $serverHost, placeholder: "public.opentakserver.io")
-
-            Text("Behind a reverse proxy? Paste the full URL — e.g. https://tak.example.com or https://tak.example.com/tak — and the Enrollment Port is ignored.")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-
-            // Username
-            FormField(label: "Username", text: $username, placeholder: "Enter username")
-
-            // Password with show/hide
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Password")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(Color(hex: "#CCCCCC"))
-
-                HStack(spacing: 0) {
-                    if showPassword {
-                        TextField("Enter password", text: $password)
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                    } else {
-                        SecureField("Enter password", text: $password)
-                    }
-
-                    Button(action: { showPassword.toggle() }) {
-                        Image(systemName: showPassword ? "eye.slash.fill" : "eye.fill")
-                            .foregroundColor(Color(hex: "#666666"))
-                            .frame(width: 44, height: 44)
-                    }
-                }
-                .padding(.leading, 16)
-                .background(Color(white: 0.12))
-                .cornerRadius(10)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color(white: 0.25), lineWidth: 1)
-                )
-            }
-        }
-    }
-
-    // MARK: - Connect Button
-
-    private var connectButton: some View {
-        Button(action: startEnrollment) {
-            HStack(spacing: 10) {
-                if enrollmentState.isInProgress {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .black))
-                        .scaleEffect(0.8)
-                } else {
-                    Image(systemName: "arrow.right.circle.fill")
-                        .font(.system(size: 20))
-                }
-
-                Text(enrollmentState.isInProgress ? "Connecting..." : "Connect to Server")
-                    .font(.system(size: 18, weight: .semibold))
-            }
-            .foregroundColor(.black)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(isFormValid ? Color(hex: "#FFFC00") : Color(hex: "#666666"))
-            .cornerRadius(12)
-        }
-        .disabled(!isFormValid || enrollmentState.isInProgress)
-    }
-
-    // MARK: - Advanced Section
-
-    private var advancedSection: some View {
-        VStack(spacing: 12) {
-            Button(action: { withAnimation(.spring(response: 0.3)) { showAdvanced.toggle() } }) {
-                HStack {
-                    Image(systemName: "gearshape.fill")
-                        .foregroundColor(Color(hex: "#666666"))
-
-                    Text("Advanced Options")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(Color(hex: "#CCCCCC"))
-
-                    Spacer()
-
-                    Image(systemName: showAdvanced ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Color(hex: "#666666"))
-                }
-                .padding(16)
-                .background(Color(white: 0.08))
-                .cornerRadius(10)
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            if showAdvanced {
-                VStack(spacing: 16) {
-                    HStack(spacing: 12) {
-                        FormField(label: "Streaming Port", text: $streamingPort, placeholder: "8089", keyboardType: .numberPad)
-                        FormField(label: "Enrollment Port", text: $enrollmentPort, placeholder: "8446", keyboardType: .numberPad)
-                    }
-
-                    Toggle(isOn: $trustSelfSignedCerts) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Trust Self-Signed Certificates")
-                                .font(.system(size: 14))
-                                .foregroundColor(.white)
-
-                            Text(trustSelfSignedCerts
-                                ? "ON: Accepts any certificate (self-signed servers)"
-                                : "OFF: Requires valid CA certificate (Let's Encrypt, etc.)")
-                                .font(.system(size: 11))
-                                .foregroundColor(trustSelfSignedCerts ? Color(hex: "#00BCD4") : Color(hex: "#00FF00"))
-                        }
-                    }
-                    .tint(Color(hex: "#00BCD4"))
-
-                    // Let's Encrypt hint
-                    if trustSelfSignedCerts {
-                        HStack(spacing: 8) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundColor(Color(hex: "#FFFC00"))
-                                .font(.system(size: 12))
-                            Text("Using Let's Encrypt? Turn this OFF")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(Color(hex: "#FFFC00"))
-                            Spacer()
-                        }
-                        .padding(8)
-                        .background(Color(hex: "#FFFC00").opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                }
-                .padding(16)
-                .background(Color(white: 0.08))
-                .cornerRadius(10)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-    }
-
-    // MARK: - Progress Section
-
-    private var progressSection: some View {
-        VStack(spacing: 20) {
-            HStack {
-                Text("Enrolling with Server")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.white)
-
-                Spacer()
-
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "#FFFC00")))
-            }
-
-            VStack(spacing: 12) {
-                EnrollmentStepRow(step: 1, label: "Connecting to server", currentStep: enrollmentState.stepNumber)
-                EnrollmentStepRow(step: 2, label: "Fetching CA configuration", currentStep: enrollmentState.stepNumber)
-                EnrollmentStepRow(step: 3, label: "Generating certificate request", currentStep: enrollmentState.stepNumber)
-                EnrollmentStepRow(step: 4, label: "Submitting to server", currentStep: enrollmentState.stepNumber)
-                EnrollmentStepRow(step: 5, label: "Storing certificate", currentStep: enrollmentState.stepNumber)
-                EnrollmentStepRow(step: 6, label: "Creating server config", currentStep: enrollmentState.stepNumber)
-            }
-        }
-        .padding(20)
-        .background(Color(white: 0.1))
-        .cornerRadius(12)
-    }
-
-    // MARK: - Success Section
-
-    private var successSection: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64))
-                .foregroundColor(Color(hex: "#00FF00"))
-
-            VStack(spacing: 8) {
-                Text("Connected!")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(.white)
-
-                Text("You're now connected to \(serverHost)")
-                    .font(.system(size: 15))
-                    .foregroundColor(Color(hex: "#CCCCCC"))
-                    .multilineTextAlignment(.center)
-            }
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity)
-        .background(Color(white: 0.1))
-        .cornerRadius(12)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                dismiss()
-            }
-        }
-    }
-
-    // MARK: - Error Section
-
-    private func errorSection(_ message: String) -> some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(Color(hex: "#FF6B6B"))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Connection Failed")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
-
-                    Text(message)
-                        .font(.system(size: 14))
-                        .foregroundColor(Color(hex: "#CCCCCC"))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer()
-            }
-
-            Button(action: { enrollmentState = .idle }) {
-                Text("Try Again")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(Color(hex: "#FF6B6B"))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color(hex: "#FF6B6B"), lineWidth: 1)
-                    )
-            }
-        }
-        .padding(16)
-        .background(Color(hex: "#FF6B6B").opacity(0.1))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color(hex: "#FF6B6B").opacity(0.3), lineWidth: 1)
-        )
-    }
-
-    // MARK: - Enrollment Action
-
-    private func startEnrollment() {
-        guard isFormValid else { return }
-
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-
-        Task {
-            await performEnrollment()
-        }
-    }
-
-    private func performEnrollment() async {
-        await MainActor.run { enrollmentState = .connecting }
-
-        do {
-            await MainActor.run { enrollmentState = .fetchingConfig }
-            try await Task.sleep(nanoseconds: 300_000_000)
-
-            await MainActor.run { enrollmentState = .generatingCSR }
-            try await Task.sleep(nanoseconds: 200_000_000)
-
-            await MainActor.run { enrollmentState = .submittingCSR }
-
-            let port = Int(streamingPort) ?? 8089
-            let enrollPort = Int(enrollmentPort) ?? 8446
-
-            let server = try await csrService.enroll(
-                server: serverHost,
-                port: port,
-                enrollmentPort: enrollPort,
-                username: username,
-                password: password,
-                trustSelfSignedCerts: trustSelfSignedCerts
-            )
-
-            await MainActor.run { enrollmentState = .storingCertificate }
-            try await Task.sleep(nanoseconds: 200_000_000)
-
-            await MainActor.run { enrollmentState = .creatingServer }
-            try await Task.sleep(nanoseconds: 200_000_000)
-
-            await MainActor.run {
-                ServerManager.shared.setActiveServer(server)
-
-                // Actually connect to the server. Pin the stream to the CA
-                // chain we just enrolled against so the server certificate is
-                // validated rather than blindly accepted.
-                TAKService.shared.connect(
-                    host: server.host,
-                    port: server.port,
-                    protocolType: server.protocolType,
-                    useTLS: server.useTLS,
-                    certificateName: server.certificateName,
-                    certificatePassword: server.certificatePassword,
-                    caCertificateName: server.caCertificateName,
-                    caCertificatePassword: server.caCertificatePassword,
-                    allowUntrustedTLS: server.allowUntrustedTLS
-                )
-
-                enrollmentState = .success
-            }
-
-            print("[SimpleEnroll] Enrollment successful for \(serverHost)")
-
-        } catch {
-            await MainActor.run {
-                let errorMessage = error.localizedDescription
-                enrollmentState = .failed(errorMessage)
-            }
-            print("[SimpleEnroll] Enrollment failed: \(error)")
-        }
-    }
-}
-
-// MARK: - Preview
 
 #if DEBUG
 struct SimpleEnrollView_Previews: PreviewProvider {
