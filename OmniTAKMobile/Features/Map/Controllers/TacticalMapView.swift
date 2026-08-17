@@ -22,6 +22,11 @@ extension Notification.Name {
     /// (either the Mapbox 2D puck or the Cesium 3D `__self__` entity). The
     /// MapViewController observes this and presents `SelfPositionEditSheet`.
     static let selfMarkerTapped = Notification.Name("selfMarkerTapped")
+    /// Issue #57 — posted by SettingsView when the operator applies or clears
+    /// a custom WMTS/XYZ tile URL. TacticalMapView.Coordinator observes this
+    /// and calls refreshCustomTileBasemap() so the layer changes without
+    /// requiring a style reload.
+    static let customTileURLDidChange = Notification.Name("customTileURLDidChange")
 }
 
 // MARK: - Tactical Map View (Mapbox Maps SDK v3 — native)
@@ -243,6 +248,14 @@ struct TacticalMapView: UIViewRepresentable {
             ))
         }
 
+        // Issue #57 — reload the custom tile layer whenever Settings
+        // persists a new URL, without requiring a full style reload.
+        coord.customTileObserver = NotificationCenter.default.addObserver(
+            forName: .customTileURLDidChange, object: nil, queue: .main
+        ) { [weak coord] _ in
+            coord?.refreshCustomTileBasemap()
+        }
+
         return mapView
     }
 
@@ -431,6 +444,8 @@ struct TacticalMapView: UIViewRepresentable {
 
         // Issue #72/#73 — reset-north observer (removes itself on dealloc)
         var resetNorthObserver: NSObjectProtocol?
+        // Issue #57 — custom tile URL change observer
+        var customTileObserver: NSObjectProtocol?
 
         // Annotation managers — one per geometry kind. Mapbox v11
         // wants us to reuse these (cheap to create, expensive to
@@ -620,6 +635,62 @@ struct TacticalMapView: UIViewRepresentable {
             refreshKMLVectorOverlays()
             refreshRasterOverlays()
             refreshMBTilesOverlays()
+            refreshCustomTileBasemap()
+        }
+
+        // MARK: - Issue #57 — Custom WMTS/XYZ tile basemap
+
+        /// Source/layer IDs for the custom tile overlay — stable so we
+        /// can remove the old layer before installing a new template.
+        private let customTileSourceID = "omnitak-custom-tile-src"
+        private let customTileLayerID  = "omnitak-custom-tile-lyr"
+
+        func refreshCustomTileBasemap() {
+            guard let mapView = mapView else { return }
+            let map: MapboxMap = mapView.mapboxMap
+            guard map.isStyleLoaded else { return }
+
+            // Remove any previously installed custom tile layer + source
+            // so stale URLs don't persist after the operator clears the field.
+            if map.layerExists(withId: customTileLayerID) {
+                try? map.removeLayer(withId: customTileLayerID)
+            }
+            if map.sourceExists(withId: customTileSourceID) {
+                try? map.removeSource(withId: customTileSourceID)
+            }
+
+            // Only paint the custom raster while the operator has the
+            // "Custom" base layer active — a saved URL alone must not
+            // blanket Standard/Satellite (they share style reloads).
+            guard UserDefaults.standard.bool(forKey: "customTileActive") else { return }
+
+            let rawTemplate = UserDefaults.standard.string(forKey: "customTileURL") ?? ""
+            guard !rawTemplate.isEmpty else { return }
+
+            // Normalise ATAK-style {$z}/{$x}/{$y} → {z}/{x}/{y}, then validate.
+            let template = CustomTileURLValidator.normalize(rawTemplate)
+            guard CustomTileURLValidator.validate(template) == nil else { return }
+
+            var source = RasterSource(id: customTileSourceID)
+            source.tiles    = [template]
+            source.tileSize = 256
+            source.minzoom  = 0.0
+            source.maxzoom  = 22.0
+            do {
+                try map.addSource(source)
+            } catch {
+                print("TacticalMapView: failed to add custom tile source — \(error)")
+                return
+            }
+
+            var layer = RasterLayer(id: customTileLayerID, source: customTileSourceID)
+            layer.rasterOpacity = .constant(1.0)
+            // Insert below annotation layers so CoT markers stay on top.
+            do {
+                try map.addLayer(layer)
+            } catch {
+                print("TacticalMapView: failed to add custom tile layer — \(error)")
+            }
         }
 
         // MARK: - Large-KML vector overlays (GeoJSONSource + line/fill/circle)

@@ -20,6 +20,11 @@ struct SettingsView: View {
     @State private var cacheSizeText: String = "—"
     @State private var showCacheCleared = false
 
+    // Issue #57 — custom WMTS/XYZ tile basemap URL (operator-supplied)
+    @AppStorage("customTileURL") private var customTileURL = ""
+    @State private var customTileURLInput = ""
+    @State private var customTileURLError: String? = nil
+
     // Map Overlay Settings
     @AppStorage("mgrsGridEnabled") private var mgrsGridEnabled = false
     @AppStorage("mgrsGridDensity") private var mgrsGridDensityString = "1km"
@@ -166,6 +171,86 @@ struct SettingsView: View {
                     }
                 }
 
+
+                // Issue #57 — Custom basemap tile URL (WMTS/XYZ)
+                Section("Custom Tile Basemap") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("XYZ/WMTS Tile URL")
+                            .font(.system(size: 14, weight: .medium))
+
+                        TextField(
+                            "https://…/{z}/{x}/{y}.png",
+                            text: $customTileURLInput
+                        )
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .font(.system(size: 13, design: .monospaced))
+                        .padding(8)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(6)
+
+                        if let error = customTileURLError {
+                            Text(error)
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                        }
+
+                        HStack(spacing: 10) {
+                            Button("Apply") {
+                                let trimmed = customTileURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if trimmed.isEmpty {
+                                    customTileURL = ""
+                                    customTileURLError = nil
+                                } else if let err = CustomTileURLValidator.validate(
+                                    CustomTileURLValidator.normalize(trimmed)
+                                ) {
+                                    customTileURLError = err
+                                } else {
+                                    customTileURL = CustomTileURLValidator.normalize(trimmed)
+                                    customTileURLError = nil
+                                    // Applying activates the layer — the
+                                    // operator asked for this basemap, so
+                                    // it should be visible on return to
+                                    // the map, not parked behind a second
+                                    // toggle in the layers panel.
+                                    UserDefaults.standard.set(true, forKey: "customTileActive")
+                                    NotificationCenter.default.post(
+                                        name: .customTileURLDidChange, object: nil
+                                    )
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color(hex: "#FFFC00"))
+                            .foregroundColor(.black)
+                            .font(.system(size: 13, weight: .semibold))
+
+                            if !customTileURL.isEmpty {
+                                Button("Clear", role: .destructive) {
+                                    customTileURLInput = ""
+                                    customTileURL = ""
+                                    customTileURLError = nil
+                                    UserDefaults.standard.set(false, forKey: "customTileActive")
+                                    NotificationCenter.default.post(
+                                        name: .customTileURLDidChange, object: nil
+                                    )
+                                }
+                                .font(.system(size: 13))
+                            }
+                        }
+
+                        if !customTileURL.isEmpty {
+                            Text("Active: \(customTileURL)")
+                                .font(.caption2)
+                                .foregroundColor(.green)
+                                .lineLimit(2)
+                        }
+
+                        Text("Paste a tile URL with {z}/{x}/{y} placeholders (or ATAK-style {$z}/{$x}/{$y}). Traffic example: https://mt1.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
 
                 // Map Overlay Settings
                 Section(loc.t("settings.section.mapOverlays")) {
@@ -421,7 +506,11 @@ struct SettingsView: View {
             .alert(loc.t("settings.cacheCleared.title"), isPresented: $showCacheCleared) {
                 Button(loc.t("settings.ok"), role: .cancel) {}
             }
-            .onAppear { refreshCacheSize() }
+            .onAppear {
+                refreshCacheSize()
+                // Populate the text field from the persisted URL on open.
+                customTileURLInput = customTileURL
+            }
         }
     }
 
