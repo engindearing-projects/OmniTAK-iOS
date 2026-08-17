@@ -2579,18 +2579,21 @@ struct ATAKMapView: View {
         // Update active layer
         activeMapLayer = layer
 
-        // Toggle map layers
+        // Toggle map layers. Issue #57 — the custom WMTS/XYZ raster rides on
+        // the .standard style, gated by "customTileActive": toggling posts
+        // customTileURLDidChange so the coordinator adds/removes the raster
+        // layer in place, which also covers custom↔standard where the style
+        // URI (and therefore refreshAll) never changes.
         withAnimation(.easeInOut(duration: 0.3)) {
+            let customActive = (layer == "custom")
+            if UserDefaults.standard.bool(forKey: "customTileActive") != customActive {
+                UserDefaults.standard.set(customActive, forKey: "customTileActive")
+                NotificationCenter.default.post(name: .customTileURLDidChange, object: nil)
+            }
             switch layer {
             case "satellite": mapType = .satellite
             case "hybrid": mapType = .hybrid
             case "standard": mapType = .standard
-            // Issue #57 — custom WMTS/XYZ tile basemap. Use the .standard
-            // style as the Mapbox base (vector labels kept), then the
-            // coordinator's refreshCustomTileBasemap() adds the raster
-            // layer on top once the style load settles. Forcing a style
-            // reload here (even to the same URI) clears any previously
-            // installed custom layer, which refreshAll then re-installs.
             case "custom": mapType = .standard
             default: break
             }

@@ -208,7 +208,12 @@ struct SettingsView: View {
                                 } else {
                                     customTileURL = CustomTileURLValidator.normalize(trimmed)
                                     customTileURLError = nil
-                                    // Notify the 2D map to reload the custom layer.
+                                    // Applying activates the layer — the
+                                    // operator asked for this basemap, so
+                                    // it should be visible on return to
+                                    // the map, not parked behind a second
+                                    // toggle in the layers panel.
+                                    UserDefaults.standard.set(true, forKey: "customTileActive")
                                     NotificationCenter.default.post(
                                         name: .customTileURLDidChange, object: nil
                                     )
@@ -224,6 +229,7 @@ struct SettingsView: View {
                                     customTileURLInput = ""
                                     customTileURL = ""
                                     customTileURLError = nil
+                                    UserDefaults.standard.set(false, forKey: "customTileActive")
                                     NotificationCenter.default.post(
                                         name: .customTileURLDidChange, object: nil
                                     )

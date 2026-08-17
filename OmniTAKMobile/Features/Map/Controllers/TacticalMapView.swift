@@ -72,10 +72,6 @@ struct TacticalMapView: UIViewRepresentable {
     @ObservedObject var kmlVectorStore: KMLVectorOverlayStore = KMLVectorOverlayStore.shared
     @ObservedObject var rasterStore: RasterOverlayStore = RasterOverlayStore.shared
     @ObservedObject var mbtilesStore: MBTilesOverlayStore = MBTilesOverlayStore.shared
-    /// Issue #57 — operator-supplied XYZ/WMTS tile URL template. When non-nil
-    /// and valid, the coordinator installs it as a raster source over the base
-    /// style on every style load. Persisted in UserDefaults("customTileURL").
-    var customTileURL: String = UserDefaults.standard.string(forKey: "customTileURL") ?? ""
     let onMapTap: (CLLocationCoordinate2D) -> Void
     /// Issue #72 — when true, rotation gestures are disabled and bearing
     /// is snapped back to 0° on any camera-change that drifts off north.
@@ -663,7 +659,12 @@ struct TacticalMapView: UIViewRepresentable {
                 try? map.removeSource(withId: customTileSourceID)
             }
 
-            let rawTemplate = parent.customTileURL
+            // Only paint the custom raster while the operator has the
+            // "Custom" base layer active — a saved URL alone must not
+            // blanket Standard/Satellite (they share style reloads).
+            guard UserDefaults.standard.bool(forKey: "customTileActive") else { return }
+
+            let rawTemplate = UserDefaults.standard.string(forKey: "customTileURL") ?? ""
             guard !rawTemplate.isEmpty else { return }
 
             // Normalise ATAK-style {$z}/{$x}/{$y} → {z}/{x}/{y}, then validate.
