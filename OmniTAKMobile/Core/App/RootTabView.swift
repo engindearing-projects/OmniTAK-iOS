@@ -41,13 +41,15 @@ struct RootTabView: View {
             ChatView(chatManager: ChatManager.shared)
                 .tag(RootTab.chat)
 
-            ServersView()
+            // As tabs, nothing is "presented", so these views' Done buttons
+            // can't dismiss — hand them "back to the map" instead.
+            ServersView(onDone: { selectedTab = .map })
                 .tag(RootTab.servers)
 
             MeshtasticConnectionView()
                 .tag(RootTab.mesh)
 
-            SettingsView()
+            SettingsView(onDone: { selectedTab = .map })
                 .tag(RootTab.settings)
         }
         // Tap-away scrim while editing so tapping the map exits edit mode.

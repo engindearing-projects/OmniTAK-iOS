@@ -12,6 +12,9 @@ import SwiftUI
 
 struct ServersView: View {
     @Environment(\.dismiss) private var dismiss
+    /// As a sheet, Done dismisses. As a RootTabView tab, dismiss() is a
+    /// no-op — the tab context injects "back to the map" here instead.
+    var onDone: (() -> Void)? = nil
     @StateObject private var serverManager = ServerManager.shared
     @ObservedObject private var takService = TAKService.shared
 
@@ -81,7 +84,7 @@ struct ServersView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("Done") { if let onDone { onDone() } else { dismiss() } }
                         .foregroundColor(Color(hex: "#FFFC00"))
                 }
             }

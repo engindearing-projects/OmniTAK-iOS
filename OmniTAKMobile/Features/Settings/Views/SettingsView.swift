@@ -9,6 +9,11 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
+    /// How "leaving" this screen works. As a sheet, `dismiss()` closes it —
+    /// but as a RootTabView tab nothing is presented, so dismiss() is a
+    /// silent no-op and Done was a dead button. The tab context injects
+    /// "switch back to the map" here instead.
+    var onDone: (() -> Void)? = nil
     @EnvironmentObject private var loc: LocalizationManager
     @AppStorage("userCallsign") private var userCallsign = "ALPHA-1"
     @AppStorage("unitSystem") private var unitSystemString = "Metric"
@@ -139,7 +144,9 @@ struct SettingsView: View {
                 // Customizable bottom toolbar
                 Section(loc.t("settings.section.toolbar")) {
                     Button {
-                        dismiss()
+                        // Leave settings (back to the map in tab context) so
+                        // the toolbar being edited is actually visible.
+                        if let onDone { onDone() } else { dismiss() }
                         NotificationCenter.default.post(name: .enterToolbarEditMode, object: nil)
                     } label: {
                         HStack {
@@ -391,7 +398,7 @@ struct SettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(loc.t("settings.done")) {
-                        dismiss()
+                        if let onDone { onDone() } else { dismiss() }
                     }
                 }
             }
