@@ -42,7 +42,7 @@ areas immediately.
    [ISO language code](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes),
    e.g. `zh-Hant.lproj/` (Traditional Chinese), `it.lproj/` (Italian),
    `ja.lproj/` (Japanese).
-3. Translate **only the value** in each line — the text on the right inside the
+3. Translate **only the value** in each line, the text on the right inside the
    second pair of quotes:
 
    ```
@@ -52,7 +52,7 @@ areas immediately.
 
 ### Rules (so the file loads correctly)
 
-- **Keep the key unchanged** — the part before the `=` (`"settings.callsign"`).
+- **Keep the key unchanged**: the part before the `=` (`"settings.callsign"`).
 - **Keep every line ending in `;`** and keep the surrounding quotes.
 - **Keep placeholders exactly as-is:** `%d` (a number) and `%@` (a word) get
   filled in at runtime, e.g. `"%d points"` → `"%d 點"`. Don't translate or
@@ -60,20 +60,20 @@ areas immediately.
 - **Leave technical proper nouns untranslated:** TAK, ATAK, MGRS, UTM, BNG,
   OSGB36, TLS/SSL, QR, FAA Remote ID, MIL-STD, Bluetooth, DJI/Skydio/Autel.
 - Save as **UTF-8**.
-- The `/* ... */` lines are comments for context — you can leave them in English.
+- The `/* ... */` lines are comments for context, you can leave them in English.
 
 ## How to submit
 
 Whichever is easiest for you:
 
-- **Email it back** — attach your finished `Localizable.strings` (mention the
+- **Email it back**: attach your finished `Localizable.strings` (mention the
   language) to a reply, or send it to the address you used for TestFlight
   feedback. We'll wire it in and credit you in the release notes.
-- **Open a pull request** — drop your `<code>.lproj/Localizable.strings` into
+- **Open a pull request**: drop your `<code>.lproj/Localizable.strings` into
   `OmniTAKMobile/Resources/` and open a PR against `main`.
 
-You don't have to translate all 100-odd lines at once. A partial file is fine —
-anything you leave in English just falls back to English.
+You don't have to translate all 100-odd lines at once. A partial file is fine.
+Anything you leave in English just falls back to English.
 
 ## For maintainers: enabling a finished translation
 

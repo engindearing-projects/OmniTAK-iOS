@@ -1,4 +1,4 @@
-# OmniTAK Plugin SDK — Authoring Guide (iOS)
+# OmniTAK Plugin SDK: Authoring Guide (iOS)
 
 This describes the **shipped** OmniTAK plugin SDK on iOS: the `OmniTAKPlugin`
 protocol, the four host hooks, the ADS-B reference plugin, and how to add your
@@ -60,11 +60,11 @@ the registry can hold a heterogeneous list of plugins. Default is `nil`.
 |------|--------------|
 | `registerMapOverlay { AnyView(...) }` | A SwiftUI overlay mounted in the engine-agnostic map chrome. It renders on **both** map engines (Cesium 3D + Mapbox 2D), above the map and below the radial menu. Non-interactive by default. |
 | `registerRadialAction(item, onSelect:)` | Adds an entry to the empty-map long-press **radial menu**. `onSelect(coordinate)` fires with the pressed map coordinate. The entry is gated by the plugin's enable flag. |
-| `registerCoTHandler { event in ... }` | Called for **every inbound CoT position event after the core store ingests it**. Return `true` to mark the event consumed (short-circuits remaining handlers). Runs on the **main thread** — keep it cheap. |
+| `registerCoTHandler { event in ... }` | Called for **every inbound CoT position event after the core store ingests it**. Return `true` to mark the event consumed (short-circuits remaining handlers). Runs on the **main thread**: keep it cheap. |
 | `registerSettingsRow(label:icon:)` | Adds a row to Settings → Plugins that navigates into your `settingsContent()`. `icon` is an SF Symbol name. |
 
 Hooks are tagged with your `pluginId` automatically, so `deactivate()` cleanly
-removes them — you don't have to unregister manually.
+removes them, you don't have to unregister manually.
 
 ---
 
@@ -73,21 +73,21 @@ removes them — you don't have to unregister manually.
 `ADSBPlugin` (`soy.engindearing.adsb`) is the canonical example. It wraps the
 existing ADS-B traffic feature **with zero behavior change**:
 
-- It uses **`registerMapOverlay`** (a thin status surface — `ADSBStatusOverlay`,
+- It uses **`registerMapOverlay`** (a thin status surface, `ADSBStatusOverlay`,
   which renders `EmptyView`) and **`registerSettingsRow`** ("ADS-B").
 - `settingsContent()` returns the existing `ADSBTrafficView()` verbatim.
 - `deactivate()` flips `ADSBTrafficService.shared.settings.isEnabled = false`,
   reusing the service's existing `didSet → stopTracking()`.
 
 > **Why the aircraft rendering path is untouched.** ADS-B does not draw through
-> a SwiftUI overlay — aircraft flow as a `[Aircraft]` data array straight into
+> a SwiftUI overlay, aircraft flow as a `[Aircraft]` data array straight into
 > both map engines. That proven pipeline stays byte-identical; the plugin only
 > adds discovery, enable/disable, and a settings entry point.
 
 `ADSBPlugin` registers two of the four hooks. The internal **`DiagnosticsPlugin`**
-(`soy.engindearing.diagnostics`, **off by default**) exercises the other two —
+(`soy.engindearing.diagnostics`, **off by default**) exercises the other two:
 `registerRadialAction` (a "Diag" entry) and `registerCoTHandler` (an event
-counter) — so the whole host surface is wired and tested. `PluginSDKTests`
+counter): so the whole host surface is wired and tested. `PluginSDKTests`
 covers all four hooks regardless of enable state.
 
 ---
@@ -113,13 +113,13 @@ covers all four hooks regardless of enable state.
    # edit scripts/add_plugin_sdk_files.rb to list your file, then:
    ruby scripts/add_plugin_sdk_files.rb
    ```
-   (or add it via Xcode's "Add Files to OmniTAKMobile…").
+   (or add it via Xcode's "Add Files to OmniTAKMobile...").
 5. **Default enable state.** Bundled plugins default **ON** on first run so
    first-time users see plugin features. To ship OFF by default, add your
    `pluginId` to `PluginSettingsManager.registeredDisabledByDefault`.
 6. **Open a PR**, or **fork and sign your own build** (see `CONTRIBUTING.md`).
    Because plugins are compiled in, distributing a plugin means distributing a
-   build — either upstream via PR or your own signed fork.
+   build, either upstream via PR or your own signed fork.
 
 ---
 
@@ -137,10 +137,10 @@ covers all four hooks regardless of enable state.
 
 The four seams the host wires into:
 
-- **Map overlay** — `MapViewController.registeredPluginOverlays` (inside the
+- **Map overlay**: `MapViewController.registeredPluginOverlays` (inside the
   engine-agnostic `mapChrome`, so both engines get it).
-- **Radial** — `RadialMenuMapCoordinator.configureMapMenu` appends registered
+- **Radial**: `RadialMenuMapCoordinator.configureMapMenu` appends registered
   items; `RadialMenuActionExecutor.executeCustomAction` fires `onSelect`.
-- **CoT** — `CoTEventHandler.handlePositionUpdate` calls `dispatchCoT` after
+- **CoT**: `CoTEventHandler.handlePositionUpdate` calls `dispatchCoT` after
   the core store ingest.
-- **Settings** — `PluginsListView` lists `PluginRegistry.shared.all()`.
+- **Settings**: `PluginsListView` lists `PluginRegistry.shared.all()`.
