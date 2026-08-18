@@ -6,7 +6,7 @@ Thanks for your interest in contributing.
 
 - For small fixes (typos, obvious bugs), open a PR directly.
 - For new features or larger changes, open an issue first so we can align on scope.
-- Security issues, see [SECURITY.md](SECURITY.md), do not file public issues.
+- Security issues: see [SECURITY.md](SECURITY.md), do not file public issues.
 - Translating OmniTAK into your language? No coding needed, see [TRANSLATING.md](TRANSLATING.md).
 - Writing a plugin? See the [Plugin Authoring Guide](docs/PLUGIN_AUTHORING.md). Plugins are compile-time Swift modules (no dynamic code, store-compliant) that run in-process with the host's permissions. Add yours and open a PR, or **fork and sign your own build** (step 4 below) to ship a private plugin.
 
