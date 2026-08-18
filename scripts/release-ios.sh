@@ -54,7 +54,13 @@ cat > /tmp/exportOptions.plist <<PLIST
 PLIST
 xcodebuild -exportArchive -archivePath "$ARCHIVE" -exportPath "$EXPORT_DIR" \
   -exportOptionsPlist /tmp/exportOptions.plist -allowProvisioningUpdates >/tmp/ios-export.log 2>&1 || { echo "export failed — see /tmp/ios-export.log"; tail -20 /tmp/ios-export.log; exit 1; }
-IPA="$EXPORT_DIR/$SCHEME.ipa"
+# The exported .ipa is named after the app's product name, not the scheme.
+# Since the rename to "OmniTAK" (scheme is still "OmniTAKMobile") a hard-coded
+# "$SCHEME.ipa" no longer exists — glob whatever exportArchive produced.
+IPA=$(ls "$EXPORT_DIR"/*.ipa 2>/dev/null | head -1)
+if [ -z "$IPA" ]; then
+  echo "export produced no .ipa in $EXPORT_DIR — see /tmp/ios-export.log"; ls -la "$EXPORT_DIR"; exit 1
+fi
 OUT="$HOME/OmniTAK-${VER}-${BUILD}.ipa"
 cp "$IPA" "$OUT"
 echo "    -> $OUT"
