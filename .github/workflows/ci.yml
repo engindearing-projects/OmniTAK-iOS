@@ -19,7 +19,11 @@ concurrency:
 jobs:
   build-and-test:
     name: Build + test (iOS Simulator)
-    runs-on: macos-15
+    # macos-26 (default Xcode 26.x) — the Mapbox SDK's compiled swiftinterface
+    # references `_LocationEssentials`, a CoreLocation submodule that only exists
+    # in the iOS 26 SDK. macos-15's Xcode 16.4 lacks it and fails with ~240×
+    # "cannot find type '_LocationEssentials' in scope". Matches local dev (26.5).
+    runs-on: macos-26
     timeout-minutes: 90
 
     steps:
@@ -50,12 +54,15 @@ jobs:
       - name: Build (for testing)
         run: |
           set -o pipefail
+          # Do NOT pass CODE_SIGNING_ALLOWED=NO — it makes Xcode skip embedding
+          # SPM binary frameworks (VLCKit, and DittoSwift once it lands), so the
+          # test host then dies at launch with dyld "Library not loaded".
+          # Simulator builds ad-hoc sign with no identity, so signing is free here.
           xcodebuild build-for-testing \
             -project OmniTAK.xcodeproj \
             -scheme OmniTAKMobile \
             -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.device }}" \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+            -derivedDataPath build/DerivedData
 
       - name: Unit tests (OmniTAKMobileTests)
         run: |
@@ -64,5 +71,4 @@ jobs:
             -project OmniTAK.xcodeproj \
             -scheme OmniTAKMobile \
             -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.device }}" \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+            -derivedDataPath build/DerivedData
