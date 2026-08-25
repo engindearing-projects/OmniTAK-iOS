@@ -8,6 +8,16 @@
 	<string>$(MBX_ACCESS_TOKEN)</string>
 	<key>CesiumIonToken</key>
 	<string>$(CESIUM_ION_TOKEN)</string>
+	<key>DittoDatabaseID</key>
+	<string>$(DITTO_DATABASE_ID)</string>
+	<key>DittoURL</key>
+	<string>$(DITTO_URL)</string>
+	<key>DittoToken</key>
+	<string>$(DITTO_TOKEN)</string>
+	<key>DittoSharedKey</key>
+	<string>$(DITTO_SHARED_KEY)</string>
+	<key>DittoOfflineLicense</key>
+	<string>$(DITTO_OFFLINE_LICENSE)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.engindearing.omnitak.mobile.refresh</string>
@@ -77,6 +87,10 @@
 	<array>
 		<string>location</string>
 		<string>bluetooth-central</string>
+		<!-- Ditto's peer-to-peer mesh needs the device to act as a BLE
+		     peripheral, not just a central, or backgrounded devices go
+		     undiscoverable and the mesh silently thins out. -->
+		<string>bluetooth-peripheral</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
 		<string>processing</string>
@@ -92,10 +106,16 @@
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>OmniTAK saves map exports, screenshots, and captured imagery to your photo library on request.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>OmniTAK discovers TAK servers advertised on your local network so you can connect to them without typing an IP address.</string>
+	<string>OmniTAK discovers TAK servers advertised on your local network, and finds nearby OmniTAK devices so your team can share position and markers over Wi-Fi with no server and no internet.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_tak._tcp</string>
+		<!-- Ditto advertises its LAN peer-to-peer transport under
+		     _http-alt._tcp. Without this entry iOS blocks the Bonjour
+		     browse and LAN peers never appear (Bluetooth still works,
+		     which makes the failure look like flaky range rather than a
+		     missing plist key). -->
+		<string>_http-alt._tcp.</string>
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>

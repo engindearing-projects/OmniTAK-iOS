@@ -1556,7 +1556,26 @@ class TAKService: ObservableObject {
     /// Send a CoT. When `toServerId` is non-nil, sends ONLY to that server
     /// (used for per-server direct-message routing); nil broadcasts to every
     /// connected server (group / all-chat / position).
-    func sendCoT(xml: String, toServerId: UUID? = nil) -> Bool {
+    ///
+    /// `isRelay` marks traffic the Ditto mesh gateway is forwarding on behalf of
+    /// another peer. Relayed traffic goes to the servers but is NOT re-published
+    /// onto the mesh — it already came from there, and echoing it back would put
+    /// every gateway device in a loop with every other one.
+    @discardableResult
+    func sendCoT(xml: String, toServerId: UUID? = nil, isRelay: Bool = false) -> Bool {
+        // Peers first, and unconditionally: the mesh is the transport that still
+        // works when every server is unreachable, so it must not be gated on the
+        // server send below succeeding. A direct message aimed at one server
+        // (toServerId set) stays off the mesh — it is addressed traffic, not
+        // situational awareness everyone should see.
+        if !isRelay, toServerId == nil {
+            let meshXML = xml
+            Task { @MainActor in DittoMeshService.shared.publish(xml: meshXML) }
+        }
+        return sendCoTToServers(xml: xml, toServerId: toServerId)
+    }
+
+    private func sendCoTToServers(xml: String, toServerId: UUID? = nil) -> Bool {
         // Send to all connected servers
         // IMPORTANT: Check actual sender.isConnected (NWConnection state) not cached state
         // The cached ServerConnectionState.isConnected can get out of sync
