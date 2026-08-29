@@ -48,6 +48,12 @@ struct CoTSource: Equatable {
         CoTSource(transport: .mesh, detail: framework)
     }
 
+    /// The tag every Meshtastic radio ingest point stamps. #113 depends on it:
+    /// an untagged event resolves to `.takServer` at ingest, so with gateway mode
+    /// on, radio traffic that forgot to tag would be relayed straight back onto
+    /// the channel it just came off.
+    static let meshtasticRadio = CoTSource.mesh("Meshtastic")
+
     /// An operator-dropped / device-local point that never traversed a link.
     static let local = CoTSource(transport: .local)
 

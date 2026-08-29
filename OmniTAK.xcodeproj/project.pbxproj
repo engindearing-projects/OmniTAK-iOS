@@ -251,6 +251,7 @@
 		0B3D84FD5B2E90470EDD3D15 /* DrawingVertexEditTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */; };
 		D7A6203FEC6C090F38F35099 /* CesiumCameraSeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */; };
 		BC4BB03E3F2142BC941EA004 /* CustomTileURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA12B626BFB043BDBC528F07 /* CustomTileURLTests.swift */; };
+		C3F0855CD6D2DB03E9B53B07 /* MeshServerRelayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7AD850BAB2CC726099EE2B /* MeshServerRelayTests.swift */; };
 		9F360AA41C05B15FC6B71F75 /* EchelonModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53D5A42ABFBE8EF268B187D8 /* EchelonModels.swift */; };
 		9F4D964068E0E91862AEE361 /* KMLOverlaysPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 619B6C2A0B1A1C5237648ED5 /* KMLOverlaysPanel.swift */; };
 		9F975E18CC49BBAC535F8A0B /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = D9B49FD9370499A376CCF227 /* Localizable.strings */; };
@@ -372,6 +373,7 @@
 		E3397D517A54F6F76789C606 /* MeshtasticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */; };
 		E5F60718293A4B5C6D7E8F90 /* ToolRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F60718293A4B5C6D7E8F91 /* ToolRegistry.swift */; };
 		E696090A2C20C65D83CD1F3D /* MeshtasticCoTConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1419954D52EBD5859EFA2213 /* MeshtasticCoTConverter.swift */; };
+		5BF2501624DC58DA92E1BCC4 /* MeshServerRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE6C25EDF365A4FAA5DD4FC0 /* MeshServerRelay.swift */; };
 		E77F3801C3528F7068248083 /* SHAPMHQ----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 3193AFBC53C3A33A5F23530C /* SHAPMHQ----.svg */; };
 		E8FC76F4642B0A491FDDD72E /* SFGPUSM----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 2A8886CA936AF8F6E8582BA9 /* SFGPUSM----.svg */; };
 		E913B6AFAD02D35CD5CB4E67 /* OfflineTileCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343A9DB3612DAF9A47999950 /* OfflineTileCache.swift */; };
@@ -480,6 +482,7 @@
 		12E56E27EB21947AA8755F77 /* en */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = en; path = OmniTAKMobile/Resources/en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		1370BC2ECA72FEDBDD92B226 /* PositionBroadcastView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PositionBroadcastView.swift; path = OmniTAKMobile/Features/Networking/Views/PositionBroadcastView.swift; sourceTree = "<group>"; };
 		1419954D52EBD5859EFA2213 /* MeshtasticCoTConverter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticCoTConverter.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticCoTConverter.swift; sourceTree = "<group>"; };
+		DE6C25EDF365A4FAA5DD4FC0 /* MeshServerRelay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshServerRelay.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshServerRelay.swift; sourceTree = "<group>"; };
 		14751E8F7455DF58CA15A0A1 /* ChatXMLParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChatXMLParser.swift; path = OmniTAKMobile/CoT/Parsers/ChatXMLParser.swift; sourceTree = "<group>"; };
 		1648B4732A5A3CEE2F302194 /* MeasurementModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeasurementModels.swift; path = OmniTAKMobile/Features/Measurement/Models/MeasurementModels.swift; sourceTree = "<group>"; };
 		17EF09598A6E3E19F6F83576 /* TileDownloader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TileDownloader.swift; path = OmniTAKMobile/Features/Map/TileSources/TileDownloader.swift; sourceTree = "<group>"; };
@@ -814,6 +817,7 @@
 		64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingVertexEditTests.swift; path = OmniTAKMobileTests/DrawingVertexEditTests.swift; sourceTree = "<group>"; };
 		2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CesiumCameraSeedTests.swift; path = OmniTAKMobileTests/CesiumCameraSeedTests.swift; sourceTree = "<group>"; };
 		CA12B626BFB043BDBC528F07 /* CustomTileURLTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CustomTileURLTests.swift; path = OmniTAKMobileTests/CustomTileURLTests.swift; sourceTree = "<group>"; };
+		BA7AD850BAB2CC726099EE2B /* MeshServerRelayTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshServerRelayTests.swift; path = OmniTAKMobileTests/MeshServerRelayTests.swift; sourceTree = "<group>"; };
 		EC5FB4399952EB25310628E4 /* RangeBearingService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RangeBearingService.swift; path = OmniTAKMobile/Features/Measurement/Services/RangeBearingService.swift; sourceTree = "<group>"; };
 		ED51505084DDA26949BB854D /* EchelonHierarchyView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EchelonHierarchyView.swift; path = OmniTAKMobile/Features/Teams/Views/EchelonHierarchyView.swift; sourceTree = "<group>"; };
 		EE2FC006021B8F5CE7D6554F /* SFGPEVC----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPEVC----.svg"; sourceTree = "<group>"; };
@@ -1123,6 +1127,7 @@
 				64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */,
 			2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */,
 				CA12B626BFB043BDBC528F07 /* CustomTileURLTests.swift */,
+				BA7AD850BAB2CC726099EE2B /* MeshServerRelayTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
 								CF000005A000000000000001 /* ConfigProfileTests.swift */,
 				3A7BF0F8036A4641AE333F42 /* MarkerLifecycleTests.swift */,
@@ -1466,6 +1471,7 @@
 			isa = PBXGroup;
 			children = (
 				1419954D52EBD5859EFA2213 /* MeshtasticCoTConverter.swift */,
+				DE6C25EDF365A4FAA5DD4FC0 /* MeshServerRelay.swift */,
 				A7AC00010000000000A00001 /* ATAKPluginParser.swift */,
 				A7AC00010000000000A00002 /* ATAKPluginSerializer.swift */,
 				A7AC00020000000000A00003 /* TAKPacketCodec.swift */,
@@ -2794,6 +2800,7 @@
 				0B3D84FD5B2E90470EDD3D15 /* DrawingVertexEditTests.swift in Sources */,
 			D7A6203FEC6C090F38F35099 /* CesiumCameraSeedTests.swift in Sources */,
 				BC4BB03E3F2142BC941EA004 /* CustomTileURLTests.swift in Sources */,
+				C3F0855CD6D2DB03E9B53B07 /* MeshServerRelayTests.swift in Sources */,
 				4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
 				C5C06A972D151475A44BC316 /* MeshCoreFrameCodecTests.swift in Sources */,
@@ -2973,6 +2980,7 @@
 				2262EE8CA832D8F3763D6EC9 /* MeshtasticTCPConnectionView.swift in Sources */,
 				6DA119F217E6DEA6623A7EB8 /* MeshtasticBLEClient.swift in Sources */,
 				E696090A2C20C65D83CD1F3D /* MeshtasticCoTConverter.swift in Sources */,
+				5BF2501624DC58DA92E1BCC4 /* MeshServerRelay.swift in Sources */,
 				A7AC00010000000000B00001 /* ATAKPluginParser.swift in Sources */,
 				A7AC00010000000000B00002 /* ATAKPluginSerializer.swift in Sources */,
 				A7AC00020000000000B00003 /* TAKPacketCodec.swift in Sources */,

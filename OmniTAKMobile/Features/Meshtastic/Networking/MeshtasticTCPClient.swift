@@ -618,7 +618,7 @@ class MeshtasticTCPClient: ObservableObject {
         }
         print("✅ TAKPacketV2 → marker CoTEvent uid=\(event.uid) type=\(event.type) callsign=\(event.detail.callsign)")
         DispatchQueue.main.async {
-            CoTEventHandler.shared.handle(event: .positionUpdate(event))
+            CoTEventHandler.shared.handle(event: .positionUpdate(event), source: .meshtasticRadio)
         }
     }
 
@@ -631,7 +631,10 @@ class MeshtasticTCPClient: ObservableObject {
         print("✅ ATAK plugin → CoTEvent uid=\(cot.uid) type=\(cot.type) callsign=\(cot.detail.callsign)")
         let eventType: CoTEventType = ATAKPluginParser.classify(cot)
         DispatchQueue.main.async {
-            CoTEventHandler.shared.handle(event: eventType)
+            // #113 — tag the transport at ingest. Untagged resolves to
+            // .takServer, which under gateway mode would relay this packet
+            // straight back onto the channel it just arrived on.
+            CoTEventHandler.shared.handle(event: eventType, source: .meshtasticRadio)
         }
     }
 

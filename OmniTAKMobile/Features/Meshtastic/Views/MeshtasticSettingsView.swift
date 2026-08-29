@@ -19,6 +19,11 @@ import SwiftUI
 
 struct MeshtasticSettingsView: View {
     @ObservedObject private var meshtastic = MeshtasticManager.shared
+    @ObservedObject private var takService = TAKService.shared
+
+    /// #113 gateway mode. Defaults to false — bridging two networks is an
+    /// operational and OPSEC decision, so it is never on unless asked for.
+    @AppStorage(MeshServerRelay.enabledDefaultsKey) private var relayEnabled: Bool = false
 
     /// MeshCore is only available on iOS 13+ and is a separate singleton.
     @available(iOS 13.0, *)
@@ -58,6 +63,7 @@ struct MeshtasticSettingsView: View {
         NavigationView {
             Form {
                 transportSection
+                gatewaySection
                 channelsSection
                 createChannelSection
                 joinSection
@@ -91,6 +97,49 @@ struct MeshtasticSettingsView: View {
                     .foregroundColor(activeTransport == .none ? .secondary : .green)
                     .font(.caption)
             }
+        }
+    }
+
+    /// #113 — gateway mode. The footer is written for an operator deciding
+    /// whether to bridge two networks with their handheld, not for a developer
+    /// reading a feature name: it has to say what leaves this device and where it
+    /// goes, because that is the decision being made.
+    private var gatewaySection: some View {
+        Section {
+            // Same label as the Android gateway toggle, so an operator running
+            // both platforms is looking for the same words.
+            Toggle("Relay mesh ↔ server", isOn: Binding(
+                get: { relayEnabled },
+                set: { on in
+                    relayEnabled = on
+                    // Each time the gateway is switched, start the per-contact
+                    // send budget clean instead of inheriting the last session's.
+                    MeshServerRelay.shared.reset()
+                }
+            ))
+            if relayEnabled {
+                Label(
+                    activeTransport == .none || !takService.isConnected
+                        ? "Standing by — the relay only runs while this device is connected to both a TAK server and a mesh radio."
+                        : "Active — this device is bridging \(transportLabel) and the TAK server.",
+                    systemImage: relayReady ? "arrow.left.arrow.right.circle.fill" : "pause.circle"
+                )
+                .font(.caption)
+                .foregroundColor(relayReady ? .green : .secondary)
+            }
+        } header: {
+            Text("Gateway")
+        } footer: {
+            Text("""
+            Off by default. Turning this on makes this device a bridge: everything \
+            it hears on the mesh is forwarded to your TAK server, and positions, \
+            chat and markers from the server are transmitted over the mesh.
+
+            Anyone on the mesh channel is put onto the server picture, and traffic \
+            from the server goes out over the air. Only turn this on if you intend \
+            to join those two networks. Sending is rate-limited per contact to \
+            protect the radio channel.
+            """)
         }
     }
 
@@ -246,6 +295,12 @@ struct MeshtasticSettingsView: View {
         let used = Set(meshtastic.appChannels.map { $0.index })
         for i in 1...7 where !used.contains(i) { return i }
         return 1
+    }
+
+    /// The gateway only forwards while both ends are up — surfaced so the
+    /// operator can tell "enabled" from "actually bridging right now".
+    private var relayReady: Bool {
+        activeTransport != .none && takService.isConnected
     }
 
     private var transportLabel: String {

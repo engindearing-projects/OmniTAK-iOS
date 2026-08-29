@@ -128,6 +128,7 @@ class CoTEventHandler: ObservableObject {
             switch event {
             case .positionUpdate(let cotEvent):
                 self.handlePositionUpdate(cotEvent, serverId: serverId, source: source)
+                self.offerToRelay(cotEvent, serverId: serverId, source: source)
 
             case .chatMessage(let message):
                 self.handleChatMessage(message, serverId: serverId)
@@ -137,10 +138,45 @@ class CoTEventHandler: ObservableObject {
 
             case .waypoint(let cotEvent):
                 self.handleWaypoint(cotEvent)
+                self.offerToRelay(cotEvent, serverId: serverId, source: source)
 
             case .unknown(let typeStr):
                 self.handleUnknownEvent(typeStr)
             }
+        }
+    }
+
+    /// #180/#113 — which transport carried this event. An explicit `source` from
+    /// the ingest point wins (it knows the link it read the bytes off), then any
+    /// tag already on the event, and only then the fallback: it came off a TAK
+    /// server connection.
+    ///
+    /// That fallback is why mesh ingest points MUST tag. Pure so #113's loop
+    /// guard can be tested against the exact rule the ingest path applies.
+    static func resolveSource(explicit: CoTSource?, existing: CoTSource?,
+                              serverName: String?) -> CoTSource {
+        explicit ?? existing ?? .takServer(serverName)
+    }
+
+    /// #113 — offer the event to the mesh↔server gateway. Reading the two link
+    /// booleans has to happen on the main actor (the mesh managers live there);
+    /// everything the relay then does — the routing decision, the throttle, the
+    /// XML rebuild, the send — runs on the relay's own queue.
+    private func offerToRelay(_ event: CoTEvent, serverId: UUID?, source: CoTSource?) {
+        // Gateway mode is off for almost every install, and this runs per inbound
+        // CoT on a busy server — so establish that before paying for an actor hop.
+        guard MeshServerRelay.isEnabled() else { return }
+
+        let resolved = Self.resolveSource(explicit: source, existing: event.source,
+                                          serverName: takService?.serverName(for: serverId))
+        let serverConnected = takService?.isConnected ?? false
+        Task { @MainActor in
+            MeshServerRelay.shared.onInbound(
+                event,
+                source: resolved,
+                serverConnected: serverConnected,
+                meshConnected: MeshServerRelay.isAnyMeshConnected
+            )
         }
     }
 
@@ -154,12 +190,8 @@ class CoTEventHandler: ObservableObject {
         // caller didn't pass one; an explicit `source` (mesh ingest) wins.
         var event = rawEvent
         event.receivedAt = Date()
-        if let source {
-            event.source = source
-        } else if event.source == nil {
-            // No explicit source: it came off a TAK server connection.
-            event.source = .takServer(takService?.serverName(for: serverId))
-        }
+        event.source = Self.resolveSource(explicit: source, existing: event.source,
+                                          serverName: takService?.serverName(for: serverId))
 
         print("CoTEventHandler: Position update from \(event.detail.callsign) at (\(event.point.lat), \(event.point.lon))")
 
