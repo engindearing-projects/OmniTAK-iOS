@@ -212,8 +212,7 @@ struct CoordinateEntryView: View {
     /// Best-known current map centre (used to recover the 100 km cell for
     /// 5+5 grid input). Falls back to central Taiwan.
     private var currentMapCenter: CLLocationCoordinate2D {
-        if let c = MapLibreService.shared.mapView?.mapboxMap.cameraState.center,
-           CLLocationCoordinate2DIsValid(c) {
+        if let c = MapCenterStore.shared.center, CLLocationCoordinate2DIsValid(c) {
             return c
         }
         return CLLocationCoordinate2D(latitude: 23.7, longitude: 121.0)

@@ -5,7 +5,7 @@
 //  Shared label/value row + rounded-corner helpers. Extracted from
 //  MarkerInfoPanel.swift when the dead EnhancedCoTMarker panel was
 //  deleted — these pieces are used by EmergencyBeaconView,
-//  DigitalPointerView, ConnectionStatusWidget, and RoutePlanningView.
+//  ConnectionStatusWidget, and RoutePlanningView.
 //
 
 import SwiftUI

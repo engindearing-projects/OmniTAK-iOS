@@ -31,22 +31,6 @@ struct TAKCertificate: Codable, Identifiable {
     }
 }
 
-struct CertificateEnrollmentRequest {
-    let serverURL: String
-    let username: String
-    let password: String
-    let deviceID: String
-}
-
-struct CertificateEnrollmentResponse: Codable {
-    let certificate: Data  // .p12 certificate data
-    let password: String   // Certificate password
-    let serverHost: String
-    let serverPort: Int
-    let serverProtocol: String
-    let caCertificate: Data?  // Optional CA certificate
-}
-
 // MARK: - Certificate Manager
 
 class CertificateManager: ObservableObject {

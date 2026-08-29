@@ -17,6 +17,21 @@ MBX_ACCESS_TOKEN =
 CESIUM_ION_TOKEN =
 DEFAULT_P12_PASSWORD =
 
+// Ditto peer-to-peer mesh. Empty by default: with no database ID the mesh
+// simply stays off and every other transport (TAK server, Meshtastic, MeshCore)
+// is unaffected, so a fresh clone still builds and runs.
+// NOTE the URL is written without its scheme in the Ditto portal; put the full
+// https:// URL here — DittoConfigConnect.server takes a URL, not a host.
+DITTO_DATABASE_ID =
+DITTO_URL =
+DITTO_TOKEN =
+
+// Shared-key (offline) mode. When BOTH of these are set they take precedence
+// over DITTO_TOKEN and the mesh runs with no cloud contact at all — no account,
+// nothing to expire mid-deployment. Offline license comes from Ditto.
+DITTO_SHARED_KEY =
+DITTO_OFFLINE_LICENSE =
+
 // Real values live here (gitignored). Optional include: the "?" means no build
 // error if the file is absent, which is exactly what makes fresh checkouts work.
 // Settings below override the empty defaults above.

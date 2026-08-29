@@ -50,12 +50,15 @@ jobs:
       - name: Build (for testing)
         run: |
           set -o pipefail
+          # NOTE: do NOT pass CODE_SIGNING_ALLOWED=NO here — it makes Xcode skip
+          # embedding SPM binary frameworks (DittoSwift), and the app then dies
+          # at launch with dyld "Library not loaded". Simulator builds ad-hoc
+          # sign with no identity, so signing costs nothing on runners.
           xcodebuild build-for-testing \
             -project OmniTAK.xcodeproj \
             -scheme OmniTAKMobile \
             -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.device }}" \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+            -derivedDataPath build/DerivedData
 
       - name: Unit tests (OmniTAKMobileTests)
         run: |
@@ -64,5 +67,4 @@ jobs:
             -project OmniTAK.xcodeproj \
             -scheme OmniTAKMobile \
             -destination "platform=iOS Simulator,name=${{ steps.sim.outputs.device }}" \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+            -derivedDataPath build/DerivedData
