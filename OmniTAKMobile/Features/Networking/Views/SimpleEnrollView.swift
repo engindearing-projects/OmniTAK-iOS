@@ -71,6 +71,15 @@ struct SimpleEnrollView: View {
     // Services
     private let csrService = CSREnrollmentService()
 
+    /// A Bonjour hit (#111) may seed the address, port and protocol — nothing
+    /// else. Credentials and cert trust never come from an unauthenticated LAN
+    /// advertisement, and the operator still has to press OK.
+    init(prefill: TakServerPrefill? = nil) {
+        _serverHost = State(initialValue: prefill?.host ?? "")
+        _streamingPort = State(initialValue: prefill?.portText ?? "8089")
+        _streamingProtocol = State(initialValue: prefill?.protocolValue ?? "ssl")
+    }
+
     var body: some View {
         NavigationView {
             ZStack {

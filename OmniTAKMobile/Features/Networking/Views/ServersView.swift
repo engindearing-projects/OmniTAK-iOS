@@ -24,6 +24,11 @@ struct ServersView: View {
     @State private var serverToEdit: TAKServer? = nil
     @State private var showActionsMenu = false
 
+    // Bonjour/mDNS browse of _tak._tcp while this screen is up (#111). A hit
+    // only ever fills in the Add-Server form below — see discoverySection.
+    @StateObject private var discovery = TakDiscoveryStore()
+    @State private var enrollPrefill: TakServerPrefill? = nil
+
     var body: some View {
         NavigationView {
             ZStack {
@@ -39,6 +44,9 @@ struct ServersView: View {
                             serverList
                         }
 
+                        // Servers advertising themselves on this LAN
+                        discoverySection
+
                         // Add Server Button
                         addServerButton
 
@@ -51,12 +59,16 @@ struct ServersView: View {
                     .padding(16)
                 }
             }
+            .onAppear { discovery.start() }
+            // A browse left running keeps the Wi-Fi radio awake for a screen
+            // nobody is looking at.
+            .onDisappear { discovery.stop() }
             .navigationTitle("TAK Servers")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
-                        Button(action: { showEnrollment = true }) {
+                        Button(action: { presentAddServer() }) {
                             Label("Add", systemImage: "plus.circle")
                         }
 
@@ -66,7 +78,7 @@ struct ServersView: View {
 
                         Divider()
 
-                        Button(action: { showEnrollment = true }) {
+                        Button(action: { presentAddServer() }) {
                             Label("Quick Connect", systemImage: "bolt.circle")
                         }
 
@@ -90,7 +102,7 @@ struct ServersView: View {
             }
         }
         .sheet(isPresented: $showEnrollment) {
-            SimpleEnrollView()
+            SimpleEnrollView(prefill: enrollPrefill)
         }
         .sheet(isPresented: $showQRScan) {
             // Reuse the camera QR scanner. A scanned standard ATAK/TAK
@@ -174,10 +186,110 @@ struct ServersView: View {
         }
     }
 
+    // MARK: - Discovered on This Network (#111)
+
+    /// Bonjour hits, Android parity with AddServerScreen's discovered list.
+    ///
+    /// mDNS is unauthenticated — anything on the LAN can advertise `_tak._tcp`
+    /// pointing anywhere — so a row is a suggestion and nothing more. Tapping
+    /// one opens Add Server with the address filled in; the operator still has
+    /// to confirm it, and nothing here saves, connects, enrols or trusts a
+    /// certificate on its own.
+    ///
+    /// Nothing renders while the LAN is quiet. When the browse can't run at all
+    /// (usually the local-network permission was denied) the section says so
+    /// and points at manual entry, rather than leaving a spinner up forever.
+    @ViewBuilder
+    private var discoverySection: some View {
+        if !discovery.services.isEmpty || discovery.state.operatorMessage != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("DISCOVERED ON THIS NETWORK")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color(hex: "#666666"))
+
+                    if discovery.state.isSearching {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: Color(hex: "#666666")))
+                            .scaleEffect(0.6)
+                    }
+                }
+                .padding(.leading, 4)
+
+                if let message = discovery.state.operatorMessage {
+                    Text(message)
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "#999999"))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(white: 0.08))
+                        .cornerRadius(10)
+                } else {
+                    ForEach(discovery.services) { service in
+                        discoveredRow(service)
+                    }
+                }
+            }
+        }
+    }
+
+    private func discoveredRow(_ service: DiscoveredTakService) -> some View {
+        let alreadySaved = TakMdns.isAlreadySaved(service, in: serverManager.servers)
+        let isTLS = TakMdns.isTLS(service)
+
+        return Button(action: { presentAddServer(prefill: TakMdns.prefill(for: service)) }) {
+            HStack(spacing: 12) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 20))
+                    .foregroundColor(Color(hex: "#00BCD4"))
+                    .frame(width: 32)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    // The name is a responder-supplied string; it's clamped in
+                    // TakMdns and truncated here so a long one can't push the
+                    // real address off the row.
+                    Text(service.serviceName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Text("\(service.host):\(String(service.port))")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color(hex: "#999999"))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Text(alreadySaved ? "SAVED" : (isTLS ? "TLS" : "TCP"))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(alreadySaved ? Color(hex: "#666666") : Color(hex: "#00BCD4"))
+            }
+            .padding(12)
+            .background(Color(white: 0.08))
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color(hex: "#00BCD4").opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    /// Open Add Server, optionally seeded from a discovery. Every other entry
+    /// point clears the seed so a stale Bonjour hit can't leak into a manual add.
+    private func presentAddServer(prefill: TakServerPrefill? = nil) {
+        enrollPrefill = prefill
+        showEnrollment = true
+    }
+
     // MARK: - Add Server Button
 
     private var addServerButton: some View {
-        Button(action: { showEnrollment = true }) {
+        Button(action: { presentAddServer() }) {
             HStack(spacing: 12) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 24))
