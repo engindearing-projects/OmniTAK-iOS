@@ -9,6 +9,8 @@
 //    - SCAN / PASTE a shared link to JOIN, applying it to the connected radio
 //    - set device role, position broadcast interval, and rebroadcast scope
 //      (the PatoG1899 "rebroadcast only the known/current channel" ask)
+//    - set the LoRa region + modem preset and the radio's long/short name
+//      (#112) — the three knobs that make pre-flashing a fleet practical
 //
 //  Transport is chosen from the active connection: Meshtastic if its manager is
 //  connected, otherwise MeshCore. Channel apply / config write goes out over
@@ -47,6 +49,16 @@ struct MeshtasticSettingsView: View {
     @State private var selectedRebroadcast: MeshtasticAdminCodec.RebroadcastMode = .all
     @State private var positionIntervalSecs: Double = 900
 
+    // LoRa radio state (#112). Region starts UNSET on purpose: it decides which
+    // band the radio keys up on, so the operator picks it rather than inheriting
+    // a default that is legal somewhere else.
+    @State private var selectedRegion: MeshtasticAdminCodec.LoRaRegion = .unset
+    @State private var selectedPreset: MeshtasticAdminCodec.ModemPreset = .longFast
+
+    // Device name state (#112)
+    @State private var deviceLongName: String = ""
+    @State private var deviceShortName: String = ""
+
     // Share sheet
     @State private var shareChannel: MeshtasticManager.StoredChannel?
     @State private var showingShare = false
@@ -63,6 +75,8 @@ struct MeshtasticSettingsView: View {
                 joinSection
                 if activeTransport == .meshtastic {
                     deviceConfigSection
+                    loraRadioSection
+                    deviceNameSection
                     positionSection
                 }
                 if let status = statusMessage {
@@ -168,6 +182,45 @@ struct MeshtasticSettingsView: View {
         }
     }
 
+    private var loraRadioSection: some View {
+        Section("LoRa Radio") {
+            Text("Region sets the legal band — a new radio will not transmit until it is set. Preset trades range for speed.")
+                .font(.footnote).foregroundColor(.secondary)
+            Picker("Region", selection: $selectedRegion) {
+                ForEach(MeshtasticAdminCodec.LoRaRegion.allCases, id: \.rawValue) { region in
+                    Text(region.displayName).tag(region)
+                }
+            }
+            Picker("Modem Preset", selection: $selectedPreset) {
+                ForEach(MeshtasticAdminCodec.ModemPreset.allCases, id: \.rawValue) { preset in
+                    Text(preset.displayName).tag(preset)
+                }
+            }
+            Text(selectedPreset.blurb)
+                .font(.caption).foregroundColor(.secondary)
+            Button("Apply LoRa Config") { applyLoRaConfig() }
+                .disabled(activeTransport != .meshtastic || selectedRegion == .unset)
+        }
+    }
+
+    private var deviceNameSection: some View {
+        Section("Device Name") {
+            Text("Long name shows in the node list; short name is the 4-character tag.")
+                .font(.footnote).foregroundColor(.secondary)
+            TextField("Long name", text: $deviceLongName)
+                .autocorrectionDisabled()
+            TextField("Short name", text: $deviceShortName)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.characters)
+            // Firmware budgets these fields in BYTES, so the counter does too —
+            // thirteen Chinese characters already fill the long name.
+            Text("\(deviceLongName.utf8.count)/\(MeshtasticAdminCodec.longNameMaxBytes) · \(deviceShortName.utf8.count)/\(MeshtasticAdminCodec.shortNameMaxBytes) bytes")
+                .font(.caption2).foregroundColor(.secondary)
+            Button("Apply Device Name") { applyDeviceName() }
+                .disabled(activeTransport != .meshtastic || !hasDeviceNameToWrite)
+        }
+    }
+
     private var positionSection: some View {
         Section("Position Broadcast") {
             HStack {
@@ -240,7 +293,30 @@ struct MeshtasticSettingsView: View {
             : "Apply failed: \(meshtastic.lastError ?? "not connected")"
     }
 
+    private func applyLoRaConfig() {
+        let ok = meshtastic.applyLoRaConfig(region: selectedRegion, modemPreset: selectedPreset)
+        // "Sent", not "applied": nothing on iOS reads the radio's admin reply
+        // back yet, and a region change reboots the radio — the link will drop.
+        statusMessage = ok
+            ? "LoRa config sent (\(selectedRegion.displayName), \(selectedPreset.displayName)). The radio reboots to apply it."
+            : "Apply failed: \(meshtastic.lastError ?? "not connected")"
+    }
+
+    private func applyDeviceName() {
+        let ok = meshtastic.applyDeviceName(longName: deviceLongName, shortName: deviceShortName)
+        statusMessage = ok
+            ? "Device name sent. Peers see it on the radio's next node-info broadcast."
+            : "Apply failed: \(meshtastic.lastError ?? "not connected")"
+    }
+
     // MARK: - Helpers
+
+    /// True when at least one name survives sanitising — the encoder refuses an
+    /// owner write with nothing in it, so don't offer the button either.
+    private var hasDeviceNameToWrite: Bool {
+        !MeshtasticAdminCodec.sanitizedName(deviceLongName, maxBytes: MeshtasticAdminCodec.longNameMaxBytes).isEmpty
+            || !MeshtasticAdminCodec.sanitizedName(deviceShortName, maxBytes: MeshtasticAdminCodec.shortNameMaxBytes).isEmpty
+    }
 
     private func nextFreeMeshtasticIndex() -> Int {
         let used = Set(meshtastic.appChannels.map { $0.index })

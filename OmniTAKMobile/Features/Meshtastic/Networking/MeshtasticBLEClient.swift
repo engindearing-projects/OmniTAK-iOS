@@ -468,7 +468,12 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             DispatchQueue.main.async { self.lastError = "Not connected" }
             return false
         }
-        let destination = myNodeNum != 0 ? myNodeNum : 0xFFFFFFFF
+        // Broadcast is not a fallback here: an admin payload sent to the mesh
+        // is transmitted over LoRa (PSK and all) and no peer will honour it.
+        guard let destination = MeshtasticAdminCodec.adminDestination(myNodeNum: myNodeNum) else {
+            DispatchQueue.main.async { self.lastError = "Radio has not reported its node number yet" }
+            return false
+        }
         let toRadio = ATAKPluginSerializer.buildToRadio(
             atakPayload: payload,
             to: destination,

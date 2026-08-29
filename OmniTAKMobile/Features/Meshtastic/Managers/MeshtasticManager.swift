@@ -555,6 +555,53 @@ public class MeshtasticManager: ObservableObject {
         }
     }
 
+    /// Apply LoRa region + modem preset via AdminMessage.set_config (#112).
+    ///
+    /// One admin write per apply. These bytes cross a constrained LoRa link and
+    /// the radio reboots to take a region change, so a settings screen must not
+    /// fan out into a burst of writes. Encoding is pure and nonisolated, so the
+    /// only work on the main actor is handing the frame to the transport.
+    @discardableResult
+    func applyLoRaConfig(
+        region: MeshtasticAdminCodec.LoRaRegion,
+        modemPreset: MeshtasticAdminCodec.ModemPreset
+    ) -> Bool {
+        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else {
+            lastError = "Not connected"
+            return false
+        }
+        guard let payload = MeshtasticAdminCodec.encodeSetLoRaConfig(
+            region: region, modemPreset: modemPreset
+        ) else {
+            lastError = "Pick a region — a radio with no region set will not transmit"
+            return false
+        }
+        switch device.connectionType {
+        case .bluetooth: return bleClient.sendAdmin(payload: payload)
+        case .tcp:       return tcpClient.sendAdmin(payload: payload)
+        }
+    }
+
+    /// Apply the radio's long / short name via AdminMessage.set_owner (#112) —
+    /// what turns a hex node id into a callsign in everyone else's node list.
+    @discardableResult
+    func applyDeviceName(longName: String, shortName: String) -> Bool {
+        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else {
+            lastError = "Not connected"
+            return false
+        }
+        guard let payload = MeshtasticAdminCodec.encodeSetOwner(
+            longName: longName, shortName: shortName
+        ) else {
+            lastError = "Enter a device name"
+            return false
+        }
+        switch device.connectionType {
+        case .bluetooth: return bleClient.sendAdmin(payload: payload)
+        case .tcp:       return tcpClient.sendAdmin(payload: payload)
+        }
+    }
+
     /// Apply the position broadcast interval via AdminMessage.set_config.
     @discardableResult
     public func applyPositionBroadcastInterval(seconds: UInt32) -> Bool {
