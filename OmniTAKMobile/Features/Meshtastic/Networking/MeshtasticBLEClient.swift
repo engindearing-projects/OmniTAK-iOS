@@ -605,7 +605,11 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
                         print("   📍 Position: lat=\(pos.latitude), lon=\(pos.longitude), alt=\(pos.altitude ?? 0)")
                     }
                     DispatchQueue.main.async {
-                        self.nodes[node.id] = node
+                        // Role only rides some NodeInfo frames. A later frame
+                        // without one must not erase a role we already learned.
+                        var merged = node
+                        if merged.role == nil { merged.role = self.nodes[node.id]?.role }
+                        self.nodes[node.id] = merged
                         print("📊 Total nodes in store: \(self.nodes.count)")
                     }
                     delegate?.bleClient(self, didReceiveNodeInfo: node)
@@ -687,6 +691,7 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
         var position: MeshPosition? = nil
         var hopDistance: Int? = nil
         var battery: Int? = nil
+        var role: Int? = nil
 
         var idx = lengthEnd
 
@@ -715,9 +720,10 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             case 2, 4: // user (sub-message) — field 2 (legacy) or 4 (modern)
                 if wire == 2, let (len, lenEnd) = readVarint(data, from: idx) {
                     let userEnd = min(lenEnd + Int(len), data.count)
-                    let (sn, ln) = parseUserSubmessage(data, from: lenEnd, end: userEnd)
+                    let (sn, ln, r) = parseUserSubmessage(data, from: lenEnd, end: userEnd)
                     if !sn.isEmpty { shortName = sn }
                     if !ln.isEmpty { longName = ln }
+                    if let r = r { role = r }
                     idx = userEnd
                 } else {
                     idx = skipField(data, from: idx, wireType: wire)
@@ -783,17 +789,19 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
             lastHeard: lastHeard ?? Date(),
             snr: snr,
             hopDistance: hopDistance,
-            batteryLevel: battery
+            batteryLevel: battery,
+            role: role
         )
 
         return (node, messageEnd)
     }
 
-    /// Parse a Meshtastic `User` submessage and return (shortName, longName).
-    /// long_name = field 2, short_name = field 3.
-    private func parseUserSubmessage(_ data: Data, from start: Int, end: Int) -> (short: String, long: String) {
+    /// Parse a Meshtastic `User` submessage and return (shortName, longName, role).
+    /// long_name = field 2, short_name = field 3, role = field 7.
+    private func parseUserSubmessage(_ data: Data, from start: Int, end: Int) -> (short: String, long: String, role: Int?) {
         var shortName = ""
         var longName = ""
+        var role: Int? = nil
         var uIdx = start
         while uIdx < end {
             guard uIdx < data.count else { break }
@@ -816,11 +824,18 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
                 } else {
                     uIdx = skipField(data, from: uIdx, wireType: uWire)
                 }
+            } else if uField == 7 && uWire == 0 { // role (Config.DeviceConfig.Role)
+                if let (v, newIdx) = readVarint(data, from: uIdx) {
+                    role = Int(v)
+                    uIdx = min(newIdx, end)
+                } else {
+                    uIdx = skipField(data, from: uIdx, wireType: uWire)
+                }
             } else {
                 uIdx = skipField(data, from: uIdx, wireType: uWire)
             }
         }
-        return (shortName, longName)
+        return (shortName, longName, role)
     }
 
     /// Parse a Meshtastic `DeviceMetrics` submessage and return battery_level

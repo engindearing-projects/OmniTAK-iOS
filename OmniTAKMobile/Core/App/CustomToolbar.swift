@@ -22,6 +22,10 @@ struct CustomToolbar: View {
     let onSelect: (BarItem) -> Void
     /// Open the "add a shortcut" palette.
     let onAddTapped: () -> Void
+    /// Per-item status dot, keyed by `BarItem.id` — currently the Mesh tab's
+    /// radio link state. Field feedback: "is a radio even connected?" needs an
+    /// answer you can read without opening the tab. Absent id = no dot.
+    var statusDots: [String: Color] = [:]
 
     @State private var barWidth: CGFloat = 1
     @State private var draggingID: String?
@@ -228,6 +232,15 @@ struct CustomToolbar: View {
                         Image(systemName: item.icon)
                             .font(.system(size: 20, weight: isActive ? .semibold : .regular))
                             .foregroundColor(isActive ? item.tint : Color.white.opacity(0.85))
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if let dot = statusDots[item.id] {
+                            Circle()
+                                .fill(dot)
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().stroke(Color.black.opacity(0.6), lineWidth: 1))
+                                .offset(x: 1, y: -1)
+                        }
                     }
                     Text(loc.t("bar." + item.id))
                         .font(.system(size: 10, weight: isActive ? .semibold : .medium))
