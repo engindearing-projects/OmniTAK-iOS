@@ -82,6 +82,23 @@ public struct MeshNode: Identifiable, Codable, Equatable {
     public var hopDistance: Int?
     public var batteryLevel: Int?
 
+    /// Meshtastic `User.role` — the config.proto `Config.DeviceConfig.Role`
+    /// enum value, or nil when the NodeInfo frame carried no role field
+    /// (older firmware, or a node we have only heard a position packet from).
+    public var role: Int?
+
+    /// Role `TAK` — a radio paired to a phone that is itself running a TAK
+    /// client. That phone already reports the operator's position, so drawing
+    /// the radio too puts two mismatched dots on one person. Standalone
+    /// trackers (TAK_TRACKER, sensors, vehicles) are a different case and stay
+    /// visible.
+    public var isTakPaired: Bool { role == MeshNode.roleTAK }
+
+    /// config.proto `Config.DeviceConfig.Role` values we act on. Mirrors the
+    /// Android `MeshNode` companion and `MeshtasticAdminCodec.DeviceRole`.
+    public static let roleTAK = 7
+    public static let roleTAKTracker = 10
+
     public init(
         id: UInt32,
         shortName: String,
@@ -90,7 +107,8 @@ public struct MeshNode: Identifiable, Codable, Equatable {
         lastHeard: Date,
         snr: Double? = nil,
         hopDistance: Int? = nil,
-        batteryLevel: Int? = nil
+        batteryLevel: Int? = nil,
+        role: Int? = nil
     ) {
         self.id = id
         self.shortName = shortName
@@ -100,6 +118,7 @@ public struct MeshNode: Identifiable, Codable, Equatable {
         self.snr = snr
         self.hopDistance = hopDistance
         self.batteryLevel = batteryLevel
+        self.role = role
     }
 }
 

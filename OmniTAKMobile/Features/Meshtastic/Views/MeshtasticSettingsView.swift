@@ -54,6 +54,10 @@ struct MeshtasticSettingsView: View {
     // Status banner
     @State private var statusMessage: String?
 
+    /// Paired radios (role TAK) are hidden on the map by default — they double
+    /// an operator who is already reporting from their phone.
+    @AppStorage(MeshtasticManager.showPairedRadiosKey) private var showPairedRadios = false
+
     var body: some View {
         NavigationView {
             Form {
@@ -64,6 +68,7 @@ struct MeshtasticSettingsView: View {
                 if activeTransport == .meshtastic {
                     deviceConfigSection
                     positionSection
+                    mapDisplaySection
                 }
                 if let status = statusMessage {
                     Section { Text(status).font(.footnote).foregroundColor(.secondary) }
@@ -165,6 +170,21 @@ struct MeshtasticSettingsView: View {
             }
             Button("Apply Device Config") { applyDeviceConfig() }
                 .disabled(activeTransport != .meshtastic)
+        }
+    }
+
+    private var mapDisplaySection: some View {
+        Section {
+            Toggle("Show paired radios", isOn: $showPairedRadios)
+                .onChange(of: showPairedRadios) { _ in
+                    meshtastic.publishMeshNodesToMap()
+                }
+        } header: {
+            Text("Map Display")
+        } footer: {
+            Text("A radio in role TAK is paired to a phone that already reports "
+                 + "that operator's position, so it stays off the map by default. "
+                 + "Standalone trackers and sensors are always shown.")
         }
     }
 

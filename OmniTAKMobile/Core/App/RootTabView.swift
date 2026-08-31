@@ -20,6 +20,19 @@ import SwiftUI
 struct RootTabView: View {
     @SceneStorage("selectedRootTab") private var selectedTab: RootTab = .map
     @ObservedObject private var toolbarStore = ToolbarConfigStore.shared
+    /// Drives the Mesh tab's link-state dot.
+    @ObservedObject private var meshtastic = MeshtasticManager.shared
+
+    /// Mesh tab dot: green connected, amber connecting, red failed, grey no
+    /// device — same ladder as Android.
+    private var meshLinkColor: Color {
+        switch meshtastic.linkState {
+        case .connected:  return .green
+        case .connecting: return .orange
+        case .failed:     return .red
+        case .noDevice:   return Color.white.opacity(0.35)
+        }
+    }
     @State private var showToolsLauncher = false
     @State private var showAddPalette = false
 
@@ -71,7 +84,8 @@ struct RootTabView: View {
             CustomToolbar(
                 selectedTab: $selectedTab,
                 onSelect: dispatch,
-                onAddTapped: { showAddPalette = true }
+                onAddTapped: { showAddPalette = true },
+                statusDots: ["tab.mesh": meshLinkColor]
             )
         }
         // Tools popup overlay (tap-outside-to-dismiss; map stays interactive).

@@ -666,8 +666,48 @@ public class MeshtasticManager: ObservableObject {
     /// Publish all mesh nodes with positions to the TAK map.
     /// Routed through CoTEventHandler.handle so the events land in the
     /// rendered store (TAKService.cotEvents) — same path as inbound CoT.
+    /// Defaults key for the "Paired radios" visibility toggle in Meshtastic
+    /// settings. Off by default — see `mapVisibleNodes(_:showPairedRadios:)`.
+    public static let showPairedRadiosKey = "showPairedRadios"
+
+    /// Radio link state, for the always-visible dot on the Meshtastic tool.
+    /// Field feedback asked one question the UI could not answer at a glance:
+    /// "is a radio even connected?"
+    public enum LinkState {
+        case connected, connecting, failed, noDevice
+    }
+
+    /// Mirrors the Android status dot: green connected, amber connecting,
+    /// red failed, grey no device.
+    public var linkState: LinkState {
+        switch connectionState {
+        case "Connected":
+            return .connected
+        case "Connecting...", "Discovering Services...", "Scanning...":
+            return .connecting
+        case "Connection Failed":
+            return .failed
+        default:
+            return .noDevice
+        }
+    }
+
+    /// The nodes that belong on the map.
+    ///
+    /// A radio in role `TAK` is paired to a phone that is already publishing
+    /// that operator's own position, so rendering the radio as well shows one
+    /// person as two dots that drift apart. Those stay hidden unless the
+    /// operator opts in. Standalone trackers — `TAK_TRACKER`, sensors,
+    /// vehicles — are genuinely separate contacts and always ride along.
+    nonisolated public static func mapVisibleNodes(_ nodes: [MeshNode], showPairedRadios: Bool? = nil) -> [MeshNode] {
+        let show = showPairedRadios ?? UserDefaults.standard.bool(forKey: showPairedRadiosKey)
+        guard !show else { return nodes }
+        return nodes.filter { !$0.isTakPaired }
+    }
+
     public func publishMeshNodesToMap() {
-        let cotEvents = MeshtasticCoTConverter.toCoTEvents(nodes: meshNodes, ownNodeId: myNodeNum)
+        let visible = MeshtasticManager.mapVisibleNodes(meshNodes)
+        let cotEvents = MeshtasticCoTConverter.toCoTEvents(nodes: visible, ownNodeId: myNodeNum)
         for event in cotEvents {
             // #180 — these arrived over the Meshtastic mesh, not a TAK server.
             CoTEventHandler.shared.handle(event: .positionUpdate(event), source: .mesh("Meshtastic"))
@@ -677,6 +717,7 @@ public class MeshtasticManager: ObservableObject {
 
     /// Publish a single node to the TAK map
     public func publishNodeToMap(_ node: MeshNode) {
+        guard !MeshtasticManager.mapVisibleNodes([node]).isEmpty else { return }
         let isOwn = node.id == myNodeNum
         if let event = MeshtasticCoTConverter.toCoTEvent(node: node, isOwnNode: isOwn) {
             CoTEventHandler.shared.handle(event: .positionUpdate(event), source: .mesh("Meshtastic"))
