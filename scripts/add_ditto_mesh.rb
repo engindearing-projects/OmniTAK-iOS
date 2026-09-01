@@ -13,7 +13,7 @@
 require 'xcodeproj'
 
 DITTO_REPO    = 'https://github.com/getditto/DittoSwiftPackage'
-DITTO_VERSION = '5.0.3'
+DITTO_VERSION = '5.1.0'
 DITTO_PRODUCT = 'DittoSwift'
 
 project_path = File.expand_path('../OmniTAK.xcodeproj', __dir__)
