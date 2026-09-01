@@ -20,8 +20,9 @@ DEFAULT_P12_PASSWORD =
 // Ditto peer-to-peer mesh. Empty by default: with no database ID the mesh
 // simply stays off and every other transport (TAK server, Meshtastic, MeshCore)
 // is unaffected, so a fresh clone still builds and runs.
-// NOTE the URL is written without its scheme in the Ditto portal; put the full
-// https:// URL here — DittoConfigConnect.server takes a URL, not a host.
+// NOTE write DITTO_URL exactly as the portal shows it — bare host, NO scheme.
+// xcconfig treats "//" as a comment anywhere in a line, so an https:// value
+// silently truncates to "https:" at build time; the app adds the scheme.
 DITTO_DATABASE_ID =
 DITTO_URL =
 DITTO_TOKEN =

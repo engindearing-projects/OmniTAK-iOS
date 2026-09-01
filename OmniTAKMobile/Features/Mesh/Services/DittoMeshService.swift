@@ -178,9 +178,19 @@ final class DittoMeshService: ObservableObject {
         if let key = str("DittoSharedKey"), let license = str("DittoOfflineLicense") {
             return .sharedKey(databaseID: db, key: key, licenseToken: license)
         }
-        if let token = str("DittoToken"),
-           let raw = str("DittoURL"), let url = URL(string: raw), url.scheme != nil {
-            return .playground(databaseID: db, url: url, token: token)
+        if let token = str("DittoToken"), let raw = str("DittoURL") {
+            // xcconfig treats "//" as a comment ANYWHERE in a line, so a value
+            // written as https://host silently truncates to "https:" by the
+            // time it reaches Info.plist. Reject that remnant explicitly, and
+            // accept the bare host exactly as the Ditto portal displays it —
+            // the scheme is added here, not in the config file.
+            if raw.range(of: "^[A-Za-z][A-Za-z0-9+.-]*:$", options: .regularExpression) != nil {
+                return nil
+            }
+            let candidate = raw.contains("://") ? raw : "https://\(raw)"
+            if let url = URL(string: candidate), url.scheme != nil, url.host?.isEmpty == false {
+                return .playground(databaseID: db, url: url, token: token)
+            }
         }
         return nil
     }

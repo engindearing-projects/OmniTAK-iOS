@@ -29,9 +29,11 @@ DEFAULT_P12_PASSWORD =
 // other over Bluetooth LE, peer-to-peer Wi-Fi and LAN and sync CoT directly, no
 // TAK server required. Leave blank and the mesh stays off entirely.
 //
-// The portal shows the URL without a scheme; include https:// here.
+// Write the URL exactly as the portal shows it — bare host, NO https:// —
+// because xcconfig treats "//" as a comment anywhere in a line and would
+// silently truncate the value to "https:". The app adds the scheme itself.
 DITTO_DATABASE_ID =
-DITTO_URL = https://REPLACE_ME.cloud.dittolive.app
+DITTO_URL = REPLACE_ME.cloud.dittolive.app
 
 // Development ("playground") token. This is a DEVELOPMENT credential — it
 // grants full read/write to the database and it EXPIRES, which means a device
