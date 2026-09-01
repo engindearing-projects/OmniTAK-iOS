@@ -189,27 +189,21 @@ final class DittoMeshService: ObservableObject {
     /// settings row is shown as configurable or explained as unavailable.
     var isConfigured: Bool { Self.bundledIdentity() != nil }
 
-    /// True once the operator has answered the first-run question. Until they
-    /// have, the mesh stays down.
-    ///
-    /// The default is deliberately OFF. Everything else here is built so that
-    /// two strangers standing near each other mesh automatically — which is
-    /// exactly why it cannot be on by default: it would broadcast the operator's
-    /// live position to any nearby install without them ever agreeing to it.
-    /// That is both an App Store privacy problem and simply the wrong thing to
-    /// do to someone. One prompt, then it is invisible forever after.
-    var hasChosen: Bool {
-        UserDefaults.standard.object(forKey: Keys.enabled) != nil
-    }
-
     var channel: String {
         let c = UserDefaults.standard.string(forKey: Keys.channel) ?? Self.defaultChannel
         return c.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Self.defaultChannel : c
     }
 
+    /// The enable toggle doubles as the opt-in consent gate — the same stance
+    /// the Android port committed to. The default is deliberately OFF:
+    /// everything else here is built so that two strangers standing near each
+    /// other mesh automatically, which is exactly why it cannot be on by
+    /// default — it would broadcast the operator's live position to any nearby
+    /// install without them ever agreeing to it. Flipping the toggle is that
+    /// agreement, and iOS backs it with its own Bluetooth and Local Network
+    /// permission prompts the first time the mesh starts.
     var isEnabled: Bool {
         get {
-            // No default-on. See `hasChosen` — position sharing is opt-in.
             UserDefaults.standard.object(forKey: Keys.enabled) as? Bool ?? false
         }
         set {
