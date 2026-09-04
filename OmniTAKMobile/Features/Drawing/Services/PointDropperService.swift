@@ -418,10 +418,13 @@ class PointDropperService: ObservableObject {
 
     /// Broadcast a marker as CoT message
     func broadcastMarker(_ marker: PointMarker) {
-        guard let takService = takService else {
-            print("❌ TAKService not configured for broadcasting")
-            return
-        }
+        // Fall back to the singleton: `configure(takService:)` was never
+        // called from anywhere in the app, so the injected reference was nil
+        // forever and this guard silently killed every marker broadcast —
+        // server AND mesh — with only a stdout print as witness. Found live
+        // 2026-08-31: PPLI and chat crossed the peer mesh while markers
+        // never left the device.
+        let takService = self.takService ?? TAKService.shared
 
         let xml = MarkerCoTGenerator.generateCoT(for: marker, staleTime: defaultStaleTime)
         let sentToServer = takService.sendCoT(xml: xml)

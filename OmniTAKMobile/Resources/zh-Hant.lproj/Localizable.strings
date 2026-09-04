@@ -294,6 +294,8 @@
 "tools.bloodhound.subtitle" = "友軍追蹤";
 "tools.meshtastic.title" = "Meshtastic";
 "tools.meshtastic.subtitle" = "Meshtastic 網狀網路";
+"tools.peermesh.title" = "Peer Mesh";
+"tools.peermesh.subtitle" = "手機對手機 CoT 同步，經藍牙與 Wi-Fi — 無需伺服器";
 "tools.echelon.title" = "層級";
 "tools.echelon.subtitle" = "單位層級／梯隊";
 "tools.uas.title" = "UAS 連線";

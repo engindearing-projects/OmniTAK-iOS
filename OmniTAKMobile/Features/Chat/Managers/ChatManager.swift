@@ -162,7 +162,18 @@ class ChatManager: ObservableObject {
             #if DEBUG
             print("📤 [CHAT DEBUG] TAKService available, attempting to send...")
             #endif
-            let success = takService.sendCoT(xml: xml, toServerId: conversation.serverId)
+            let serverSent = takService.sendCoT(xml: xml, toServerId: conversation.serverId)
+            // Broadcast chat also fanned onto the Ditto peer mesh inside
+            // sendCoT. When the mesh is up, the message is in the replicated
+            // store and reaches every peer in range — rendering FAILED because
+            // no *server* took it is wrong in the flagship serverless case
+            // (two phones in a field exchanged the message just fine). DMs
+            // (serverId set) never ride the mesh, so they get no credit here.
+            // Chat sends originate from the UI, so main-actor access is safe.
+            let meshAccepted = conversation.serverId == nil && MainActor.assumeIsolated {
+                DittoMeshService.shared.state == .syncing
+            }
+            let success = serverSent || meshAccepted
             if success {
                 // Update message status to sent
                 if let index = messages.firstIndex(where: { $0.id == message.id }) {
@@ -274,7 +285,13 @@ class ChatManager: ObservableObject {
 
         // Send via TAK service
         if let takService = takService {
-            let success = takService.sendCoT(xml: xml, toServerId: conversation.serverId)
+            let serverSent = takService.sendCoT(xml: xml, toServerId: conversation.serverId)
+            // Same mesh credit as the text path above: the mesh took this
+            // broadcast inside sendCoT even when no server did.
+            let meshAccepted = conversation.serverId == nil && MainActor.assumeIsolated {
+                DittoMeshService.shared.state == .syncing
+            }
+            let success = serverSent || meshAccepted
             if success {
                 // Update message status to sent
                 if let index = messages.firstIndex(where: { $0.id == message.id }) {

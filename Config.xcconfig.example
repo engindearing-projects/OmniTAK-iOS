@@ -22,3 +22,33 @@ CESIUM_ION_TOKEN = REPLACE_ME
 // data packages. Most public TAK servers use the well-known default "atakatak".
 // Leave blank to require explicit password every time.
 DEFAULT_P12_PASSWORD =
+
+// Ditto peer-to-peer mesh — https://portal.ditto.live
+//
+// With these set, OmniTAK devices running the same database ID discover each
+// other over Bluetooth LE, peer-to-peer Wi-Fi and LAN and sync CoT directly, no
+// TAK server required. Leave blank and the mesh stays off entirely.
+//
+// Write the URL exactly as the portal shows it — bare host, NO https:// —
+// because xcconfig treats "//" as a comment anywhere in a line and would
+// silently truncate the value to "https:". The app adds the scheme itself.
+DITTO_DATABASE_ID =
+DITTO_URL = REPLACE_ME.cloud.dittolive.app
+
+// Development ("playground") token. This is a DEVELOPMENT credential — it
+// grants full read/write to the database and it EXPIRES, which means a device
+// that has been offline past expiry stops syncing. Fine for testing and demos;
+// swap for a production auth provider before shipping units to anyone.
+DITTO_TOKEN =
+
+// --- Shipping mode: shared key, no cloud, nothing expires ---------------
+// Set BOTH of these and they win over DITTO_TOKEN above. Peers authenticate
+// each other with certificates signed by this key, so devices that have never
+// had a signal still mesh. The offline license token comes from Ditto
+// (support@ditto.com) — it is not self-serve.
+//
+// Treat DITTO_SHARED_KEY like a private key: anyone holding it can join the
+// mesh and read everything on it, and revoking one device means rotating it
+// for everybody.
+DITTO_SHARED_KEY =
+DITTO_OFFLINE_LICENSE =

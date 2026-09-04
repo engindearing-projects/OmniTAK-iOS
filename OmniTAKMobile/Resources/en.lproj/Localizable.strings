@@ -294,6 +294,8 @@
 "tools.bloodhound.subtitle" = "Blue Force Tracking";
 "tools.meshtastic.title" = "Meshtastic";
 "tools.meshtastic.subtitle" = "Meshtastic mesh networking";
+"tools.peermesh.title" = "Peer Mesh";
+"tools.peermesh.subtitle" = "Phone-to-phone CoT sync over Bluetooth and Wi-Fi — no server needed";
 "tools.echelon.title" = "Hierarchy";
 "tools.echelon.subtitle" = "Unit hierarchy / echelon";
 "tools.uas.title" = "UAS Connect";
