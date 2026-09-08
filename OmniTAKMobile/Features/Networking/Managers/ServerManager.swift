@@ -28,8 +28,9 @@ struct TAKServer: Identifiable, Codable, Equatable {
     var username: String?  // Username for enrollment
     var password: String?  // Password for enrollment
     var enrollmentPort: UInt16?  // Enrollment API port (default 8446)
+    var secureAPIPort: UInt16?  // Marti/Mission REST API port (default 8443) — #114
 
-    init(id: UUID = UUID(), name: String, host: String, port: UInt16, protocolType: String = "tcp", useTLS: Bool = false, isDefault: Bool = false, enabled: Bool = true, certificateName: String? = nil, certificatePassword: String? = nil, caCertificateName: String? = nil, caCertificatePassword: String? = nil, allowLegacyTLS: Bool = false, allowUntrustedTLS: Bool = false, username: String? = nil, password: String? = nil, enrollmentPort: UInt16? = nil) {
+    init(id: UUID = UUID(), name: String, host: String, port: UInt16, protocolType: String = "tcp", useTLS: Bool = false, isDefault: Bool = false, enabled: Bool = true, certificateName: String? = nil, certificatePassword: String? = nil, caCertificateName: String? = nil, caCertificatePassword: String? = nil, allowLegacyTLS: Bool = false, allowUntrustedTLS: Bool = false, username: String? = nil, password: String? = nil, enrollmentPort: UInt16? = nil, secureAPIPort: UInt16? = nil) {
         self.id = id
         self.name = name
         self.host = host
@@ -47,6 +48,7 @@ struct TAKServer: Identifiable, Codable, Equatable {
         self.username = username
         self.password = password
         self.enrollmentPort = enrollmentPort
+        self.secureAPIPort = secureAPIPort
     }
 
     /// Custom decoding so servers saved by builds that predate
@@ -72,6 +74,7 @@ struct TAKServer: Identifiable, Codable, Equatable {
         username = try c.decodeIfPresent(String.self, forKey: .username)
         password = try c.decodeIfPresent(String.self, forKey: .password)
         enrollmentPort = try c.decodeIfPresent(UInt16.self, forKey: .enrollmentPort)
+        secureAPIPort = try c.decodeIfPresent(UInt16.self, forKey: .secureAPIPort)
     }
 
     var displayName: String {

@@ -436,6 +436,7 @@ struct ServerEditView: View {
     @State private var host: String = ""
     @State private var port: String = ""
     @State private var enrollmentPort: String = ""
+    @State private var secureAPIPort: String = ""
     @State private var useTLS: Bool = true
     @State private var allowLegacyTLS: Bool = false
     @State private var allowUntrustedTLS: Bool = false
@@ -446,6 +447,7 @@ struct ServerEditView: View {
         _host = State(initialValue: server.host)
         _port = State(initialValue: String(server.port))
         _enrollmentPort = State(initialValue: String(server.enrollmentPort ?? 8446))
+        _secureAPIPort = State(initialValue: String(server.secureAPIPort ?? 8443))
         _useTLS = State(initialValue: server.useTLS)
         _allowLegacyTLS = State(initialValue: server.allowLegacyTLS)
         _allowUntrustedTLS = State(initialValue: server.allowUntrustedTLS)
@@ -502,6 +504,23 @@ struct ServerEditView: View {
                                     .textFieldStyle(TAKTextFieldStyle())
                                     .keyboardType(.numberPad)
                             }
+                        }
+
+                        // Marti REST API port (#114). Mission Sync / Data Sync
+                        // talk to this port; stored per server like Enrollment
+                        // Port, nil/8443 is the conventional default.
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Marti API Port")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(Color(hex: "#CCCCCC"))
+
+                            TextField("8443", text: $secureAPIPort)
+                                .textFieldStyle(TAKTextFieldStyle())
+                                .keyboardType(.numberPad)
+
+                            Text("Mission Sync and Data Sync use this port. Leave at 8443 unless your server remaps its REST API.")
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(hex: "#888888"))
                         }
 
                         // TLS Toggle
@@ -637,12 +656,14 @@ struct ServerEditView: View {
     private func saveChanges() {
         guard let portNum = UInt16(port) else { return }
         let enrollPortNum = UInt16(enrollmentPort) ?? 8446
+        let apiPortNum = UInt16(secureAPIPort) ?? 8443
 
         var updatedServer = server
         updatedServer.name = name
         updatedServer.host = host
         updatedServer.port = portNum
         updatedServer.enrollmentPort = enrollPortNum
+        updatedServer.secureAPIPort = apiPortNum
         updatedServer.useTLS = useTLS
         updatedServer.allowLegacyTLS = allowLegacyTLS
         updatedServer.allowUntrustedTLS = allowUntrustedTLS

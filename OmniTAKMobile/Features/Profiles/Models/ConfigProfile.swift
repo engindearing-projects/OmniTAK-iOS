@@ -25,6 +25,8 @@ struct ProfileServer: Codable, Equatable {
     var enabled: Bool
     /// Optional enrollment pointer (server host may differ from streaming host)
     var enrollmentPort: UInt16?
+    /// Optional Marti/Mission REST API port when the server remaps it off 8443 (#114)
+    var secureAPIPort: UInt16?
     /// Username — stored locally for UX, intentionally excluded from QR/Codable
     /// so teammate callsigns / PII are never embedded in a shared QR code.
     var enrollmentUsername: String?
@@ -37,6 +39,7 @@ struct ProfileServer: Codable, Equatable {
         self.useTLS = server.useTLS
         self.enabled = server.enabled
         self.enrollmentPort = server.enrollmentPort
+        self.secureAPIPort = server.secureAPIPort
         self.enrollmentUsername = server.username
         // certificatePassword, caCertificatePassword, password, enrollmentUsername
         // intentionally omitted from the serialised (Codable) form below.
@@ -45,7 +48,7 @@ struct ProfileServer: Codable, Equatable {
     // MARK: - Codable (excludes enrollmentUsername)
 
     enum CodingKeys: String, CodingKey {
-        case name, host, port, protocolType, useTLS, enabled, enrollmentPort
+        case name, host, port, protocolType, useTLS, enabled, enrollmentPort, secureAPIPort
         // enrollmentUsername is intentionally absent — PII, not shared in QR
     }
 
@@ -58,6 +61,7 @@ struct ProfileServer: Codable, Equatable {
         useTLS       = try c.decode(Bool.self,    forKey: .useTLS)
         enabled      = try c.decode(Bool.self,    forKey: .enabled)
         enrollmentPort     = try c.decodeIfPresent(UInt16.self, forKey: .enrollmentPort)
+        secureAPIPort      = try c.decodeIfPresent(UInt16.self, forKey: .secureAPIPort)
         enrollmentUsername = nil  // never decoded from QR; operator enters at enrollment
     }
 
@@ -70,6 +74,7 @@ struct ProfileServer: Codable, Equatable {
         try c.encode(useTLS,       forKey: .useTLS)
         try c.encode(enabled,      forKey: .enabled)
         try c.encodeIfPresent(enrollmentPort, forKey: .enrollmentPort)
+        try c.encodeIfPresent(secureAPIPort, forKey: .secureAPIPort)
         // enrollmentUsername intentionally not encoded
     }
 
@@ -97,7 +102,8 @@ struct ProfileServer: Codable, Equatable {
             allowUntrustedTLS: false,
             username: enrollmentUsername,
             password: nil,
-            enrollmentPort: enrollmentPort
+            enrollmentPort: enrollmentPort,
+            secureAPIPort: secureAPIPort
         )
     }
 }
