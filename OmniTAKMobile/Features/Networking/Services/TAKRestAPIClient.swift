@@ -41,7 +41,9 @@ struct TAKAPIConfiguration {
 
     init(from server: TAKServer) {
         self.serverURL = server.host
-        self.secureAPIPort = 8443  // Default TAK API port
+        // #114: Marti/Mission REST port is per-server; nil means the
+        // conventional 8443 (servers saved before the field existed).
+        self.secureAPIPort = Int(server.secureAPIPort ?? 8443)
         self.certificateName = server.certificateName
         if let certName = server.certificateName,
            let cert = CertificateManager.shared.certificates.first(where: { $0.name == certName }) {
