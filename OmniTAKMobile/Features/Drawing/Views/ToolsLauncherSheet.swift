@@ -152,6 +152,8 @@ struct ToolsLauncherSheet: View {
                          title: "Contacts", subtitle: "Contact list & chat"),
             LauncherTool(id: "selfsa", icon: "dot.radiowaves.left.and.right", color: BarTint.map,
                          title: "Self / Position", subtitle: "Broadcast your position (PLI)"),
+            LauncherTool(id: "peermesh", icon: "point.3.connected.trianglepath.dotted", color: BarTint.mesh,
+                         title: "Peer Mesh", subtitle: "Phone-to-phone CoT sync, no server"),
         ]),
         LauncherSection(title: "Navigation", titleKey: "tools.section.navigation", tools: [
             LauncherTool(id: "gotocoord", icon: "mappin.and.ellipse", color: BarTint.map,

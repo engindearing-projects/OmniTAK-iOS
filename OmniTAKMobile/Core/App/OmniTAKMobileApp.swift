@@ -64,6 +64,11 @@ struct OmniTAKMobileApp: App {
                         GybManager.shared.setEnabled(gybDetectorEnabled)
                         // Issue #74 — apply keep-screen-on at launch.
                         UIApplication.shared.isIdleTimerDisabled = keepScreenOn
+                        // Peer mesh comes up on its own at launch — the whole
+                        // premise is that two devices in range find each other
+                        // with nobody configuring anything. No-ops when the
+                        // build carries no Ditto credentials.
+                        DittoMeshService.shared.start()
                     }
                     .onChange(of: remoteIdScanEnabled) { newValue in
                         RemoteIdAppBridge.shared.setEnabled(newValue)

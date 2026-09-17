@@ -143,6 +143,8 @@ enum ToolRegistry {
                        description: "Turn-by-turn voice navigation") { TurnByTurnNavigationView() },
         ToolDescriptor(id: "meshtastic", displayName: "Meshtastic", icon: "dot.radiowaves.left.and.right",
                        description: "Meshtastic mesh networking") { MeshtasticConnectionView() },
+        ToolDescriptor(id: "peermesh", displayName: "Peer Mesh", icon: "point.3.connected.trianglepath.dotted",
+                       description: "Phone-to-phone CoT sync, no server") { DittoMeshSettingsView() },
         ToolDescriptor(id: "adsb", displayName: "ADS-B", icon: "airplane.circle.fill",
                        description: "ADS-B aircraft tracking") { ADSBTrafficView() },
         ToolDescriptor(id: "uas", displayName: "UAS Connect", icon: "airplane.departure",

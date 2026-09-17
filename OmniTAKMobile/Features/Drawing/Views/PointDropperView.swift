@@ -21,7 +21,12 @@ struct PointDropperView: View {
     @State private var markerName: String = ""
     @State private var selectedAffiliation: MarkerAffiliation = .hostile
     @State private var remarks: String = ""
-    @State private var broadcastImmediately: Bool = false
+    // Default ON: a dropped marker is situational awareness the team should
+    // see, and Android's radial drop already broadcasts unconditionally —
+    // quick drops that silently stay local made iOS markers invisible to
+    // every teammate (found live 2026-08-31 while verifying the peer mesh).
+    // The operator can still flip it off for a private planning marker.
+    @State private var broadcastImmediately: Bool = true
     @State private var showSALUTEReport: Bool = false
     @State private var showMarkerList: Bool = false
     @State private var selectedMarkerForSALUTE: PointMarker?
