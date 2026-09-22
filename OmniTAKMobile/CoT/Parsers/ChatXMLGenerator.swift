@@ -30,18 +30,27 @@ class ChatXMLGenerator {
         let ce = location?.horizontalAccuracy ?? 999999.0
         let le = location?.verticalAccuracy ?? 999999.0
 
-        // Determine chatroom and recipients
-        let chatroom: String
+        // Determine the room name, the conversation id and the routing.
+        //
+        // ATAK files a 1:1 chat by the *recipient UID*: `__chat id`, the
+        // `chatgrp id`/`uid1`, `remarks to` and the event uid all carry it,
+        // while `chatroom` and `<marti><dest>` carry the human-readable
+        // callsign. Sending the callsign as the id made ATAK open a "group"
+        // named after itself instead of a thread with us (#125).
+        let chatroom: String        // display name of the room
+        let conversationId: String  // what the receiver keys the thread on
         let martiElement: String
 
         if isGroupChat {
             // Group chat - use ATAK's expected chatroom name for interoperability
             // No marti destination for broadcast - server routes to all
             chatroom = ChatRoom.atakChatroomName
+            conversationId = chatroom
             martiElement = ""
         } else if let recipientCallsign = message.recipientCallsign {
             // Direct message - need marti destination for routing
             chatroom = recipientCallsign
+            conversationId = message.recipientId ?? recipientCallsign
             martiElement = """
 
                     <marti>
@@ -51,26 +60,23 @@ class ChatXMLGenerator {
         } else {
             // Default to group chat
             chatroom = ChatRoom.atakChatroomName
+            conversationId = chatroom
             martiElement = ""
         }
 
         // Build fileshare element if image attachment present
         let fileshareElement = generateFileshareElement(for: message)
 
-        // For group chat, uid1 should be "All Chat Rooms" (the chatroom)
-        // For direct message, uid1 should be the recipient's UID
-        let chatgrpUid1 = isGroupChat ? chatroom : (message.recipientId ?? chatroom)
-
         let detail = """
-                <__chat id="\(chatroom.xmlEscaped)" chatroom="\(chatroom.xmlEscaped)" senderCallsign="\(senderCallsign.xmlEscaped)" groupOwner="false">
-                    <chatgrp uid0="\(senderUid.xmlEscaped)" uid1="\(chatgrpUid1.xmlEscaped)" id="\(chatroom.xmlEscaped)"/>
+                <__chat id="\(conversationId.xmlEscaped)" chatroom="\(chatroom.xmlEscaped)" senderCallsign="\(senderCallsign.xmlEscaped)" groupOwner="false" messageId="\(messageId.xmlEscaped)">
+                    <chatgrp uid0="\(senderUid.xmlEscaped)" uid1="\(conversationId.xmlEscaped)" id="\(conversationId.xmlEscaped)"/>
                 </__chat>
                 <link uid="\(senderUid.xmlEscaped)" production_time="\(nowStr)" type="a-f-G-U-C" parent_callsign="\(senderCallsign.xmlEscaped)" relation="p-p"/>
-                <remarks source="BAO.F.ATAK.\(senderUid.xmlEscaped)" to="\(chatroom.xmlEscaped)" time="\(nowStr)">\(message.messageText.xmlEscaped)</remarks>\(fileshareElement)\(martiElement)
+                <remarks source="BAO.F.ATAK.\(senderUid.xmlEscaped)" to="\(conversationId.xmlEscaped)" time="\(nowStr)">\(message.messageText.xmlEscaped)</remarks>\(fileshareElement)\(martiElement)
         """
 
         return CoTXMLBuilder.buildEvent(
-            uid: "GeoChat.\(senderUid).\(chatroom).\(messageId)",
+            uid: "GeoChat.\(senderUid).\(conversationId).\(messageId)",
             type: "b-t-f",
             how: "h-g-i-g-o",
             time: now,
