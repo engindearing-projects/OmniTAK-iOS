@@ -58,6 +58,7 @@ struct SimpleEnrollView: View {
     @State private var showAdvanced = false
     @State private var streamingPort = "8089"
     @State private var enrollmentPort = "8446"  // TAK Server standard CSR enrollment port
+    @State private var martiAPIPort = "8443"    // Marti/Mission REST API port (#114 per server, #126 in setup)
     @State private var trustSelfSignedCerts = true  // true = accept any cert, false = require valid CA (Let's Encrypt, etc.)
     // "ssl" (TLS + cert enrollment, the TAK default) or "tcp" (plain, no
     // enrollment). QUIC is not offered: the connection stack has no QUIC
@@ -382,6 +383,22 @@ struct SimpleEnrollView: View {
                                 .textFieldStyle(TAKTextFieldStyle())
                                 .keyboardType(.numberPad)
                         }
+
+                        // Marti / Mission REST API port (#126). Per-server since #114;
+                        // OpenTAKServer and reverse-proxied deployments often move it.
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Marti API Port")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Color(hex: "#00BCD4"))
+
+                            TextField("8443", text: $martiAPIPort)
+                                .textFieldStyle(TAKTextFieldStyle())
+                                .keyboardType(.numberPad)
+
+                            Text("Mission sync and data packages (REST). Default 8443.")
+                                .font(.system(size: 11))
+                                .foregroundColor(Color(white: 0.6))
+                        }
                         }
                     }
 
@@ -700,7 +717,7 @@ struct SimpleEnrollView: View {
             let port = Int(streamingPort) ?? 8089
             let enrollPort = Int(enrollmentPort) ?? 8446
 
-            let server = try await csrService.enroll(
+            var enrolled = try await csrService.enroll(
                 server: serverHost,
                 port: port,
                 enrollmentPort: enrollPort,
@@ -708,6 +725,11 @@ struct SimpleEnrollView: View {
                 password: password,
                 trustSelfSignedCerts: trustSelfSignedCerts
             )
+            // #126: the Marti/Mission REST port belongs to setup, not only to
+            // Edit Server. Store the parsed value the way Edit Server does
+            // (8443 when left blank); the REST client reads it per server.
+            enrolled.secureAPIPort = UInt16(martiAPIPort) ?? 8443
+            let server = enrolled
 
             await MainActor.run { enrollmentState = .storingCertificate }
             try await Task.sleep(nanoseconds: 200_000_000)
@@ -717,6 +739,7 @@ struct SimpleEnrollView: View {
 
             // Set as active server and connect
             await MainActor.run {
+                ServerManager.shared.updateServer(server)  // persists the Marti port (#126)
                 ServerManager.shared.setActiveServer(server)
 
                 // Actually connect to the server. Pin the stream to the CA
