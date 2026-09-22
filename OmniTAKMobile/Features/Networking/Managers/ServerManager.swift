@@ -24,7 +24,7 @@ struct TAKServer: Identifiable, Codable, Equatable {
     var caCertificateName: String?  // Name of CA/truststore certificate for server verification
     var caCertificatePassword: String?  // Password for CA .p12 certificate
     var allowLegacyTLS: Bool  // Allow TLS 1.0/1.1 for extremely old servers (security risk)
-    var allowUntrustedTLS: Bool  // Accept ANY server certificate when no CA truststore is configured (MITM risk — explicit opt-in only)
+    var allowUntrustedTLS: Bool  // Accept ANY server certificate, even when a truststore is stored (explicit opt-in, MITM risk — #127)
     var username: String?  // Username for enrollment
     var password: String?  // Password for enrollment
     var enrollmentPort: UInt16?  // Enrollment API port (default 8446)

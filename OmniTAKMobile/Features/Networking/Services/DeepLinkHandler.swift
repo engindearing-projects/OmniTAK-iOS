@@ -131,6 +131,7 @@ struct EnrollmentDeepLink {
     let token: String
     let port: Int?            // streaming port — from host:port or &port=
     let enrollmentPort: Int?  // CSR enrollment port — from &enrollmentport=
+    var apiPort: Int? = nil   // Marti/Mission REST port — from &apiport= (#126)
 
     static func parse(url: URL) -> EnrollmentDeepLink? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -162,13 +163,15 @@ struct EnrollmentDeepLink {
         // Explicit &port= wins over a port embedded in the host string.
         let port = params["port"].flatMap { Int($0) } ?? embeddedPort
         let enrollmentPort = (params["enrollmentport"] ?? params["enrollport"]).flatMap { Int($0) }
+        let apiPort = (params["apiport"] ?? params["martiport"] ?? params["secureapiport"]).flatMap { Int($0) }
 
         return EnrollmentDeepLink(
             host: bareHost,
             username: username,
             token: token,
             port: port,
-            enrollmentPort: enrollmentPort
+            enrollmentPort: enrollmentPort,
+            apiPort: apiPort
         )
     }
 
@@ -199,6 +202,7 @@ struct PasswordEnrollmentDeepLink {
     let password: String
     let port: Int?            // streaming port, default 8089
     let enrollmentPort: Int?  // CSR enrollment port, default 8446
+    var apiPort: Int? = nil   // Marti/Mission REST port, default 8443 (#126)
     let trustSelfSigned: Bool // default true (accepts any cert during enrollment)
     let name: String?
 
@@ -224,6 +228,7 @@ struct PasswordEnrollmentDeepLink {
 
         let port = (params["port"]).flatMap { Int($0) }
         let enrollmentPort = (params["enrollmentport"] ?? params["enrollport"]).flatMap { Int($0) }
+        let apiPort = (params["apiport"] ?? params["martiport"] ?? params["secureapiport"]).flatMap { Int($0) }
         // Default to trust-all during enrollment so it works for both
         // self-signed and publicly-trusted (Let's Encrypt) endpoints.
         // Override with trust=ca / trustselfsigned=false for strict CA validation.
@@ -240,6 +245,7 @@ struct PasswordEnrollmentDeepLink {
             password: password,
             port: port,
             enrollmentPort: enrollmentPort,
+            apiPort: apiPort,
             trustSelfSigned: trustSelfSigned,
             name: params["name"]
         )
@@ -318,9 +324,12 @@ class DeepLinkHandler: ObservableObject {
         do {
             // enrollWithCSR performs the full CSR flow and registers the
             // server with ServerManager. We then connect using the stored cert.
-            let server = try await csrEnrollmentService.enrollWithCSR(config: config)
+            var enrolled = try await csrEnrollmentService.enrollWithCSR(config: config)
+            if let apiPort = link.apiPort { enrolled.secureAPIPort = UInt16(apiPort) }  // #126
+            let server = enrolled
 
             await MainActor.run {
+                if link.apiPort != nil { ServerManager.shared.updateServer(server) }
                 ServerManager.shared.setActiveServer(server)
                 TAKService.shared.connect(
                     host: server.host,
@@ -461,9 +470,12 @@ class DeepLinkHandler: ObservableObject {
             // enrollWithCSR runs the full CSR flow and registers the server
             // with ServerManager. We then connect using the stored cert,
             // validating against the CA chain it enrolled.
-            let server = try await csrEnrollmentService.enrollWithCSR(config: config)
+            var enrolled = try await csrEnrollmentService.enrollWithCSR(config: config)
+            if let apiPort = enrollment.apiPort { enrolled.secureAPIPort = UInt16(apiPort) }  // #126
+            let server = enrolled
 
             await MainActor.run {
+                if enrollment.apiPort != nil { ServerManager.shared.updateServer(server) }
                 ServerManager.shared.setActiveServer(server)
                 TAKService.shared.connect(
                     host: server.host,

@@ -22,9 +22,9 @@ struct TAKAPIConfiguration {
     /// by name — same as the streaming path (DirectTCPSender). certificateId
     /// remains as a fallback for imported .p12 certs CertificateManager owns.
     let certificateName: String?
-    /// Server trust policy for the REST session. Mirrors the streaming
-    /// path: CA truststore when configured, explicit untrusted opt-in
-    /// (allowUntrustedTLS) otherwise, system roots by default.
+    /// Server trust policy for the REST session. Shares one precedence rule
+    /// with the streaming path (TAKTLSTrustMode.resolve): explicit untrusted
+    /// opt-in first, then the CA truststore, then system roots.
     var trustMode: TAKTLSTrustMode = .acceptUntrusted
     var timeout: TimeInterval = 30
 
@@ -51,17 +51,20 @@ struct TAKAPIConfiguration {
         } else {
             self.certificateId = nil
         }
-        // Derive the trust policy from the server settings (same
-        // precedence as the streaming connect path).
-        if let caName = server.caCertificateName,
-           let anchors = DirectTCPSender.loadCACertificates(name: caName),
-           !anchors.isEmpty {
-            self.trustMode = .anchored(anchors)
-        } else if server.allowUntrustedTLS {
-            self.trustMode = .acceptUntrusted
-        } else {
-            self.trustMode = .system
-        }
+        // Server trust: the same precedence rule as the streaming path
+        // (explicit untrusted opt-in > enrolled CA anchors > system roots).
+        let anchors = server.caCertificateName.flatMap { DirectTCPSender.loadCACertificates(name: $0) }
+        let mode = TAKTLSTrustMode.resolve(allowUntrustedTLS: server.allowUntrustedTLS, anchors: anchors)
+        self.trustMode = mode
+        // Observable on-device (idevicesyslog / Console): which policy this
+        // REST session will run with, and why (#127). Locals only: the log
+        // interpolation is an escaping autoclosure and must not capture self.
+        let host = server.host
+        let port = Int(server.secureAPIPort ?? 8443)
+        let truststore = server.caCertificateName ?? "none"
+        let anchorCount = anchors?.count ?? 0
+        let optIn = server.allowUntrustedTLS
+        Logger.takNetwork.info("REST trust mode for \(host, privacy: .public):\(port, privacy: .public) = \(mode.label, privacy: .public) (truststore=\(truststore, privacy: .public), anchors=\(anchorCount, privacy: .public), allowUntrusted=\(optIn, privacy: .public))")
     }
 }
 

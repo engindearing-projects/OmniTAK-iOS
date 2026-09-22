@@ -36,6 +36,36 @@ enum TAKTLSTrustMode {
     case system
 }
 
+extension TAKTLSTrustMode {
+    /// Short, log-friendly name of the selected mode, so a device syslog
+    /// shows which policy a session actually ran with (#127).
+    var label: String {
+        switch self {
+        case .anchored(let anchors): return "anchored(\(anchors.count))"
+        case .acceptUntrusted: return "acceptUntrusted"
+        case .system: return "system"
+        }
+    }
+
+    /// The one precedence rule for server trust, shared by the REST session
+    /// (TAKAPIConfiguration) and the streaming connect path (TAKService):
+    ///
+    ///   explicit "Trust untrusted certificates" opt-in
+    ///     > CA anchors from the server's truststore
+    ///       > system roots
+    ///
+    /// The opt-in has to come first. Every app-enrolled server carries a
+    /// truststore, so checking anchors first left the toggle unreachable:
+    /// mission sync against an OpenTAKServer whose REST port presents a
+    /// certificate outside that truststore kept failing with the toggle on
+    /// (#127).
+    static func resolve(allowUntrustedTLS: Bool, anchors: [SecCertificate]?) -> TAKTLSTrustMode {
+        if allowUntrustedTLS { return .acceptUntrusted }
+        if let anchors, !anchors.isEmpty { return .anchored(anchors) }
+        return .system
+    }
+}
+
 // MARK: - Session Delegate
 
 final class TAKTLSSessionDelegate: NSObject, URLSessionDelegate {
