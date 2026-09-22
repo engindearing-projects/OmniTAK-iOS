@@ -301,7 +301,14 @@ class DirectTCPSender {
                 }
             }
 
-            if !caCertificates.isEmpty {
+            // #127: the explicit "Trust untrusted certificates" opt-in wins even
+            // when a truststore is stored (every app-enrolled server has one),
+            // the same precedence TAKTLSTrustMode.resolve applies to the REST
+            // session. Before this the toggle was unreachable for those servers.
+            #if DEBUG
+            print("🔐 Stream trust mode: \(TAKTLSTrustMode.resolve(allowUntrustedTLS: allowUntrustedTLS, anchors: caCertificates).label)")
+            #endif
+            if !allowUntrustedTLS && !caCertificates.isEmpty {
                 // Pin the server to the provided/enrolled CA. The server's
                 // certificate must chain to one of our CA anchors OR a system
                 // root (so publicly-trusted / Let's Encrypt servers validate
@@ -342,9 +349,9 @@ class DirectTCPSender {
                     complete(trusted)
                 }, .global())
             } else if allowUntrustedTLS {
-                // No CA certificate AND the user explicitly enabled
-                // "Trust untrusted certificates" for this server — accept any
-                // server certificate (self-signed without a truststore).
+                // The user explicitly enabled "Trust untrusted certificates"
+                // for this server — accept any server certificate, even when
+                // a truststore is stored (#127).
                 // MITM risk; surfaced with a warning in the server form UI.
                 sec_protocol_options_set_peer_authentication_required(secOptions, false)
 
