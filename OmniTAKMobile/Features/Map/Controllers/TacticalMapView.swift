@@ -503,9 +503,10 @@ struct TacticalMapView: UIViewRepresentable {
         // touch-down, then the dragged coordinate each frame.
         weak var vertexEditPanGesture: UIPanGestureRecognizer?
 
-        // MIL-STD-2525 symbol cache — UIHostingController snapshots
-        // keyed by (cotType, callsign) so we don't rebuild the image
-        // on every frame. Bounded; cleared on memory warnings.
+        // MIL-STD-2525 symbol cache — Core Graphics symbol bitmaps keyed by
+        // cotType (no callsign: the label is a Mapbox text field, #132) so we
+        // don't rebuild the image on every frame. Bounded; cleared on memory
+        // warnings.
         private var symbolImageCache: [String: UIImage] = [:]
         private let symbolImageCacheCapacity = 256
 
@@ -1013,30 +1014,14 @@ struct TacticalMapView: UIViewRepresentable {
             var fresh: [PointAnnotation] = []
             fresh.reserveCapacity(parent.markers.count)
             for marker in parent.markers {
-                // Style-image key folds in the icon source so a spot-map dot and
-                // an affiliation frame of the same type don't share one image.
-                let key = "cot|\(marker.type)|\(marker.iconsetPath ?? "")|\(marker.argbColor ?? 0)|\(marker.callsign)"
-                let img = symbolImage(for: marker)
-                var ann = PointAnnotation(id: "cot-\(marker.uid)", coordinate: marker.coordinate)
-                ann.image = .init(image: img, name: key)
-                ann.iconSize = 1.0
-                ann.iconAnchor = .bottom
-                if overlay {
-                    if let receivedAt = marker.receivedAt {
-                        ann.iconOpacity = CoTAge.alpha(receivedAt: receivedAt, now: now)
-                    }
-                    if let ageLabel = CoTAge.shortLabel(receivedAt: marker.receivedAt, now: now) {
-                        ann.textField = ageLabel
-                        ann.textAnchor = .top
-                        ann.textOffset = [0, 0.6]
-                        ann.textColor = StyleColor(.white)
-                        ann.textHaloColor = StyleColor(.black)
-                        ann.textHaloWidth = 1.0
-                        ann.textSize = 10
-                        ann.textOpacity = ann.iconOpacity ?? 1.0
-                    }
-                }
-                fresh.append(ann)
+                // Symbol-only sprite + the callsign as a Mapbox text field (#132);
+                // the assembly lives in ContactMarkerRender so it is unit-tested.
+                fresh.append(ContactMarkerRender.annotation(
+                    for: marker,
+                    image: symbolImage(for: marker),
+                    stalenessOverlay: overlay,
+                    now: now
+                ))
             }
             manager.annotations = fresh
         }
@@ -1055,38 +1040,17 @@ struct TacticalMapView: UIViewRepresentable {
                 return img
             }
 
-            let key = "cot|\(marker.type)|\(marker.callsign)"
+            // Symbol only — the callsign is the annotation's Mapbox text field,
+            // so the bitmap (and its cache key) no longer depend on it (#132).
+            let key = ContactMarkerRender.symbolCacheKey(cotType: marker.type)
             if let cached = symbolImageCache[key] { return cached }
 
-            // Reuse the SwiftUI MilStdMarkerSymbolView used elsewhere
-            // in the app so the symbology matches the radial menu and
-            // overlay sheets pixel-for-pixel.
-            let view = MilStdMarkerSymbolView(
-                cotType: marker.type,
-                callsign: marker.callsign,
-                echelon: nil,
-                size: 28,
-                isSelected: false
-            )
-            let img = Self.snapshot(view, size: CGSize(width: 80, height: 56))
+            let img = ContactMarkerRender.symbolImage(cotType: marker.type)
             if symbolImageCache.count >= symbolImageCacheCapacity {
                 symbolImageCache.removeAll(keepingCapacity: true)
             }
             symbolImageCache[key] = img
             return img
-        }
-
-        /// SwiftUI → UIImage. Wrapped with `try?` so a transient
-        /// rendering glitch returns an empty image rather than
-        /// crashing the map.
-        private static func snapshot<Content: View>(_ view: Content, size: CGSize) -> UIImage {
-            let host = UIHostingController(rootView: view)
-            host.view.backgroundColor = .clear
-            host.view.frame = CGRect(origin: .zero, size: size)
-            let renderer = UIGraphicsImageRenderer(size: size)
-            return renderer.image { _ in
-                host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
-            }
         }
 
         // MARK: - Point markers (radial-menu-dropped pins)
