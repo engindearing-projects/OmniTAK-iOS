@@ -41,6 +41,81 @@ enum CSREnrollmentError: LocalizedError {
     }
 }
 
+// MARK: - Server Address Parsing
+
+/// The pieces of a user-typed TAK server address.
+///
+/// The Address field (and the QR / deep-link `host=` parameter) is free text:
+/// a bare hostname, or a full endpoint when the server sits behind a reverse
+/// proxy — `http://192.168.1.10:8446`, `https://tak.example.com/tak`,
+/// `tak.example.com:443`, `[fd00::10]:8446`. This is the one parser for that
+/// text, shared by every entry point, so the enrollment request and the
+/// saved streaming host can never disagree about what the host is (#138: the
+/// request used the parsed host while the saved server kept the raw string,
+/// and the stream then dialled a "host" named `http://192.168.1.10:8446`).
+struct TAKServerAddress: Equatable {
+    /// Scheme as typed, lowercased ("http", "https"). nil when none was typed.
+    let scheme: String?
+    /// True when the text contained a "://" delimiter, even with an empty scheme.
+    let hadSchemeDelimiter: Bool
+    /// The bare host: no scheme, port, path prefix, or IPv6 brackets.
+    let host: String
+    /// The port as typed, if any.
+    let port: Int?
+    /// The path prefix as typed ("/tak"), "" when none, without a trailing slash.
+    let basePath: String
+
+    init(parsing text: String) {
+        var raw = text.trimmingCharacters(in: .whitespaces)
+
+        var parsedScheme: String?
+        var delimiter = false
+        if let schemeRange = raw.range(of: "://") {
+            delimiter = true
+            let typed = String(raw[..<schemeRange.lowerBound]).lowercased()
+            if !typed.isEmpty { parsedScheme = typed }
+            raw = String(raw[schemeRange.upperBound...])
+        }
+
+        var path = ""
+        if let slash = raw.firstIndex(of: "/") {
+            path = String(raw[slash...])
+            while path.hasSuffix("/") { path.removeLast() }
+            raw = String(raw[..<slash])
+        }
+
+        var parsedPort: Int?
+        if raw.hasPrefix("["), let close = raw.firstIndex(of: "]") {
+            // Bracketed IPv6 literal: "[fd00::10]" or "[fd00::10]:8446".
+            let tail = raw[raw.index(after: close)...]
+            if tail.hasPrefix(":"), let p = Int(tail.dropFirst()) { parsedPort = p }
+            raw = String(raw[raw.index(after: raw.startIndex)..<close])
+        } else if let colon = raw.lastIndex(of: ":"),
+                  raw.firstIndex(of: ":") == colon,
+                  let p = Int(raw[raw.index(after: colon)...]) {
+            // "host:port" (exactly one colon). Two or more colons without
+            // brackets is a bare IPv6 literal such as "fd00::10", which
+            // carries no port — splitting on its last colon would mangle it.
+            parsedPort = p
+            raw = String(raw[..<colon])
+        }
+
+        scheme = parsedScheme
+        hadSchemeDelimiter = delimiter
+        host = raw
+        port = parsedPort
+        basePath = path
+    }
+
+    /// The streaming target for an address typed into the plain-TCP form:
+    /// the bare host, and the port from the address when it carries one
+    /// (the user typed it right there), else `fallbackPort`.
+    static func streamingTarget(from text: String, fallbackPort: UInt16) -> (host: String, port: UInt16) {
+        let address = TAKServerAddress(parsing: text)
+        return (address.host, address.port.flatMap { UInt16(exactly: $0) } ?? fallbackPort)
+    }
+}
+
 // MARK: - Enrollment Configuration
 
 struct CSREnrollmentConfiguration {
@@ -73,29 +148,8 @@ struct CSREnrollmentConfiguration {
     /// and ignore the separate enrollmentPort field. A bare hostname
     /// keeps the prior behaviour of templating in enrollmentPort.
     private var endpoint: (scheme: String, host: String, port: Int?, basePath: String) {
-        var raw = serverHost.trimmingCharacters(in: .whitespaces)
-        let hadScheme = raw.contains("://")
-
-        var scheme = useSSL ? "https" : "http"
-        if let schemeRange = raw.range(of: "://") {
-            let parsed = String(raw[..<schemeRange.lowerBound]).lowercased()
-            if !parsed.isEmpty { scheme = parsed }
-            raw = String(raw[schemeRange.upperBound...])
-        }
-
-        var basePath = ""
-        if let slash = raw.firstIndex(of: "/") {
-            basePath = String(raw[slash...])
-            while basePath.hasSuffix("/") { basePath.removeLast() }
-            raw = String(raw[..<slash])
-        }
-
-        var explicitPort: Int?
-        if let colon = raw.lastIndex(of: ":"),
-           let p = Int(raw[raw.index(after: colon)...]) {
-            explicitPort = p
-            raw = String(raw[..<colon])
-        }
+        let address = TAKServerAddress(parsing: serverHost)
+        let scheme = address.scheme ?? (useSSL ? "https" : "http")
 
         // Port precedence:
         //  - an explicit port in the host string always wins
@@ -103,21 +157,62 @@ struct CSREnrollmentConfiguration {
         //    omitted from the URL — some reverse proxies 404 on :443)
         //  - bare hostname → fall back to the enrollmentPort field
         let resolvedPort: Int?
-        if let explicitPort = explicitPort {
+        if let explicitPort = address.port {
             resolvedPort = explicitPort
-        } else if hadScheme {
+        } else if address.hadSchemeDelimiter {
             resolvedPort = nil
         } else {
             resolvedPort = enrollmentPort
         }
 
-        return (scheme, raw, resolvedPort, basePath)
+        return (scheme, address.host, resolvedPort, address.basePath)
     }
+
+    /// The bare hostname parsed out of [serverHost] — scheme, port, path
+    /// prefix and IPv6 brackets removed. This is what the streaming socket
+    /// must dial, so it is what gets saved as `TAKServer.host` (#138).
+    var parsedHost: String { endpoint.host }
 
     var baseURL: String {
         let ep = endpoint
+        // An IPv6 literal needs its brackets back inside a URL.
+        let hostSegment = ep.host.contains(":") ? "[\(ep.host)]" : ep.host
         let portSegment = ep.port.map { ":\($0)" } ?? ""
-        return "\(ep.scheme)://\(ep.host)\(portSegment)\(ep.basePath)"
+        return "\(ep.scheme)://\(hostSegment)\(portSegment)\(ep.basePath)"
+    }
+
+    /// Keychain label shared by the client identity, its private key tag and
+    /// the "-ca" chain that a NEW enrollment creates. Derived from the parsed
+    /// host, so it never embeds a scheme, port or path. For a bare hostname it
+    /// is exactly what earlier builds produced, and servers enrolled before
+    /// this was parsed carry their own `certificateName`, which is the only
+    /// thing the stream and the keychain loaders look up.
+    var certificateAlias: String { "omnitak-cert-\(parsedHost)" }
+
+    /// The server record saved after a successful enrollment. Built from the
+    /// PARSED host, never the raw field text (#138).
+    func makeServer() -> TAKServer {
+        let alias = certificateAlias
+        return TAKServer(
+            id: UUID(),
+            name: "TAK Server (\(parsedHost))",
+            host: parsedHost,
+            port: UInt16(serverPort),
+            protocolType: useSSL ? "ssl" : "tcp",
+            useTLS: useSSL,
+            isDefault: false,
+            certificateName: alias,
+            certificatePassword: "omnitak",  // Password for CSR-enrolled certificates
+            // Pin the stream to the CA chain we just enrolled against. The CA
+            // certs were stored under "\(alias)-ca-N". We use the
+            // "-ca" suffix (NOT the alias itself) because the client
+            // cert is stored under the bare alias label —
+            // loadCACertificates' exact-match would otherwise return the client
+            // cert as the anchor and reject every server. The "-ca" name has no
+            // exact match, so the loader's prefix fallback collects the real
+            // "-ca-0/-ca-1" CA certs and the handshake validates the server.
+            caCertificateName: "\(alias)-ca"
+        )
     }
 
     var configURL: URL? {
@@ -235,7 +330,7 @@ class CSREnrollmentService {
 
         // TAKaware approach: Use consistent label for both private key and certificate
         // This allows iOS to automatically create the SecIdentity
-        let certificateAlias = "omnitak-cert-\(config.serverHost)"
+        let certificateAlias = config.certificateAlias
 
         // Step 2: Generate CSR with DN from server
         // Use certificate alias as the key tag so they match
@@ -266,27 +361,9 @@ class CSREnrollmentService {
         )
         print("[CSREnroll] Certificate identity stored successfully")
 
-        // Step 5: Create server configuration
-        let serverInstance = TAKServer(
-            id: UUID(),
-            name: "TAK Server (\(config.serverHost))",
-            host: config.serverHost,
-            port: UInt16(config.serverPort),
-            protocolType: config.useSSL ? "ssl" : "tcp",
-            useTLS: config.useSSL,
-            isDefault: false,
-            certificateName: certificateAlias,
-            certificatePassword: "omnitak",  // Password for CSR-enrolled certificates
-            // Pin the stream to the CA chain we just enrolled against. The CA
-            // certs were stored under "\(certificateAlias)-ca-N". We use the
-            // "-ca" suffix (NOT certificateAlias itself) because the client
-            // cert is stored under the bare certificateAlias label —
-            // loadCACertificates' exact-match would otherwise return the client
-            // cert as the anchor and reject every server. The "-ca" name has no
-            // exact match, so the loader's prefix fallback collects the real
-            // "-ca-0/-ca-1" CA certs and the handshake validates the server.
-            caCertificateName: "\(certificateAlias)-ca"
-        )
+        // Step 5: Create server configuration. The saved host is the PARSED
+        // host (no scheme/port/path), so the stream dials a real hostname (#138).
+        let serverInstance = config.makeServer()
 
         // Add server to manager (must be on main thread for @Published properties)
         await MainActor.run {
