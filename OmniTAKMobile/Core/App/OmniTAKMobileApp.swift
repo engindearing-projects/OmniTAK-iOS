@@ -140,11 +140,17 @@ struct OmniTAKMobileApp: App {
                 .environmentObject(LocalizationManager.shared)
             }
             .onOpenURL { url in
-                // KML/KMZ opened from Files / Mail / AirDrop / "Open with
-                // OmniTAK" → import through the robust vector overlay path.
-                if url.isFileURL, ["kml", "kmz"].contains(url.pathExtension.lowercased()) {
+                // Overlay files opened from Files / Mail / AirDrop / "Open with
+                // OmniTAK": KML/KMZ → the robust vector overlay path,
+                // MBTiles / GeoPackage → the tile store.
+                switch OpenedOverlayFile(url: url) {
+                case .kml:
                     importOpenedKML(url)
-                } else {
+                case .mbtiles:
+                    importOpenedTileSet(url, kind: .mbtiles)
+                case .gpkg:
+                    importOpenedTileSet(url, kind: .gpkg)
+                case nil:
                     // Handle tak:// deep links (QR code enrollment)
                     deepLinkHandler.handleURL(url)
                 }
@@ -183,6 +189,30 @@ struct OmniTAKMobileApp: App {
             try? FileManager.default.removeItem(at: tmp)
             if let last = await KMLVectorOverlayStore.shared.overlays.last {
                 NotificationCenter.default.post(name: .kmlZoomToOverlay, object: nil, userInfo: ["id": last.id])
+            }
+        }
+    }
+
+    /// Import an MBTiles / GeoPackage file handed to the app, then frame it.
+    /// The store copies the file itself, so the security-scoped access is held
+    /// until that finishes instead of making a second temp copy first (tile
+    /// sets are often hundreds of MB).
+    private func importOpenedTileSet(_ url: URL, kind: OpenedOverlayFile) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        Task { @MainActor in
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let store = MBTilesOverlayStore.shared
+            let imported = kind == .gpkg
+                ? await store.importGPKG(from: url)
+                : await store.importMBTiles(from: url)
+            if imported {
+                if let last = store.overlays.last {
+                    NotificationCenter.default.post(name: .kmlZoomToOverlay, object: nil, userInfo: ["id": last.id])
+                }
+            } else {
+                // Nobody has the Map Overlays panel open here, so use the
+                // app-wide error card; otherwise a failed import is silent.
+                deepLinkHandler.lastError = store.lastError ?? "Couldn't import the file."
             }
         }
     }

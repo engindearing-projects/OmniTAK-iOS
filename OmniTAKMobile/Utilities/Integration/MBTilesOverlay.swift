@@ -12,6 +12,7 @@
 import Foundation
 import Network
 import SQLite3
+import os
 
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -167,6 +168,9 @@ final class MBTilesTileServer {
     private var dbs: [String: RasterTileDB] = [:]
     private let queue = DispatchQueue(label: "mbtiles.server", attributes: .concurrent)
 
+    /// Stop listening when a server instance goes away (tests create their own).
+    deinit { listener?.cancel() }
+
     func register(_ db: RasterTileDB, id: String) {
         lock.lock(); dbs[id] = db; lock.unlock()
         start()
@@ -243,6 +247,16 @@ struct MBTilesOverlay: Codable, Identifiable, Equatable {
     var createdAt: Date
     /// Container format used to reopen the right reader: "mbtiles" or "gpkg".
     var container: String
+    /// True when the tile file this entry points at is not on disk. Runtime
+    /// state only (never written to the registry): the store works it out on
+    /// launch and when the panel opens, so a file that comes back un-flags.
+    var fileMissing: Bool = false
+
+    /// `fileMissing` is deliberately absent: it is derived, not persisted.
+    private enum CodingKeys: String, CodingKey {
+        case id, name, fileName, minZoom, maxZoom, north, south, east, west
+        case hasBounds, opacity, visible, createdAt, container
+    }
 
     init(id: String, name: String, fileName: String, minZoom: Int, maxZoom: Int,
          north: Double, south: Double, east: Double, west: Double, hasBounds: Bool,
@@ -276,6 +290,24 @@ struct MBTilesOverlay: Codable, Identifiable, Equatable {
 
 // MARK: - Store
 
+/// One registry entry decoded on its own, so a single damaged entry can't
+/// take every other entry down with it (a plain `[MBTilesOverlay]` decode
+/// throws for the whole array on the first bad element).
+private struct LossyMBTilesOverlay: Decodable {
+    let overlay: MBTilesOverlay?
+    let failure: String?
+
+    init(from decoder: Decoder) throws {
+        do {
+            overlay = try MBTilesOverlay(from: decoder)
+            failure = nil
+        } catch {
+            overlay = nil
+            failure = String(describing: error)
+        }
+    }
+}
+
 @MainActor
 final class MBTilesOverlayStore: ObservableObject {
     static let shared = MBTilesOverlayStore()
@@ -287,18 +319,33 @@ final class MBTilesOverlayStore: ObservableObject {
 
     private let dir: URL
     private let metaURL: URL
+    private let server: MBTilesTileServer
 
-    init() {
+    /// Tile files the store owns inside `dir`.
+    private static let tileFileExtensions: Set<String> = ["mbtiles", "gpkg"]
+
+    /// `directory` holds the tile files and the `mbtiles.json` registry; the
+    /// default is `Documents/MBTiles`. Tests pass a temp directory and their
+    /// own tile server so nothing touches the app's real files or the shared
+    /// server.
+    init(directory: URL? = nil, tileServer: MBTilesTileServer = .shared) {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        dir = docs.appendingPathComponent("MBTiles", isDirectory: true)
+        dir = directory ?? docs.appendingPathComponent("MBTiles", isDirectory: true)
         metaURL = dir.appendingPathComponent("mbtiles.json")
+        server = tileServer
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         load()
-        for o in overlays { registerServer(o) } // re-register on launch
+        for o in overlays where !o.fileMissing { registerServer(o) } // re-register on launch
     }
 
     func fileURL(_ overlay: MBTilesOverlay) -> URL { dir.appendingPathComponent(overlay.fileName) }
-    func tileURLTemplate(_ overlay: MBTilesOverlay) -> String? { MBTilesTileServer.shared.tileURLTemplate(for: overlay.id) }
+
+    /// Tile URL for an overlay, or nil when there is nothing to serve (the
+    /// file is missing, or the tile server isn't listening yet).
+    func tileURLTemplate(_ overlay: MBTilesOverlay) -> String? {
+        guard !overlay.fileMissing else { return nil }
+        return server.tileURLTemplate(for: overlay.id)
+    }
 
     private func openDB(_ overlay: MBTilesOverlay) -> RasterTileDB? {
         let path = fileURL(overlay).path
@@ -306,7 +353,43 @@ final class MBTilesOverlayStore: ObservableObject {
     }
 
     private func registerServer(_ overlay: MBTilesOverlay) {
-        if let db = openDB(overlay) { MBTilesTileServer.shared.register(db, id: overlay.id) }
+        if let db = openDB(overlay) { server.register(db, id: overlay.id) }
+    }
+
+    private func fileIsPresent(_ overlay: MBTilesOverlay) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(overlay).path)
+    }
+
+    /// Re-check which tile files are still on disk. The Documents folder is
+    /// visible in the Files app, so a file can be deleted (or put back) while
+    /// the app is running; the panel calls this when it opens.
+    func refreshFileState() {
+        for i in overlays.indices {
+            let missing = !fileIsPresent(overlays[i])
+            guard missing != overlays[i].fileMissing else { continue }
+            overlays[i].fileMissing = missing
+            if missing {
+                logMissingFile(overlays[i])
+                server.unregister(overlays[i].id)
+            } else {
+                registerServer(overlays[i])
+            }
+        }
+    }
+
+    /// Say why an entry has no file, so the next field report can tell a
+    /// deleted file from a wiped or relocated store.
+    private func logMissingFile(_ overlay: MBTilesOverlay) {
+        let fm = FileManager.default
+        let dirPresent = fm.fileExists(atPath: dir.path)
+        let tileFiles = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? [])
+            .filter { Self.tileFileExtensions.contains(($0 as NSString).pathExtension.lowercased()) }
+            .count
+        Logger.map.error("MBTiles file missing for an entry: \(self.fileURL(overlay).path, privacy: .public) (store dir present: \(dirPresent, privacy: .public), tile files in dir: \(tileFiles, privacy: .public), entries: \(self.overlays.count, privacy: .public))")
+    }
+
+    private func ensureDirectory() {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
     @discardableResult
@@ -322,10 +405,11 @@ final class MBTilesOverlayStore: ObservableObject {
         let id = UUID().uuidString
         let dest = dir.appendingPathComponent("\(id).\(container)")
         do {
+            ensureDirectory() // the folder is visible in Files; it may have been deleted
             try FileManager.default.copyItem(at: url, to: dest)
             let db: RasterTileDB? = container == "gpkg" ? GPKGDb(path: dest.path) : MBTilesDB(path: dest.path)
             guard let db = db else { throw NSError(domain: container, code: 1) }
-            MBTilesTileServer.shared.register(db, id: id)
+            server.register(db, id: id)
             let b = db.bounds
             overlays.append(MBTilesOverlay(
                 id: id, name: url.deletingPathExtension().lastPathComponent, fileName: dest.lastPathComponent,
@@ -353,19 +437,44 @@ final class MBTilesOverlayStore: ObservableObject {
         mutate(id) { $0.name = t }
     }
 
+    /// Delete one tile set. Works for an entry whose file is already gone
+    /// (nothing to delete on disk, the entry is still dropped).
     func remove(_ id: String) {
         guard let idx = overlays.firstIndex(where: { $0.id == id }) else { return }
-        MBTilesTileServer.shared.unregister(id)
-        try? FileManager.default.removeItem(at: fileURL(overlays[idx]))
+        server.unregister(id)
+        deleteFile(of: overlays[idx])
         overlays.remove(at: idx); persist()
     }
 
+    /// Delete every tile set, including files the store imported that no
+    /// entry points at any more (left behind when the registry was unreadable
+    /// or lost an entry). Only `<uuid>.mbtiles` / `<uuid>.gpkg` names are
+    /// swept; a file someone dropped into the folder by hand is left alone.
     func removeAll() {
         for o in overlays {
-            MBTilesTileServer.shared.unregister(o.id)
-            try? FileManager.default.removeItem(at: fileURL(o))
+            server.unregister(o.id)
+            deleteFile(of: o)
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for file in leftovers
+        where Self.tileFileExtensions.contains(file.pathExtension.lowercased())
+            && UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil {
+            try? FileManager.default.removeItem(at: file)
         }
         overlays.removeAll(); persist()
+    }
+
+    /// Remove an entry's tile file. A file that is already gone is fine; any
+    /// other failure is reported instead of swallowed.
+    private func deleteFile(of overlay: MBTilesOverlay) {
+        let url = fileURL(overlay)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            Logger.map.error("MBTiles delete failed: \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            lastError = "Couldn't delete the tile file: \(error.localizedDescription)"
+        }
     }
 
     private func mutate(_ id: String, _ change: (inout MBTilesOverlay) -> Void) {
@@ -373,14 +482,85 @@ final class MBTilesOverlayStore: ObservableObject {
         change(&overlays[idx]); persist()
     }
 
+    /// Write the registry atomically (temp file + rename), so a kill or crash
+    /// mid-write can't leave a truncated `mbtiles.json` that drops every entry
+    /// on the next launch.
     private func persist() {
-        guard let data = try? JSONEncoder().encode(overlays) else { return }
-        try? data.write(to: metaURL)
+        do {
+            ensureDirectory()
+            let data = try JSONEncoder().encode(overlays)
+            try data.write(to: metaURL, options: .atomic)
+        } catch {
+            Logger.map.error("MBTiles registry save failed: \(error.localizedDescription, privacy: .public)")
+            lastError = "Couldn't save the tile set list: \(error.localizedDescription)"
+        }
     }
 
+    /// Read the registry. Entries are decoded one by one and an entry whose
+    /// file is missing is kept and flagged, never dropped: it has to stay
+    /// visible so the user can see the problem and delete it.
     private func load() {
-        guard let data = try? Data(contentsOf: metaURL),
-              let decoded = try? JSONDecoder().decode([MBTilesOverlay].self, from: data) else { return }
-        overlays = decoded.filter { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0.fileName).path) }
+        guard FileManager.default.fileExists(atPath: metaURL.path) else { return } // first launch
+        let data: Data
+        do {
+            data = try Data(contentsOf: metaURL)
+        } catch {
+            Logger.map.error("MBTiles registry unreadable: \(self.metaURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            lastError = "Couldn't read the saved tile set list: \(error.localizedDescription)"
+            return
+        }
+        let entries: [LossyMBTilesOverlay]
+        do {
+            entries = try JSONDecoder().decode([LossyMBTilesOverlay].self, from: data)
+        } catch {
+            // Not a JSON array at all (damaged or truncated). Keep a copy for
+            // diagnosis before the next save replaces it.
+            Logger.map.error("MBTiles registry is not valid JSON, keeping a copy: \(String(describing: error), privacy: .public)")
+            let keep = dir.appendingPathComponent("mbtiles.json.unreadable")
+            try? FileManager.default.removeItem(at: keep)
+            try? FileManager.default.copyItem(at: metaURL, to: keep)
+            lastError = "The saved tile set list is damaged and couldn't be read. Tile files already on this device are still there; import them again to use them."
+            return
+        }
+
+        var loaded: [MBTilesOverlay] = []
+        var skipped = 0
+        for entry in entries {
+            guard var overlay = entry.overlay else {
+                skipped += 1
+                Logger.map.error("MBTiles registry entry skipped, couldn't decode it: \(entry.failure ?? "unknown", privacy: .public)")
+                continue
+            }
+            overlay.fileMissing = !fileIsPresent(overlay)
+            loaded.append(overlay)
+        }
+        overlays = loaded
+        for overlay in loaded where overlay.fileMissing { logMissingFile(overlay) }
+        if skipped > 0 {
+            lastError = skipped == 1
+                ? "1 saved tile set couldn't be read and was skipped."
+                : "\(skipped) saved tile sets couldn't be read and were skipped."
+        }
+    }
+}
+
+// MARK: - Files handed to the app
+
+/// Overlay files the app takes when another app hands it a file ("Open in
+/// OmniTAK" from Files, Mail, AirDrop). Kept separate from `onOpenURL` so the
+/// routing can be tested.
+enum OpenedOverlayFile {
+    case kml
+    case mbtiles
+    case gpkg
+
+    init?(url: URL) {
+        guard url.isFileURL else { return nil }
+        switch url.pathExtension.lowercased() {
+        case "kml", "kmz": self = .kml
+        case "mbtiles": self = .mbtiles
+        case "gpkg": self = .gpkg
+        default: return nil
+        }
     }
 }
