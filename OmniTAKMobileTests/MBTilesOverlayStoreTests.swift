@@ -35,11 +35,11 @@ enum MBTilesTestFixture {
 
     /// Write an MBTiles file at `url`. `tiles` are given in XYZ coordinates and
     /// stored in TMS row order, as the format requires. Pass `bounds: nil` for a
-    /// file with no `bounds` row.
+    /// file with no `bounds` row, `format: nil` for no `format` row.
     @discardableResult
     static func makeMBTiles(
         at url: URL,
-        format: String = "png",
+        format: String? = "png",
         bounds: String? = "-122.5,47.5,-122.0,47.8",
         minZoom: Int = 0,
         maxZoom: Int = 4,
@@ -63,10 +63,10 @@ enum MBTilesTestFixture {
 
         var meta: [(String, String)] = [
             ("name", url.deletingPathExtension().lastPathComponent),
-            ("format", format),
             ("minzoom", String(minZoom)),
             ("maxzoom", String(maxZoom)),
         ]
+        if let format = format { meta.append(("format", format)) }
         if let bounds = bounds { meta.append(("bounds", bounds)) }
         for (name, value) in meta {
             try exec("INSERT INTO metadata (name, value) VALUES ('\(name)', '\(value)')")
@@ -331,8 +331,13 @@ final class MBTilesOverlayStoreTests: XCTestCase {
         XCTAssertEqual(a.fileName, withBounds.fileName)
         XCTAssertFalse(a.fileMissing)
 
+        // No `bounds` row: the bounds of the tiles themselves are recorded
+        // (tile z1/0/0 is the north-west quarter of the world).
         let b = try XCTUnwrap(relaunched.overlays.first { $0.id == noBounds.id })
-        XCTAssertFalse(b.hasBounds)
+        XCTAssertTrue(b.hasBounds)
+        XCTAssertEqual(b.west, -180, accuracy: 1e-6)
+        XCTAssertEqual(b.east, 0, accuracy: 1e-6)
+        XCTAssertEqual(b.south, 0, accuracy: 1e-6)
         XCTAssertTrue(b.visible)
     }
 

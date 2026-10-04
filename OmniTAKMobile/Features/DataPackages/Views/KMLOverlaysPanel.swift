@@ -242,7 +242,7 @@ struct KMLOverlaysPanel: View {
     @ViewBuilder
     private func mbtilesRow(_ overlay: MBTilesOverlay) -> some View {
         HStack(spacing: 12) {
-            if overlay.fileMissing {
+            if !overlay.isDrawable {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
             } else {
                 Image(systemName: "square.stack.3d.up.fill")
@@ -254,13 +254,17 @@ struct KMLOverlaysPanel: View {
                 if overlay.fileMissing {
                     Text("File missing - delete this entry, then import the file again")
                         .font(.caption).foregroundColor(.red)
+                } else if !overlay.isDrawable {
+                    // The full reason is in the detail view.
+                    Text("Can't be drawn - open for details, or delete this entry")
+                        .font(.caption).foregroundColor(.red)
                 } else {
                     Text("Tiles z\(overlay.minZoom)–\(overlay.maxZoom) · \(Int(overlay.opacity * 100))%")
                         .font(.caption).foregroundColor(.secondary)
                 }
             }
             Spacer()
-            if overlay.fileMissing {
+            if !overlay.isDrawable {
                 // The entry has nothing left to show or hide; the one useful
                 // action is getting rid of it. Borderless so it fires on its
                 // own inside the NavigationLink row.
@@ -503,11 +507,14 @@ struct MBTilesOverlayDetailView: View {
                     TextField("Tile set name", text: $nameField).submitLabel(.done)
                         .onSubmit { store.rename(o.id, to: nameField) }
                 }
-                if o.fileMissing {
+                if !o.isDrawable {
                     Section("Status") {
-                        Label("File missing", systemImage: "exclamationmark.triangle.fill")
+                        Label(o.fileMissing ? "File missing" : "Can't be drawn",
+                              systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
-                        Text("The tile file for this entry is no longer on this device, so there is nothing to draw. Delete the entry, then import the file again.")
+                        Text(o.fileMissing
+                             ? "The tile file for this entry is no longer on this device, so there is nothing to draw. Delete the entry, then import the file again."
+                             : (o.unsupportedReason ?? "This tile file can't be drawn.") + " Delete the entry to remove it.")
                             .font(.footnote).foregroundColor(.secondary)
                     }
                 } else {
@@ -521,12 +528,16 @@ struct MBTilesOverlayDetailView: View {
                 }
                 Section("Info") {
                     infoRow("Zoom", "z\(o.minZoom)–\(o.maxZoom)")
-                    if o.hasBounds && !o.fileMissing {
-                        infoRow("Bounds", String(format: "%.3f, %.3f → %.3f, %.3f", o.south, o.west, o.north, o.east))
+                    if o.isDrawable {
+                        if o.hasBounds {
+                            infoRow("Bounds", String(format: "%.3f, %.3f → %.3f, %.3f", o.south, o.west, o.north, o.east))
+                        }
+                        // Tile sets draw on the 2D engine only; this also
+                        // switches to it, with or without bounds to frame.
                         Button {
                             NotificationCenter.default.post(name: .kmlZoomToOverlay, object: nil, userInfo: ["id": o.id])
                             onRequestClose()
-                        } label: { Label("Zoom to tiles", systemImage: "scope") }
+                        } label: { Label(o.hasBounds ? "Zoom to tiles" : "Show on map", systemImage: "scope") }
                     }
                 }
                 Section {

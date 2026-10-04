@@ -1886,25 +1886,42 @@ struct ATAKMapView: View {
                     : mapRegion.center
                 dropMarkerAtLocation(coordinate: center, affiliation: .friendly)
             }
-            // Frame a KML overlay's bounds. Overlays render on the 2D engine,
+            // Frame an overlay's bounds. Overlays render on the 2D engine,
             // so switch to it first.
             .onReceive(NotificationCenter.default.publisher(for: .kmlZoomToOverlay)) { note in
                 guard let id = note.userInfo?["id"] as? String else { return }
-                // Look the id up in either store — vector KML or raster imagery.
-                let box: (minLat: Double, minLon: Double, maxLat: Double, maxLon: Double)?
+                // Look the id up in any of the three stores — vector KML,
+                // raster imagery or MBTiles.
+                var found = true
+                var box: (minLat: Double, minLon: Double, maxLat: Double, maxLon: Double)?
+                // First tile level of an MBTiles overlay. A raster source draws
+                // nothing below it, so don't frame from further out than that.
+                var firstTileLevel: Int?
                 if let o = KMLVectorOverlayStore.shared.overlays.first(where: { $0.id == id }) {
                     box = (o.minLat, o.minLon, o.maxLat, o.maxLon)
                 } else if let r = RasterOverlayStore.shared.overlays.first(where: { $0.id == id }) {
                     box = (r.south, r.west, r.north, r.east)
-                } else if let m = MBTilesOverlayStore.shared.overlays.first(where: { $0.id == id }), m.hasBounds {
-                    box = (m.south, m.west, m.north, m.east)
+                } else if let m = MBTilesOverlayStore.shared.overlays.first(where: { $0.id == id }) {
+                    // A file with no usable bounds used to return here before
+                    // the engine switch, so the tile set imported fine and then
+                    // stayed invisible on the default 3D engine.
+                    if m.hasBounds { box = (m.south, m.west, m.north, m.east) }
+                    firstTileLevel = m.minZoom
                 } else {
-                    box = nil
+                    found = false
                 }
-                guard let b = box else { return }
+                guard found else { return }
                 mapEngineRaw = MapEngine.mapbox2D.rawValue
-                let latSpan = max((b.maxLat - b.minLat) * 1.3, 0.02)
-                let lonSpan = max((b.maxLon - b.minLon) * 1.3, 0.02)
+                guard let b = box else { return }
+                var latSpan = max((b.maxLat - b.minLat) * 1.3, 0.02)
+                var lonSpan = max((b.maxLon - b.minLon) * 1.3, 0.02)
+                if let level = firstTileLevel {
+                    let widest = MBTilesOverlay.widestLongitudeSpan(minZoom: level)
+                    if lonSpan > widest {
+                        latSpan *= widest / lonSpan
+                        lonSpan = widest
+                    }
+                }
                 mapRegion = MKCoordinateRegion(
                     center: CLLocationCoordinate2D(latitude: (b.minLat + b.maxLat) / 2,
                                                    longitude: (b.minLon + b.maxLon) / 2),

@@ -938,44 +938,71 @@ struct TacticalMapView: UIViewRepresentable {
         }
 
         // MARK: - MBTiles raster basemaps (RasterSource → local tile server)
-        private var installedMBTilesIDs = Set<String>()
+
+        /// overlay id -> the tile URL template its source was added with. An id
+        /// is only recorded once its source is really installed, so a source
+        /// skipped because the tile server wasn't listening yet is retried on
+        /// the next refresh (the store publishes a change when the server comes
+        /// up). A recorded template that no longer matches means the server came
+        /// back on another port and the source is pointing at a dead URL.
+        private var installedMBTilesTemplates: [String: String] = [:]
 
         func refreshMBTilesOverlays() {
             guard let mapView = mapView else { return }
             let map: MapboxMap = mapView.mapboxMap
             guard map.isStyleLoaded else { return }
-            // An entry whose file is missing has nothing to draw (and stays in
-            // the list so it can be deleted), so it never gets a source here.
-            let overlays = parent.mbtilesStore.overlays.filter { !$0.fileMissing }
+            // An entry with nothing to draw (its file is missing, or it isn't
+            // raster tiles) stays in the list so it can be deleted, but never
+            // gets a source here.
+            let overlays = parent.mbtilesStore.overlays.filter { $0.isDrawable }
             let wanted = Set(overlays.map { $0.id })
 
-            for id in installedMBTilesIDs where !wanted.contains(id) {
-                let layerID = "mbtileslyr-\(id)"
-                if map.layerExists(withId: layerID) { try? map.removeLayer(withId: layerID) }
-                let sourceID = "mbtilessrc-\(id)"
-                if map.sourceExists(withId: sourceID) { try? map.removeSource(withId: sourceID) }
+            for id in Array(installedMBTilesTemplates.keys) where !wanted.contains(id) {
+                removeMBTilesSource(id, from: map)
+                installedMBTilesTemplates[id] = nil
             }
-            installedMBTilesIDs = wanted
 
             for overlay in overlays {
                 let sourceID = "mbtilessrc-\(overlay.id)"
                 let layerID = "mbtileslyr-\(overlay.id)"
-                if !map.sourceExists(withId: sourceID) {
-                    guard let template = parent.mbtilesStore.tileURLTemplate(overlay) else { continue }
+                // nil while the tile server isn't listening: leave things as
+                // they are, the store republishes when it is.
+                if let template = parent.mbtilesStore.tileURLTemplate(overlay),
+                   !map.sourceExists(withId: sourceID) || installedMBTilesTemplates[overlay.id] != template {
+                    // Not installed yet, or installed with a URL that is dead
+                    // now. Put a replacement layer back at the same z-order.
+                    let position = map.allLayerIdentifiers
+                        .firstIndex { $0.id == layerID }
+                        .map { LayerPosition.at($0) }
+                    removeMBTilesSource(overlay.id, from: map)
                     var source = RasterSource(id: sourceID)
                     source.tiles = [template]
                     source.tileSize = 256
                     source.minzoom = Double(overlay.minZoom)
                     source.maxzoom = Double(overlay.maxZoom)
-                    do { try map.addSource(source) } catch { continue }
-                    var layer = RasterLayer(id: layerID, source: sourceID)
-                    layer.rasterOpacity = .constant(overlay.opacity)
-                    try? map.addLayer(layer)
+                    do {
+                        try map.addSource(source)
+                        var layer = RasterLayer(id: layerID, source: sourceID)
+                        layer.rasterOpacity = .constant(overlay.opacity)
+                        try map.addLayer(layer, layerPosition: position)
+                        installedMBTilesTemplates[overlay.id] = template
+                    } catch {
+                        removeMBTilesSource(overlay.id, from: map)
+                        installedMBTilesTemplates[overlay.id] = nil
+                        continue
+                    }
                 }
                 let vis = overlay.visible ? "visible" : "none"
                 try? map.setLayerProperty(for: layerID, property: "visibility", value: vis)
                 try? map.setLayerProperty(for: layerID, property: "raster-opacity", value: overlay.opacity)
             }
+        }
+
+        private func removeMBTilesSource(_ id: String, from map: MapboxMap) {
+            let layerID = "mbtileslyr-\(id)"
+            if map.layerExists(withId: layerID) { try? map.removeLayer(withId: layerID) }
+            let sourceID = "mbtilessrc-\(id)"
+            if map.sourceExists(withId: sourceID) { try? map.removeSource(withId: sourceID) }
         }
 
         // Lazy-attach helpers — one per annotation kind. Mapbox v11
