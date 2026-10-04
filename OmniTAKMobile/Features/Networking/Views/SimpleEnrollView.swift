@@ -773,10 +773,20 @@ struct SimpleEnrollView: View {
 
     /// Save + connect a plain-TCP server (no certs, no credentials).
     private func connectPlainTCP() async {
-        let host = serverHost
-            .replacingOccurrences(of: "tcp://", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let port = UInt16(streamingPort) ?? 8087
+        // The Address field is free text, same as for enrollment: take the bare
+        // host (no scheme, path, or ":port") so the socket dials a real
+        // hostname (#138). A port typed into the address wins over the field.
+        let target = TAKServerAddress.streamingTarget(
+            from: serverHost.trimmingCharacters(in: .whitespacesAndNewlines),
+            fallbackPort: UInt16(streamingPort) ?? 8087
+        )
+        let host = target.host
+        let port = target.port
+
+        guard !host.isEmpty else {
+            await MainActor.run { enrollmentState = .failed("Enter a server address, e.g. 192.168.1.10") }
+            return
+        }
 
         await MainActor.run {
             enrollmentState = .creatingServer

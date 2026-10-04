@@ -482,3 +482,323 @@ class CAConfigXMLParsingTests: XCTestCase {
         XCTAssertEqual(ca.organizationNames, ["TAK"])
     }
 }
+
+// MARK: - Saved host (#138)
+//
+// The enrollment Address field accepts a full endpoint. The enrollment
+// REQUEST honours the typed scheme / port / path prefix, but the SAVED server
+// must carry only the bare host: the streaming socket dials TAKServer.host
+// verbatim, and a "host" literally named "http://192.168.1.10:8446" never
+// opens (reported by zeidlos, confirmed against a live server).
+
+final class EnrollmentSavedHostTests: XCTestCase {
+
+    private func config(_ host: String,
+                        useSSL: Bool = true,
+                        enrollmentPort: Int = 8446,
+                        streamingPort: Int = 8089) -> CSREnrollmentConfiguration {
+        CSREnrollmentConfiguration(
+            serverHost: host,
+            serverPort: streamingPort,
+            enrollmentPort: enrollmentPort,
+            username: "operator",
+            password: "secret",
+            useSSL: useSSL,
+            trustSelfSignedCerts: true
+        )
+    }
+
+    // MARK: parsedHost
+
+    func testSchemeAndPortAreStrippedFromSavedHost() {
+        XCTAssertEqual(config("http://192.168.1.10:8446").parsedHost, "192.168.1.10")
+    }
+
+    func testSchemeAndPathPrefixAreStrippedFromSavedHost() {
+        XCTAssertEqual(config("https://tak.example.com/prefix").parsedHost, "tak.example.com")
+    }
+
+    func testBarePortIsStrippedFromSavedHost() {
+        XCTAssertEqual(config("tak.example.com:443").parsedHost, "tak.example.com")
+    }
+
+    func testBareHostIsUnchanged() {
+        for host in ["tak.example.com", "192.168.1.100", "public.opentakserver.io", "tak"] {
+            XCTAssertEqual(config(host).parsedHost, host, "a bare host must round-trip untouched")
+        }
+    }
+
+    func testWhitespaceAndTrailingSlashesAreTrimmed() {
+        XCTAssertEqual(config("  https://tak.example.com/tak//  ").parsedHost, "tak.example.com")
+    }
+
+    func testHostCaseIsPreserved() {
+        // Only the scheme is case-folded; the host stays as typed.
+        XCTAssertEqual(config("HTTPS://TAK.Example.com").parsedHost, "TAK.Example.com")
+    }
+
+    func testIPv6LiteralsSaveWithoutBracketsOrPort() {
+        XCTAssertEqual(config("[fd00::10]:8446").parsedHost, "fd00::10")
+        XCTAssertEqual(config("[fd00::10]").parsedHost, "fd00::10")
+        XCTAssertEqual(config("https://[fd00::10]:8446/tak").parsedHost, "fd00::10")
+        // A bare IPv6 literal has no port; it must not be split on its last colon.
+        XCTAssertEqual(config("fd00::10").parsedHost, "fd00::10")
+        XCTAssertEqual(config("::1").parsedHost, "::1")
+    }
+
+    // MARK: the enrollment request still honours what was typed
+
+    func testBaseURLStillUsesTheTypedScheme_Port_AndPath() {
+        XCTAssertEqual(config("http://192.168.1.10:8446").baseURL, "http://192.168.1.10:8446")
+        // A scheme with no port means the scheme default: omitted from the URL.
+        XCTAssertEqual(config("https://tak.example.com/prefix").baseURL, "https://tak.example.com/prefix")
+        XCTAssertEqual(config("https://tak.example.com/tak/").baseURL, "https://tak.example.com/tak")
+        // An explicit port beats the separate Enrollment Port field.
+        XCTAssertEqual(config("tak.example.com:443").baseURL, "https://tak.example.com:443")
+        XCTAssertEqual(config("tak.example.com:9000", enrollmentPort: 8446).baseURL, "https://tak.example.com:9000")
+        // A bare host templates in the Enrollment Port field.
+        XCTAssertEqual(config("tak.example.com").baseURL, "https://tak.example.com:8446")
+        XCTAssertEqual(config("tak.example.com", useSSL: false).baseURL, "http://tak.example.com:8446")
+    }
+
+    func testBaseURLBracketsIPv6Literals() {
+        XCTAssertEqual(config("[fd00::10]:8446").baseURL, "https://[fd00::10]:8446")
+        XCTAssertEqual(config("fd00::10").baseURL, "https://[fd00::10]:8446")
+        XCTAssertEqual(config("https://[fd00::10]/tak").baseURL, "https://[fd00::10]/tak")
+        XCTAssertNotNil(config("fd00::10").configURL, "a bare IPv6 host must still produce a valid enrollment URL")
+    }
+
+    // MARK: the saved server
+
+    func testSavedServerCarriesTheParsedHost() {
+        let typed = [
+            ("http://192.168.1.10:8446", "192.168.1.10"),
+            ("https://tak.example.com/prefix", "tak.example.com"),
+            ("tak.example.com:443", "tak.example.com"),
+            ("tak.example.com", "tak.example.com"),
+        ]
+        for (raw, expected) in typed {
+            let server = config(raw).makeServer()
+            XCTAssertEqual(server.host, expected, "saved host for '\(raw)'")
+            XCTAssertEqual(server.name, "TAK Server (\(expected))", "display name for '\(raw)'")
+            for bad in ["://", "/", ":"] {
+                XCTAssertFalse(server.host.contains(bad), "saved host '\(server.host)' must not contain '\(bad)'")
+            }
+        }
+    }
+
+    func testSavedServerKeepsTheStreamingPortAndProtocol() {
+        let tls = config("http://192.168.1.10:8446", streamingPort: 8089).makeServer()
+        XCTAssertEqual(tls.port, 8089, "the streaming port comes from the Streaming Port field, not the typed enrollment port")
+        XCTAssertEqual(tls.protocolType, "ssl")
+        XCTAssertTrue(tls.useTLS)
+
+        let plain = config("tak.example.com", useSSL: false, streamingPort: 8087).makeServer()
+        XCTAssertEqual(plain.port, 8087)
+        XCTAssertEqual(plain.protocolType, "tcp")
+        XCTAssertFalse(plain.useTLS)
+    }
+
+    func testSavedServerCertificateNamesPointAtTheNewAlias() {
+        let server = config("https://tak.example.com/prefix").makeServer()
+        XCTAssertEqual(server.certificateName, "omnitak-cert-tak.example.com")
+        XCTAssertEqual(server.caCertificateName, "omnitak-cert-tak.example.com-ca")
+        XCTAssertEqual(server.certificatePassword, "omnitak")
+    }
+
+    func testCertificateAliasForABareHostIsUnchanged() {
+        // Servers enrolled with a bare host before this fix keep their keychain
+        // items; a re-enrollment of the same host must resolve to the same label.
+        XCTAssertEqual(config("tak.example.com").certificateAlias, "omnitak-cert-tak.example.com")
+        XCTAssertEqual(config("192.168.1.100").certificateAlias, "omnitak-cert-192.168.1.100")
+    }
+
+    func testCertificateAliasNeverEmbedsSchemePortOrPath() {
+        for raw in ["http://192.168.1.10:8446", "https://tak.example.com/prefix", "tak.example.com:443"] {
+            let alias = config(raw).certificateAlias
+            XCTAssertFalse(alias.contains("://"), "alias '\(alias)' embeds a scheme")
+            XCTAssertFalse(alias.contains("/"), "alias '\(alias)' embeds a path")
+            XCTAssertFalse(alias.contains(":"), "alias '\(alias)' embeds a port")
+        }
+    }
+}
+
+// MARK: - Address parsing shared by every entry point (#138)
+
+final class TAKServerAddressTests: XCTestCase {
+
+    func testParsesSchemeHostPortAndPath() {
+        let a = TAKServerAddress(parsing: "HTTPS://tak.example.com:8446/tak/")
+        XCTAssertEqual(a.scheme, "https")
+        XCTAssertTrue(a.hadSchemeDelimiter)
+        XCTAssertEqual(a.host, "tak.example.com")
+        XCTAssertEqual(a.port, 8446)
+        XCTAssertEqual(a.basePath, "/tak")
+    }
+
+    func testBareHostHasNoSchemePortOrPath() {
+        let a = TAKServerAddress(parsing: "tak.example.com")
+        XCTAssertNil(a.scheme)
+        XCTAssertFalse(a.hadSchemeDelimiter)
+        XCTAssertEqual(a.host, "tak.example.com")
+        XCTAssertNil(a.port)
+        XCTAssertEqual(a.basePath, "")
+    }
+
+    func testEmptySchemeStillCountsAsADelimiter() {
+        // "://host" keeps the long-standing behaviour: no scheme, but the user
+        // described a full endpoint, so the Enrollment Port field is ignored.
+        let a = TAKServerAddress(parsing: "://tak.example.com")
+        XCTAssertNil(a.scheme)
+        XCTAssertTrue(a.hadSchemeDelimiter)
+        XCTAssertEqual(a.host, "tak.example.com")
+    }
+
+    func testNonNumericSuffixIsNotAPort() {
+        let a = TAKServerAddress(parsing: "tak.example.com:abc")
+        XCTAssertNil(a.port)
+        XCTAssertEqual(a.host, "tak.example.com:abc")
+    }
+
+    func testEmptyAndWhitespaceInputYieldAnEmptyHost() {
+        XCTAssertEqual(TAKServerAddress(parsing: "").host, "")
+        XCTAssertEqual(TAKServerAddress(parsing: "   ").host, "")
+        XCTAssertEqual(TAKServerAddress(parsing: "http://").host, "")
+    }
+
+    // MARK: plain-TCP target
+
+    func testStreamingTargetUsesTheFallbackPortWhenNoneIsTyped() {
+        let t = TAKServerAddress.streamingTarget(from: "192.168.1.10", fallbackPort: 8087)
+        XCTAssertEqual(t.host, "192.168.1.10")
+        XCTAssertEqual(t.port, 8087)
+    }
+
+    func testStreamingTargetStripsAnyScheme() {
+        for raw in ["tcp://192.168.1.10", "http://192.168.1.10", "https://192.168.1.10/tak"] {
+            let t = TAKServerAddress.streamingTarget(from: raw, fallbackPort: 8087)
+            XCTAssertEqual(t.host, "192.168.1.10", raw)
+            XCTAssertEqual(t.port, 8087, raw)
+        }
+    }
+
+    func testStreamingTargetPrefersAPortTypedInTheAddress() {
+        let t = TAKServerAddress.streamingTarget(from: "192.168.1.10:9000", fallbackPort: 8087)
+        XCTAssertEqual(t.host, "192.168.1.10")
+        XCTAssertEqual(t.port, 9000)
+    }
+
+    func testStreamingTargetIgnoresAnOutOfRangePort() {
+        let t = TAKServerAddress.streamingTarget(from: "192.168.1.10:70000", fallbackPort: 8087)
+        XCTAssertEqual(t.host, "192.168.1.10")
+        XCTAssertEqual(t.port, 8087)
+    }
+
+    func testStreamingTargetHandlesIPv6() {
+        let bracketed = TAKServerAddress.streamingTarget(from: "[fd00::10]:8087", fallbackPort: 1)
+        XCTAssertEqual(bracketed.host, "fd00::10")
+        XCTAssertEqual(bracketed.port, 8087)
+        let bare = TAKServerAddress.streamingTarget(from: "fd00::10", fallbackPort: 8087)
+        XCTAssertEqual(bare.host, "fd00::10")
+        XCTAssertEqual(bare.port, 8087)
+    }
+
+    // MARK: QR / deep-link host
+
+    func testDeepLinkSplitHostPortReturnsBareHosts() {
+        XCTAssertEqual(EnrollmentDeepLink.splitHostPort("argustak.com:8089").host, "argustak.com")
+        XCTAssertEqual(EnrollmentDeepLink.splitHostPort("argustak.com:8089").port, 8089)
+        XCTAssertEqual(EnrollmentDeepLink.splitHostPort("https://tak.example.com:8089/tak").host, "tak.example.com")
+        XCTAssertEqual(EnrollmentDeepLink.splitHostPort("https://tak.example.com:8089/tak").port, 8089)
+        XCTAssertEqual(EnrollmentDeepLink.splitHostPort("tak.example.com").host, "tak.example.com")
+        XCTAssertNil(EnrollmentDeepLink.splitHostPort("tak.example.com").port)
+    }
+
+    func testDeepLinkSplitHostPortDoesNotMangleIPv6() {
+        let bare = EnrollmentDeepLink.splitHostPort("fd00::10")
+        XCTAssertEqual(bare.host, "fd00::10")
+        XCTAssertNil(bare.port)
+        let bracketed = EnrollmentDeepLink.splitHostPort("[fd00::10]:8089")
+        XCTAssertEqual(bracketed.host, "fd00::10")
+        XCTAssertEqual(bracketed.port, 8089)
+    }
+
+    func testTokenEnrollmentLinkYieldsABareHostAndEmbeddedStreamingPort() throws {
+        let url = try XCTUnwrap(URL(string: "tak://com.atakmap.app/enroll?host=argustak.com%3A8089&username=u&token=t"))
+        let link = try XCTUnwrap(EnrollmentDeepLink.parse(url: url))
+        XCTAssertEqual(link.host, "argustak.com")
+        XCTAssertEqual(link.port, 8089)
+    }
+}
+
+// MARK: - Enrolled CA Chain
+
+/// The CA chain recorded per server alias, used when the keychain holds the
+/// same CA under another server's label (it refuses a second copy, so the new
+/// label never exists and the stream had no anchor: stuck on "Connecting").
+class EnrolledCAChainTests: XCTestCase {
+
+    /// A throwaway self-signed P-256 certificate, DER, base64.
+    private static let caBase64 =
+        "MIICGDCCAb4CCQDqHJSY8favSzAKBggqhkjOPQQDAjAaMRgwFgYDVQQDDA9PbW5pVEFLIFRlc3Qg" +
+        "Q0EwHhcNMjYxMDA0MDE0NTQzWhcNMzYxMDAxMDE0NTQzWjAaMRgwFgYDVQQDDA9PbW5pVEFLIFRl" +
+        "c3QgQ0EwggFLMIIBAwYHKoZIzj0CATCB9wIBATAsBgcqhkjOPQEBAiEA/////wAAAAEAAAAAAAAA" +
+        "AAAAAAD///////////////8wWwQg/////wAAAAEAAAAAAAAAAAAAAAD///////////////wEIFrG" +
+        "NdiqOpPns+u9VXaYhrxlHQawzFOw9jvOPD4n0mBLAxUAxJ02CIbnBJNqZnjhE50mt4GffpAEQQRr" +
+        "F9Hy4SxCR/i85uVjpEDydwN9gS3rM6D0oTlF2JjClk/jQuL+Gn+bjufrSnwPnhYrzjNXazFezsu2" +
+        "QGg3v1H1AiEA/////wAAAAD//////////7zm+q2nF56E87nKwvxjJVECAQEDQgAE2bzzj7pyvER2" +
+        "OY4xaW6pyyV+oWG1HWNZt4NeDllUAwv1vW0KZ63K1Rloy5RF9eeQL7wiknWiyp1USiBR1MRKfjAK" +
+        "BggqhkjOPQQDAgNIADBFAiEAo3O9kMOnF6eKChojI+dtbSLIzYWRVBv/E4eA6zaAAvACIHauG4c7" +
+        "oMP7XAUYA1sHOQ7E1lNkH85Oc0GqcqaKJ4/0"
+
+    private var caDER: Data!
+    private var defaults: UserDefaults!
+    private let suite = "EnrolledCAChainTests"
+
+    override func setUpWithError() throws {
+        caDER = try XCTUnwrap(Data(base64Encoded: Self.caBase64))
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testChainRoundTripsByCAName() throws {
+        EnrolledCAChain.save([caDER], caName: "omnitak-cert-tak.example.com-ca", defaults: defaults)
+
+        let loaded = try XCTUnwrap(EnrolledCAChain.load(caName: "omnitak-cert-tak.example.com-ca", defaults: defaults))
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(SecCertificateCopyData(loaded[0]) as Data, caDER)
+    }
+
+    func testChainIsKeptPerServer() {
+        EnrolledCAChain.save([caDER], caName: "omnitak-cert-a.example.com-ca", defaults: defaults)
+
+        XCTAssertNil(EnrolledCAChain.load(caName: "omnitak-cert-b.example.com-ca", defaults: defaults))
+    }
+
+    func testUnreadableChainLoadsAsNothing() {
+        EnrolledCAChain.save([Data("not a certificate".utf8)], caName: "omnitak-cert-bad-ca", defaults: defaults)
+        XCTAssertNil(EnrolledCAChain.load(caName: "omnitak-cert-bad-ca", defaults: defaults))
+
+        EnrolledCAChain.save([], caName: "omnitak-cert-empty-ca", defaults: defaults)
+        XCTAssertNil(EnrolledCAChain.load(caName: "omnitak-cert-empty-ca", defaults: defaults))
+    }
+
+    /// The case that left a second enrollment on "Connecting": no keychain
+    /// certificate carries this server's CA label, so the lookup has to come
+    /// back with the chain the enrollment recorded.
+    func testStreamAnchorLookupFallsBackToTheRecordedChain() throws {
+        let caName = "omnitak-cert-fallback-\(UUID().uuidString)-ca"
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: "csr_ca_chain_\(caName)") }
+
+        XCTAssertNil(DirectTCPSender.loadCACertificates(name: caName), "nothing recorded yet")
+
+        EnrolledCAChain.save([caDER], caName: caName)
+        let anchors = try XCTUnwrap(DirectTCPSender.loadCACertificates(name: caName))
+        XCTAssertEqual(anchors.count, 1)
+        XCTAssertEqual(SecCertificateCopyData(anchors[0]) as Data, caDER)
+    }
+}

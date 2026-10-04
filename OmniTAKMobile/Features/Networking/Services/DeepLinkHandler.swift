@@ -176,21 +176,13 @@ struct EnrollmentDeepLink {
     }
 
     /// Split a "host" or "host:port" string into its components. Tolerates a
-    /// stray scheme prefix and a trailing path. Returns the bare host and the
-    /// parsed port (nil when none / unparseable).
+    /// stray scheme prefix and a trailing path. Returns the bare host (no
+    /// brackets around an IPv6 literal) and the parsed port (nil when none /
+    /// unparseable). Shares `TAKServerAddress` with the manual enrollment form
+    /// so a bare IPv6 host like "fd00::10" is not split on its last colon.
     static func splitHostPort(_ raw: String) -> (host: String, port: Int?) {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-        if let schemeRange = s.range(of: "://") {
-            s = String(s[schemeRange.upperBound...])
-        }
-        if let slash = s.firstIndex(of: "/") {
-            s = String(s[..<slash])
-        }
-        guard let colon = s.lastIndex(of: ":"),
-              let p = Int(s[s.index(after: colon)...]) else {
-            return (s, nil)
-        }
-        return (String(s[..<colon]), p)
+        let address = TAKServerAddress(parsing: raw)
+        return (address.host, address.port)
     }
 }
 
