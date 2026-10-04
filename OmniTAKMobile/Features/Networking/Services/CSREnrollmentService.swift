@@ -116,6 +116,38 @@ struct TAKServerAddress: Equatable {
     }
 }
 
+// MARK: - Enrolled CA Chain
+
+/// The CA chain an enrollment returned, kept per server alias outside the
+/// keychain.
+///
+/// The keychain identifies a certificate by issuer and serial number, not by
+/// label. A CA that is already stored under one server's label therefore
+/// cannot be added again under another: `SecItemAdd` answers
+/// `errSecDuplicateItem` and no item ever carries the new "\(alias)-ca-N"
+/// label. The stream then finds no anchor for that server, falls back to
+/// system trust, rejects the private TAK CA and stays on "Connecting". That
+/// is every second enrollment against the same server, including a
+/// re-enrollment after #138 saved an unusable host the first time.
+///
+/// CA certificates are public, so the DER chain goes to UserDefaults and
+/// `DirectTCPSender.loadCACertificates` reads it when the keychain has no
+/// certificate for the name.
+enum EnrolledCAChain {
+    private static func key(_ caName: String) -> String { "csr_ca_chain_\(caName)" }
+
+    /// - Parameter caName: the server's `caCertificateName` ("\(alias)-ca").
+    static func save(_ chain: [Data], caName: String, defaults: UserDefaults = .standard) {
+        defaults.set(chain, forKey: key(caName))
+    }
+
+    static func load(caName: String, defaults: UserDefaults = .standard) -> [SecCertificate]? {
+        guard let chain = defaults.array(forKey: key(caName)) as? [Data] else { return nil }
+        let certificates = chain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) }
+        return certificates.isEmpty ? nil : certificates
+    }
+}
+
 // MARK: - Enrollment Configuration
 
 struct CSREnrollmentConfiguration {
@@ -770,6 +802,12 @@ class CSREnrollmentService {
                 }
             }
         }
+
+        // errSecDuplicateItem above means the CA is already in the keychain
+        // under ANOTHER server's label and did not get this one, so the label
+        // lookup at connect time would find nothing. Keep the chain by alias
+        // as well so this server can always find its own anchors.
+        EnrolledCAChain.save(response.trustChain, caName: "\(certificateAlias)-ca")
     }
 
     /// Clear existing certificates and identities for a given label

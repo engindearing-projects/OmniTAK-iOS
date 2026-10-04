@@ -730,3 +730,75 @@ final class TAKServerAddressTests: XCTestCase {
         XCTAssertEqual(link.port, 8089)
     }
 }
+
+// MARK: - Enrolled CA Chain
+
+/// The CA chain recorded per server alias, used when the keychain holds the
+/// same CA under another server's label (it refuses a second copy, so the new
+/// label never exists and the stream had no anchor: stuck on "Connecting").
+class EnrolledCAChainTests: XCTestCase {
+
+    /// A throwaway self-signed P-256 certificate, DER, base64.
+    private static let caBase64 =
+        "MIICGDCCAb4CCQDqHJSY8favSzAKBggqhkjOPQQDAjAaMRgwFgYDVQQDDA9PbW5pVEFLIFRlc3Qg" +
+        "Q0EwHhcNMjYxMDA0MDE0NTQzWhcNMzYxMDAxMDE0NTQzWjAaMRgwFgYDVQQDDA9PbW5pVEFLIFRl" +
+        "c3QgQ0EwggFLMIIBAwYHKoZIzj0CATCB9wIBATAsBgcqhkjOPQEBAiEA/////wAAAAEAAAAAAAAA" +
+        "AAAAAAD///////////////8wWwQg/////wAAAAEAAAAAAAAAAAAAAAD///////////////wEIFrG" +
+        "NdiqOpPns+u9VXaYhrxlHQawzFOw9jvOPD4n0mBLAxUAxJ02CIbnBJNqZnjhE50mt4GffpAEQQRr" +
+        "F9Hy4SxCR/i85uVjpEDydwN9gS3rM6D0oTlF2JjClk/jQuL+Gn+bjufrSnwPnhYrzjNXazFezsu2" +
+        "QGg3v1H1AiEA/////wAAAAD//////////7zm+q2nF56E87nKwvxjJVECAQEDQgAE2bzzj7pyvER2" +
+        "OY4xaW6pyyV+oWG1HWNZt4NeDllUAwv1vW0KZ63K1Rloy5RF9eeQL7wiknWiyp1USiBR1MRKfjAK" +
+        "BggqhkjOPQQDAgNIADBFAiEAo3O9kMOnF6eKChojI+dtbSLIzYWRVBv/E4eA6zaAAvACIHauG4c7" +
+        "oMP7XAUYA1sHOQ7E1lNkH85Oc0GqcqaKJ4/0"
+
+    private var caDER: Data!
+    private var defaults: UserDefaults!
+    private let suite = "EnrolledCAChainTests"
+
+    override func setUpWithError() throws {
+        caDER = try XCTUnwrap(Data(base64Encoded: Self.caBase64))
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    func testChainRoundTripsByCAName() throws {
+        EnrolledCAChain.save([caDER], caName: "omnitak-cert-tak.example.com-ca", defaults: defaults)
+
+        let loaded = try XCTUnwrap(EnrolledCAChain.load(caName: "omnitak-cert-tak.example.com-ca", defaults: defaults))
+        XCTAssertEqual(loaded.count, 1)
+        XCTAssertEqual(SecCertificateCopyData(loaded[0]) as Data, caDER)
+    }
+
+    func testChainIsKeptPerServer() {
+        EnrolledCAChain.save([caDER], caName: "omnitak-cert-a.example.com-ca", defaults: defaults)
+
+        XCTAssertNil(EnrolledCAChain.load(caName: "omnitak-cert-b.example.com-ca", defaults: defaults))
+    }
+
+    func testUnreadableChainLoadsAsNothing() {
+        EnrolledCAChain.save([Data("not a certificate".utf8)], caName: "omnitak-cert-bad-ca", defaults: defaults)
+        XCTAssertNil(EnrolledCAChain.load(caName: "omnitak-cert-bad-ca", defaults: defaults))
+
+        EnrolledCAChain.save([], caName: "omnitak-cert-empty-ca", defaults: defaults)
+        XCTAssertNil(EnrolledCAChain.load(caName: "omnitak-cert-empty-ca", defaults: defaults))
+    }
+
+    /// The case that left a second enrollment on "Connecting": no keychain
+    /// certificate carries this server's CA label, so the lookup has to come
+    /// back with the chain the enrollment recorded.
+    func testStreamAnchorLookupFallsBackToTheRecordedChain() throws {
+        let caName = "omnitak-cert-fallback-\(UUID().uuidString)-ca"
+        addTeardownBlock { UserDefaults.standard.removeObject(forKey: "csr_ca_chain_\(caName)") }
+
+        XCTAssertNil(DirectTCPSender.loadCACertificates(name: caName), "nothing recorded yet")
+
+        EnrolledCAChain.save([caDER], caName: caName)
+        let anchors = try XCTUnwrap(DirectTCPSender.loadCACertificates(name: caName))
+        XCTAssertEqual(anchors.count, 1)
+        XCTAssertEqual(SecCertificateCopyData(anchors[0]) as Data, caDER)
+    }
+}

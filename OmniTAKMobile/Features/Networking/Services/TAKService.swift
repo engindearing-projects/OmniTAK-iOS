@@ -875,6 +875,16 @@ class DirectTCPSender {
             }
         }
 
+        // Nothing under this label: the CA may be in the keychain under
+        // another server's label (see EnrolledCAChain). Use the chain the
+        // enrollment recorded for this server.
+        if let enrolled = EnrolledCAChain.load(caName: name) {
+            #if DEBUG
+            print("✅ Using \(enrolled.count) enrolled CA certificate(s) recorded for: \(name)")
+            #endif
+            return enrolled
+        }
+
         #if DEBUG
         print("⚠️ No CA certificate found with label: \(name) (status: \(status))")
         #endif
