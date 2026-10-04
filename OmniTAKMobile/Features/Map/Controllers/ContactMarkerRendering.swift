@@ -102,10 +102,15 @@ enum ContactMarkerRender {
             cg.addPath(path)
             cg.strokePath()
 
-            // Unit glyph, centered. A symbol name this iOS doesn't ship simply
-            // yields no glyph (the frame still draws) — same as `Image(systemName:)`.
+            // Unit glyph, centered. A generic unit (no function code, e.g. the
+            // default "a-f-G-U-C" position report) gets a plain frame, as on
+            // Android: its "questionmark" placeholder sat inside every
+            // teammate's marker and read as a broken callsign. A symbol name
+            // this iOS doesn't ship simply yields no glyph (the frame still
+            // draws) — same as `Image(systemName:)`.
             let config = UIImage.SymbolConfiguration(pointSize: size * 0.45, weight: .semibold)
-            if let glyph = UIImage(systemName: props.unitType.icon, withConfiguration: config)?
+            if props.unitType != .unknown,
+               let glyph = UIImage(systemName: props.unitType.icon, withConfiguration: config)?
                 .withTintColor(color, renderingMode: .alwaysOriginal) {
                 let g = glyph.size
                 glyph.draw(in: CGRect(x: frame.midX - g.width / 2,

@@ -164,6 +164,29 @@ final class MarkerLabelRenderTests: XCTestCase {
         XCTAssertEqual(seen.count, 4, "each affiliation draws its own frame")
     }
 
+    func testGenericUnitDrawsAPlainFrameWithoutAGlyph() throws {
+        // Colors in the middle of the frame, well inside the outline.
+        func centerColors(_ type: String) throws -> Set<[Int]> {
+            let bmp = try bitmap(of: ContactMarkerRender.symbolImage(cotType: type, scale: 1))
+            let c = Int(margin + frame / 2)
+            var colors = Set<[Int]>()
+            for y in (c - 3)...(c + 3) {
+                for x in (c - 3)...(c + 3) {
+                    let p = bmp.pixel(x, y)
+                    colors.insert([p.r, p.g, p.b, p.a])
+                }
+            }
+            return colors
+        }
+        // "a-f-G-U-C" is what a TAK client reports for itself by default. It
+        // carries no function code, so the frame stays plain: fill only, no
+        // "?" placeholder sitting where a callsign-like mark would be.
+        XCTAssertEqual(try centerColors("a-f-G-U-C").count, 1, "default position report: plain frame")
+        XCTAssertEqual(try centerColors("a-h-G").count, 1, "no function code at all: plain frame")
+        // A unit with a function code keeps its glyph.
+        XCTAssertGreaterThan(try centerColors("a-f-G-U-C-I").count, 1, "infantry draws its glyph")
+    }
+
     // MARK: - Annotation: text field carries the callsign
 
     func testTextFieldCarriesTheCallsign() {
