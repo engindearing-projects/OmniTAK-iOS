@@ -1223,7 +1223,7 @@ final class MeshtasticChannelWriteTests: XCTestCase {
     }
 
     func testAReplaceThatCannotBeSentKeepsTheEntryToo() async throws {
-        try await withRig { rig in
+        await withRig { rig in
             rig.download()
             _ = await create(rig, "p1", key: hex(RadioFixtures.key), primary: true)
             // The link refuses what comes after the read of the primary.
@@ -1243,7 +1243,7 @@ final class MeshtasticChannelWriteTests: XCTestCase {
     }
 
     func testALateAnswerThatShowsTheReplacementReplacesTheEntry() async throws {
-        try await withRig { rig in
+        await withRig { rig in
             rig.download()
             _ = await create(rig, "p1", key: hex(RadioFixtures.key), primary: true)
             rig.radio.holdsAnswersAfterAWrite = true
@@ -1284,7 +1284,7 @@ final class MeshtasticChannelWriteTests: XCTestCase {
     }
 
     func testAnEntryAnEarlierVersionSavedIsAlsoAdoptedFromAnAnswerToARead() async throws {
-        try await withRig { rig in
+        await withRig { rig in
             rig.download(channels: slots(used: []))
             let legacy = MeshtasticManager.StoredChannel(
                 index: 3, name: "later", pskHex: hex(RadioFixtures.otherKey), isPrimary: false)
@@ -1316,7 +1316,7 @@ final class MeshtasticChannelWriteTests: XCTestCase {
     }
 
     func testASavedOnlyCreateDoesNotReplaceAnEntryAnEarlierVersionSaved() async throws {
-        try await withRig { rig in
+        await withRig { rig in
             let legacy = MeshtasticManager.StoredChannel(
                 index: 1, name: "bravo", pskHex: hex(RadioFixtures.otherKey), isPrimary: false)
             rig.manager.appChannels = [legacy]
@@ -1576,7 +1576,7 @@ final class MeshtasticChannelWriteTests: XCTestCase {
     }
 
     func testTheDownloadAfterALinkWasLostSettlesTheLineUnderChannelWrites() async throws {
-        try await withRig { rig in
+        await withRig { rig in
             rig.download()
             rig.radio.stopsAnsweringAfterAWrite = true
             rig.manager.answerTimeout = 30
