@@ -628,9 +628,17 @@ final class MeshtasticSettingsWriteTests: XCTestCase {
 /// check what the manager ends up holding.
 final class MeshtasticTCPWiringTests: XCTestCase {
 
-    /// Let the main-queue hops of the client's publishers run.
-    private func settle() async throws {
-        try await Task.sleep(nanoseconds: 100_000_000)
+    /// Poll until `condition` holds, for up to three seconds. The hops of the
+    /// client's publishers to the main queue are quick, but a loaded machine
+    /// is not a reason to fail.
+    @MainActor
+    private func eventually(_ condition: () -> Bool) async throws -> Bool {
+        let end = Date().addingTimeInterval(3)
+        while Date() < end {
+            if condition() { return true }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
     }
 
     @MainActor
@@ -651,25 +659,28 @@ final class MeshtasticTCPWiringTests: XCTestCase {
     @MainActor
     func testTheDeviceIsConnectedOnceTheFirstTCPLinkIsUp() async throws {
         let (manager, client) = connectingManager()
-        try await settle()
+        // The client's first value, "not connected", arrives and marks it so.
+        let firstValueArrived = try await eventually { !manager.isConnected }
+        XCTAssertTrue(firstValueArrived)
 
         client.isConnected = true   // the link came up
-        try await settle()
 
-        XCTAssertTrue(manager.isConnected, "the link is up, so the device is connected")
+        let connected = try await eventually { manager.isConnected }
+        XCTAssertTrue(connected, "the link is up, so the device is connected")
     }
 
     @MainActor
     func testTheDeviceIsNotConnectedWhenTheTCPLinkGoesDown() async throws {
         let (manager, client) = connectingManager()
+        _ = try await eventually { !manager.isConnected }
         client.isConnected = true
-        try await settle()
-        XCTAssertTrue(manager.isConnected)
+        let up = try await eventually { manager.isConnected }
+        XCTAssertTrue(up)
 
         client.isConnected = false
-        try await settle()
 
-        XCTAssertFalse(manager.isConnected)
+        let down = try await eventually { !manager.isConnected }
+        XCTAssertTrue(down)
     }
 
     @MainActor
@@ -682,10 +693,11 @@ final class MeshtasticTCPWiringTests: XCTestCase {
         client.settingsEvents.send(.downloadStarted)
         client.settingsEvents.send(.channel(index: 0, body: RadioFixtures.channelSlots()[0]!.data))
         client.settingsEvents.send(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
-        try await settle()
 
+        // The last event is in, so all of them are.
+        let arrived = try await eventually { manager.radioSettings.hasPositionConfig }
+        XCTAssertTrue(arrived)
         XCTAssertFalse(manager.radioSettings.hasDeviceConfig, "the old download was dropped when the new one began")
-        XCTAssertTrue(manager.radioSettings.hasPositionConfig)
         XCTAssertNotNil(manager.radioSettings.channel(index: 0))
     }
 
@@ -694,13 +706,13 @@ final class MeshtasticTCPWiringTests: XCTestCase {
         let (manager, client) = connectingManager()
         client.isConnected = true
         client.settingsEvents.send(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
-        try await settle()
-        XCTAssertTrue(manager.radioSettings.hasPositionConfig)
+        let arrived = try await eventually { manager.radioSettings.hasPositionConfig }
+        XCTAssertTrue(arrived)
 
         client.isConnected = false
-        try await settle()
 
-        XCTAssertTrue(manager.radioSettings.isEmpty)
+        let forgotten = try await eventually { manager.radioSettings.isEmpty }
+        XCTAssertTrue(forgotten)
     }
 
     /// With the real client and no connection behind it, a write goes nowhere
@@ -708,12 +720,14 @@ final class MeshtasticTCPWiringTests: XCTestCase {
     @MainActor
     func testAWriteTheTCPClientCannotSendIsRefusedAndNotRemembered() async throws {
         let (manager, client) = connectingManager()
+        _ = try await eventually { !manager.isConnected }
         client.isConnected = true
         client.myNodeNum = 0x0A0B_0C0D   // the manager copies the client's
         client.settingsEvents.send(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
-        try await settle()
-        XCTAssertTrue(manager.isConnected)
-        XCTAssertEqual(manager.myNodeNum, 0x0A0B_0C0D)
+        let ready = try await eventually {
+            manager.isConnected && manager.myNodeNum == 0x0A0B_0C0D && manager.radioSettings.hasPositionConfig
+        }
+        XCTAssertTrue(ready)
 
         let result = manager.applyPositionBroadcastInterval(seconds: 900)
 
