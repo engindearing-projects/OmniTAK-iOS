@@ -214,11 +214,16 @@ final class MBTilesTileServerTests: XCTestCase {
                     _ = server?.port
                     _ = server?.isReady
                     _ = server?.tileURLTemplate(for: "stub")
+                    // Let go of the CPU between rounds. Six readers spinning
+                    // on the server's lock without a pause kept the listener's
+                    // own state handler from ever getting it on a three-core
+                    // CI runner, and the restart then looked like a hang.
+                    usleep(200)
                 }
             }
         }
         for _ in 0..<3 {
-            await waitForReady(server) { server.listenerForTesting?.cancel() }
+            await waitForReady(server, timeout: 30) { server.listenerForTesting?.cancel() }
         }
         keepReading.value = false
 
