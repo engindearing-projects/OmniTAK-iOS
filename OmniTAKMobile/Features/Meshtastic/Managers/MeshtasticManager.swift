@@ -39,6 +39,14 @@ public class MeshtasticManager: ObservableObject {
     /// applied or not once the radio's answer to a read-back is in.
     @Published var channelReports: [MeshtasticChannelReport] = []
 
+    /// What is known about the config writes (device, position): what was sent,
+    /// what the radio answered before it restarted, and what it reports once the
+    /// link is back. A config write makes the radio restart, and over Bluetooth
+    /// the radio cuts the link as it does, so the answer before the restart may
+    /// never come and may not be the last word. These stay when the link is lost
+    /// or chosen again, and go when another radio reports in (#153).
+    @Published var configReports: [MeshtasticConfigReport] = []
+
     /// The connection the operator chose: the one transport and, for TCP, the
     /// client's number for that connection. Only its frames fill
     /// `radioSettings`, only its node number is used, and a write goes nowhere
@@ -84,11 +92,31 @@ public class MeshtasticManager: ObservableObject {
         let name: String
         let expected: MeshtasticAdminCodec.ChannelSummary
         let node: UInt32
+        /// The entry for the saved list that goes with the write, once the radio
+        /// has confirmed it. Nil when the key is not one this app holds.
+        let saved: StoredChannel?
+        /// True when the write put a new entry in the saved list before it was
+        /// sent. An entry that was already there is left as it is until the radio
+        /// confirms the new one, so a refused write does not lose it.
+        let entryInserted: Bool
     }
     /// By slot. A slot with an entry is not free, and what the entry says is on
     /// its way counts for duplicates.
     var pendingChannelWrites: [Int: PendingChannelWrite] = [:]
     var nextWriteToken = 0
+
+    /// A config write that has been sent. It stays until the radio, connected
+    /// again, reports the sub-config in its config download (or another radio
+    /// does): the answer before the restart is not the last word.
+    struct PendingConfigWrite {
+        var token: Int
+        let node: UInt32
+        let variant: Int
+        /// What was sent, merged over the writes since the last download.
+        var expected: [MeshtasticConfigField: UInt64]
+    }
+    /// By sub-config, as its field number inside `Config`.
+    var pendingConfigWrites: [Int: PendingConfigWrite] = [:]
 
     /// One operation at a time uses the link.
     let operationGate = MeshtasticOperationGate()
@@ -274,7 +302,7 @@ public class MeshtasticManager: ObservableObject {
     }
 
     /// The connection of this transport came up.
-    private func handleLinkUp(_ transport: MeshtasticConnectionType) {
+    func handleLinkUp(_ transport: MeshtasticConnectionType) {
         guard activeLink?.transport == transport else { return }
         if var device = connectedDevice, device.connectionType == transport {
             device.isConnected = true
@@ -310,6 +338,21 @@ public class MeshtasticManager: ObservableObject {
             return
         }
         radioSettings.apply(linkEvent.event)
+        // What the config download says is checked against what was sent before
+        // the radio restarted, and a saved channel from a version that did not
+        // record its radio is matched to the slot that holds it.
+        switch linkEvent.event {
+        case .downloadStarted(let node):
+            dropConfigWrites(notFor: node)
+            dropChannelWrites(notFor: node)
+        case .config(let variant, let body):
+            settleConfigWriteAfterRestart(variant: variant, body: body)
+        case .channel(let index, let body):
+            settleChannelWriteAfterReconnect(slot: index, body: body)
+            adoptSavedChannel(slot: index)
+        case .answer:
+            break
+        }
     }
 
     /// A settings event as if the connection the operator chose had delivered
@@ -738,7 +781,9 @@ public class MeshtasticManager: ObservableObject {
 
     /// Add or replace a channel in the operator's list. A channel written to a
     /// radio is keyed by that radio and the slot; one that was only saved, by its
-    /// name. A radio's entry is never replaced by another radio's.
+    /// name. A radio's entry is never replaced by another radio's, and neither is
+    /// an entry an earlier version saved from a slot (no radio, but a slot) by one
+    /// that was only saved for sharing: that would lose its key.
     public func upsertAppChannel(_ ch: StoredChannel) {
         var list = appChannels
         if let i = list.firstIndex(where: { sameEntry($0, ch) }) {
@@ -750,9 +795,13 @@ public class MeshtasticManager: ObservableObject {
         appChannels = list
     }
 
-    private func sameEntry(_ a: StoredChannel, _ b: StoredChannel) -> Bool {
+    func sameEntry(_ a: StoredChannel, _ b: StoredChannel) -> Bool {
         if a.nodeNum != b.nodeNum { return false }
-        return a.nodeNum == nil ? a.name == b.name : a.index == b.index
+        if a.nodeNum != nil { return a.index == b.index }
+        // No radio on either. One saved for sharing has no slot; one an earlier
+        // version saved has the slot it was written to.
+        if (a.index < 0) != (b.index < 0) { return false }
+        return a.index < 0 ? a.name == b.name : a.index == b.index
     }
 
     /// Remove an entry from the list. The channel, if it is on a radio, stays

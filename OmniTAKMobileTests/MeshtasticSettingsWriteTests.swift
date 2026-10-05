@@ -186,7 +186,8 @@ final class MeshtasticSettingsWriteTests: XCTestCase {
 
             let result = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
 
-            XCTAssertEqual(result, .notConfirmed("The radio kept its own value."))
+            XCTAssertEqual(result, .notConfirmed("The radio reports 3600 s, not 900 s. "
+                + "It is checked again when the radio is back after restarting."))
             XCTAssertEqual(rig.link.sets.count, 1, "it was sent")
             XCTAssertEqual(rig.manager.radioSettings.positionBroadcastSeconds, 3600, "and the app holds what the radio says")
         }
@@ -361,6 +362,113 @@ final class MeshtasticSettingsWriteTests: XCTestCase {
             let result = await rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil)
             XCTAssertEqual(result, .notConnectedRefusal)
             XCTAssertNil(rig.manager.lastError)
+        }
+    }
+
+    // MARK: - The route is checked again after the pause before a frame
+
+    // Frames are paced, so a frame can wait for its turn. The operator can choose
+    // another radio, or the connection can start over, while it waits, and then it
+    // must not go to the radio that was left.
+
+    private func pacedWrite(
+        _ rig: WriteRig, during change: @escaping @MainActor () -> Void
+    ) async -> MeshtasticWriteResult {
+        rig.download()
+        rig.manager.frameSpacing = 0.3
+        // While the write waits its turn after the read, something changes.
+        rig.link.onSent = { kind in
+            guard kind == .getConfig(variant: RadioProto.Config.position) else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                MainActor.assumeIsolated { change() }
+            }
+        }
+        return await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+    }
+
+    func testAFrameIsNotSentToARadioTheOperatorLeftWhileItWaitedItsTurn() async {
+        await withRig { rig in
+            let manager = rig.manager
+            let result = await pacedWrite(rig) {
+                manager.beginLink(
+                    .init(transport: .tcp, connection: 99),
+                    device: MeshtasticDevice(id: "other", name: "other", connectionType: .tcp,
+                                             devicePath: "127.0.0.2", isConnected: true))
+            }
+            XCTAssertEqual(result, .linkChangedRefusal)
+            XCTAssertTrue(rig.link.sets.isEmpty, "the write for the radio that was left did not go")
+        }
+    }
+
+    func testAFrameIsNotSentToARadioThatReportsAnotherNodeWhileItWaitedItsTurn() async {
+        await withRig { rig in
+            let manager = rig.manager
+            let result = await pacedWrite(rig) {
+                // The same connection now says it is another radio.
+                manager.handleSettingsEvent(.downloadStarted(nodeNum: 0x0F0F_0F0F))
+            }
+            XCTAssertEqual(result, .linkChangedRefusal)
+            XCTAssertTrue(rig.link.sets.isEmpty, "the node the settings came from is not the node now reporting")
+        }
+    }
+
+    func testAFrameIsNotSentWhenTheLinkWasLostWhileItWaitedItsTurn() async {
+        await withRig { rig in
+            let manager = rig.manager
+            let result = await pacedWrite(rig) { manager.handleLinkDown(.tcp) }
+            XCTAssertEqual(result, .linkChangedRefusal)
+            XCTAssertTrue(rig.link.sets.isEmpty)
+            XCTAssertTrue(rig.manager.radioSettings.isEmpty, "what the radio said on a link that is gone is not put back")
+            XCTAssertTrue(rig.manager.configReports.isEmpty)
+        }
+    }
+
+    // MARK: - Asking the radio for everything again
+
+    func testARereadStopsAtTheFirstThingTheRadioDoesNotAnswer() async {
+        await withRig { rig in
+            rig.download()
+            rig.radio.answersGets = false
+            rig.manager.answerTimeout = 0.2
+
+            let started = Date()
+            let outcome = await rig.manager.rereadFromRadio()
+            let took = Date().timeIntervalSince(started)
+
+            XCTAssertEqual(outcome.answered, 0)
+            XCTAssertEqual(outcome.missing, ["device config"])
+            XCTAssertEqual(outcome.notAsked.count, 9, "the other nine were not asked")
+            XCTAssertEqual(rig.link.gets.count, 1, "one request that waited, not ten")
+            XCTAssertLessThan(took, 1.0, "it did not wait the deadline on each")
+            XCTAssertFalse(rig.manager.settingsBusy)
+        }
+    }
+
+    func testARereadThatAnswersEverythingAsksForEverything() async {
+        await withRig { rig in
+            rig.download()
+            let outcome = await rig.manager.rereadFromRadio()
+            XCTAssertEqual(outcome.answered, 10)
+            XCTAssertTrue(outcome.missing.isEmpty)
+            XCTAssertTrue(outcome.notAsked.isEmpty)
+            XCTAssertEqual(rig.link.gets.count, 10)
+        }
+    }
+
+    func testARereadAfterTheRadioStoppedAnsweringPartwayStopsThere() async {
+        await withRig { rig in
+            rig.download()
+            rig.manager.answerTimeout = 0.2
+            // The radio answers the two configs and then goes quiet.
+            var asked = 0
+            rig.link.onSent = { _ in
+                asked += 1
+                if asked == 2 { rig.radio.answersGets = false }
+            }
+            let outcome = await rig.manager.rereadFromRadio()
+            XCTAssertEqual(outcome.answered, 2)
+            XCTAssertEqual(outcome.missing, ["channel 0"])
+            XCTAssertEqual(outcome.notAsked.count, 7)
         }
     }
 

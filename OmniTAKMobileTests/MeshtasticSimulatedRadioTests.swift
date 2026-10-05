@@ -43,6 +43,12 @@
 //  matches. Key bytes are never printed or put in an assertion message; they
 //  are compared and only the result is reported.
 //
+//  A set of channels is sent as one set_channel after another with no edit
+//  transaction. One test imports four channels that way, checks that the radio
+//  did not restart for it, restarts the radio on purpose (a reboot message, which
+//  is not something the app ever sends), and checks that the four channels are
+//  still there byte for byte: what a set_channel saves, it saves.
+//
 //  One test only reads. It asks the radio for each kind of thing the app asks
 //  for and reports what the answers carry: the id of the request echoed in
 //  Data.request_id, and the receive metadata a packet from outside would have
@@ -239,6 +245,28 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         throw SimulatedRadioError.didNotReturn
     }
 
+    /// Connect the manager it already has again, as an operator does after the
+    /// radio restarted, and wait for the config download. What the manager
+    /// remembers of what it sent stays.
+    private func reconnect(_ manager: MeshtasticManager, within seconds: Double = 90) async throws {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            manager.connectTCP(host: host, port: port)
+            let loaded = try await wait(upTo: 12) {
+                manager.isConnected
+                    && manager.radioSettings.nodeNum != nil
+                    && manager.radioSettings.hasDeviceConfig
+                    && manager.radioSettings.hasPositionConfig
+                    && manager.radioSettings.channel(index: 0) != nil
+            }
+            if loaded { return }
+            manager.disconnect()
+            try await pause(1)
+        }
+        XCTFail("The simulated radio at \(host):\(port) did not finish a config download in \(Int(seconds)) s.")
+        throw SimulatedRadioError.didNotReturn
+    }
+
     /// After a config write: give the radio time to take it, note whether it
     /// closed the link the way a restarting radio does, then leave and wait for
     /// the restart to be over.
@@ -342,6 +370,26 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         }
     }
 
+    /// Put channel slots back to the bytes the radio itself reported for them, if
+    /// they differ: a set_channel of those bytes, nothing built from scratch. The
+    /// bytes include keys and are only compared, never printed.
+    private func restoreChannelSlots(_ before: [Int: Data]) async {
+        guard let manager = try? await connect() else { return }
+        defer { manager.disconnect() }
+        guard case .go(let route) = manager.route() else { return XCTFail("no route to put the channel slots back") }
+        for slot in before.keys.sorted() where manager.radioSettings.channel(index: slot) != before[slot] {
+            let admin = ProtoFixture().bytes(RadioProto.Admin.setChannel, before[slot]!).data
+            _ = await manager.sendFrame(admin, wantResponse: false, packetID: manager.freshPacketID(), route: route)
+        }
+        let outcome = await manager.rereadFromRadio()
+        if outcome.refusal != nil || !outcome.missing.isEmpty {
+            XCTFail("could not read the channel slots back after putting them back")
+        }
+        for slot in before.keys.sorted() where manager.radioSettings.channel(index: slot) != before[slot] {
+            XCTFail("channel slot \(slot) could not be put back")
+        }
+    }
+
     // MARK: - 0. What a local answer carries (reads only)
 
     func testALocalAnswerEchoesTheRequestIdAndCarriesNoReceiveMetadata() async throws {
@@ -388,9 +436,16 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         let applied = await first.applyPositionBroadcastInterval(seconds: newSeconds)
         XCTAssertEqual(applied, .applied)
         XCTAssertEqual(first.radioSettings.positionBroadcastSeconds, newSeconds, "the radio's own answer")
+        XCTAssertEqual(first.configReports.first?.state, .confirmed, "the answer before the restart is not the last word")
         try await letTheRadioRestart(first)
 
-        let second = try await connect()
+        // The operator connects again, with the same manager. The radio, back from
+        // its restart, reports the interval, and the app says whether it kept it.
+        try await reconnect(first)
+        let second = first
+        XCTAssertEqual(second.configReports.first?.state, .appliedAfterRestart,
+                       "the radio reports what was sent after it restarted")
+        XCTAssertTrue(second.pendingConfigWrites.isEmpty)
         let after = try config(RadioProto.Config.position, of: second)
         XCTAssertEqual(FixtureReader.varint(RadioProto.Position.broadcastSecs, in: after), UInt64(newSeconds))
         XCTAssertEqual(differingFields(before, after), [RadioProto.Position.broadcastSecs],
@@ -469,6 +524,71 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         try await letTheRadioRestart(second)
         let third = try await connect()
         XCTAssertEqual(differingFields(before, try config(RadioProto.Config.device, of: third)), [], "restored")
+        third.disconnect()
+    }
+
+    // MARK: - 4. A set of channels needs no transaction and survives a restart
+
+    func testAnImportOfFourChannelsWithNoTransactionIsStillOnTheRadioAfterItRestarts() async throws {
+        try await requireSimulator()
+        let first = try await connect(firstContact: true)
+
+        // Slots 1 to 4 must be free: nothing is overwritten, and what they hold now
+        // is what is put back.
+        var before: [Int: Data] = [:]
+        for slot in 1...4 {
+            let held = try XCTUnwrap(first.radioSettings.channel(index: slot), "the radio did not send slot \(slot)")
+            before[slot] = held
+            let summary = try XCTUnwrap(MeshtasticAdminCodec.channelSummary(in: held))
+            if !summary.isDisabled { throw XCTSkip("slot \(slot) of the simulated radio is in use. Nothing was written.") }
+        }
+        restores.append { [self] in await restoreChannelSlots(before) }
+
+        // Four private keys, made up and never printed.
+        let channels = (1...4).map { number in
+            MeshChannel(name: "simimp\(number)", psk: Data((0..<16).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ number &* 31) }))
+        }
+        let outcome = await first.importChannels(channels)
+
+        XCTAssertEqual(outcome.confirmed, [1, 2, 3, 4], "the radio's own answers show all four")
+        XCTAssertTrue(outcome.unconfirmed.isEmpty)
+        XCTAssertNil(outcome.refusal)
+        XCTAssertEqual(outcome.notTried, 0)
+        var imported: [Int: Data] = [:]
+        for slot in 1...4 { imported[slot] = first.radioSettings.channel(index: slot) }
+
+        // The radio does not restart for a set_channel. A commit would have made
+        // it close the link within a few seconds, and none was sent.
+        try await pause(10)
+        XCTAssertTrue(first.isConnected, "the link is still up: nothing the import sent made the radio restart")
+
+        // Restart it on purpose, with a reboot message built here. Field 97 is
+        // reboot_seconds; the bytes are checked before they go, because the
+        // neighbouring field 96 is exit_simulator.
+        let reboot = ProtoFixture().varint(97, 2).data
+        XCTAssertEqual(Array(reboot), [0x88, 0x06, 0x02], "reboot_seconds = 2")
+        guard case .go(let route) = first.route() else { return XCTFail("no route to the radio") }
+        let sent = await first.sendFrame(reboot, wantResponse: false, packetID: first.freshPacketID(), route: route)
+        XCTAssertTrue(sent)
+        let closed = try await wait(upTo: 30) { !first.isConnected }
+        XCTAssertTrue(closed, "the radio restarted and closed the link")
+        first.disconnect()
+        try await pause(8)
+
+        // Back from the restart, the four channels are there, byte for byte.
+        let second = try await connect()
+        for slot in 1...4 {
+            let held = second.radioSettings.channel(index: slot)
+            XCTAssertTrue(held == imported[slot], "slot \(slot) is what the import wrote")
+            XCTAssertEqual(held.flatMap { MeshtasticAdminCodec.channelSummary(in: $0) }?.name, "simimp\(slot)")
+        }
+        print("simulated radio: four channels imported with no transaction, the link stayed up, the radio was restarted, and all four were still there")
+        second.disconnect()
+
+        // Put the four slots back, and see that they are.
+        await restoreChannelSlots(before)
+        let third = try await connect()
+        for slot in 1...4 { XCTAssertTrue(third.radioSettings.channel(index: slot) == before[slot], "slot \(slot) restored") }
         third.disconnect()
     }
 

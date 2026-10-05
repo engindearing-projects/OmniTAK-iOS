@@ -51,8 +51,6 @@
 //      AdminMessage.get_config_response  = 6  (Config submessage)
 //      AdminMessage.set_channel = 33  (Channel submessage)
 //      AdminMessage.set_config  = 34  (Config submessage)
-//      AdminMessage.begin_edit_settings  = 64 (bool)
-//      AdminMessage.commit_edit_settings = 65 (bool)
 //      Data.request_id = 6 (fixed32): the id of the MeshPacket a reply answers
 //      Channel{ index=1 (int32), settings=2 (ChannelSettings), role=3 (Role enum) }
 //      ChannelSettings{ psk=2 (bytes), name=3 (string); others are left as they are }
@@ -84,8 +82,6 @@ enum MeshtasticAdminCodec {
         static let getConfigResponse = 6
         static let setChannel = 33
         static let setConfig = 34
-        static let beginEditSettings = 64
-        static let commitEditSettings = 65
     }
 
     /// The enum `get_config_request` carries: which sub-config to send. For the
@@ -111,6 +107,15 @@ enum MeshtasticAdminCodec {
     /// The longest a channel name may be. The firmware's string field holds 11
     /// bytes and a terminator, and a longer name makes it drop the whole message.
     static let maxChannelNameBytes = 11
+
+    /// The name the radio keeps for a name it was given. The firmware stores the
+    /// name "Default" as no name (`Channels::fixupChannel` clears it, and shows the
+    /// modem preset's name in its place), so a channel written as "Default" comes
+    /// back with an empty name, and that is the radio doing what it always does,
+    /// not keeping its own value.
+    static func storedName(_ name: String) -> String {
+        name == "Default" ? "" : name
+    }
 
     /// The oneof inside `Config`: which sub-config a Config message carries.
     enum ConfigVariant {
@@ -398,20 +403,6 @@ enum MeshtasticAdminCodec {
               let config = ProtoFields.parse(response.value),
               let member = config.last(where: { $0.wireType == 2 }) else { return nil }
         return (member.number, member.value)
-    }
-
-    // MARK: - Edit transaction
-
-    /// `AdminMessage{ begin_edit_settings = true }`. Until the matching commit
-    /// the radio applies what it receives and holds off saving it.
-    static func encodeBeginEditSettings() -> Data {
-        ProtoFields.boolField(AdminField.beginEditSettings, true).raw
-    }
-
-    /// `AdminMessage{ commit_edit_settings = true }`: save what was edited. The
-    /// radio restarts to apply it.
-    static func encodeCommitEditSettings() -> Data {
-        ProtoFields.boolField(AdminField.commitEditSettings, true).raw
     }
 
     // MARK: - An answer to a get request

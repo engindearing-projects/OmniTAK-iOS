@@ -9,7 +9,9 @@
 //  app's:
 //   - 16 or 32 bytes: a private key (AES-128 or AES-256).
 //   - one byte, 1 to 10: the public default key, bumped by the byte. It is not
-//     private: everyone has it.
+//     private: everyone has it. The radio expands the byte to 16 bytes (the
+//     published default key with the byte minus one added to its last byte), so
+//     those 16 bytes typed out in full are the same key, and as public.
 //   - one byte, 0: encryption off. This is what "open" means.
 //   - no bytes: on a SECONDARY channel, the primary channel's key; on the
 //     PRIMARY, encryption off.
@@ -44,6 +46,25 @@ enum MeshtasticChannelKey {
 
     /// The key that means "no encryption": the one byte 0.
     static let open = Data([0])
+
+    /// The public default key every radio starts with (AES-128), as the firmware
+    /// publishes it (`defaultpsk` in Channels.h). The one-byte shorthand 1 is this
+    /// key. It is published, so a channel that uses it is not private.
+    static let publishedDefaultKey = Data([
+        0xd4, 0xf1, 0xbb, 0x3a, 0x20, 0x29, 0x07, 0x59,
+        0xf0, 0xbc, 0xff, 0xab, 0xcf, 0x4e, 0x69, 0x01,
+    ])
+
+    /// Whether these 16 bytes are the default key or one of the nine keys the
+    /// shorthand 2 to 10 expands to: the radio adds the byte minus one to the last
+    /// byte of the default key (`Channels::getKey`). Any spelling of them is the
+    /// same public key.
+    static func isDefaultKeyFamily(_ psk: Data) -> Bool {
+        guard psk.count == 16, psk.prefix(15) == publishedDefaultKey.prefix(15) else { return false }
+        let last = Int(psk[psk.index(psk.startIndex, offsetBy: 15)])
+        let step = last - Int(publishedDefaultKey[publishedDefaultKey.index(publishedDefaultKey.startIndex, offsetBy: 15)])
+        return step >= 0 && step < Int(shorthandValues.upperBound)
+    }
 
     /// Whether the radio would take these bytes as a key for a channel. A key of
     /// no bytes is not one: what it means depends on the channel's role.
@@ -85,7 +106,10 @@ enum MeshtasticChannelKey {
             let byte = psk[psk.startIndex]
             if byte == 0 { return .open }
             return shorthandValues.contains(byte) ? .defaultKey : .unusual(length: 1)
-        case 16, 32:
+        case 16:
+            // Typed out in full, the default key is still the default key.
+            return isDefaultKeyFamily(psk) ? .defaultKey : .privateKey
+        case 32:
             return .privateKey
         default:
             return .unusual(length: psk.count)

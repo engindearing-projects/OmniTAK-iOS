@@ -226,7 +226,7 @@ struct MeshtasticRadioSettings: Equatable {
     func slotHolding(name: String, key: Data) -> Int? {
         Self.channelSlots.first { index in
             guard let summary = channelSummary(index: index), !summary.isDisabled else { return false }
-            return summary.name == name && summary.psk == key
+            return summary.name == MeshtasticAdminCodec.storedName(name) && summary.psk == key
         }
     }
 
@@ -364,6 +364,10 @@ struct MeshtasticChannelReport: Equatable, Identifiable {
         case radioKept(String)
         /// The radio did not answer in time. If it answers later, this changes.
         case noAnswer
+        /// The link was lost before the radio answered, and nothing is waiting
+        /// for the answer any more. When the radio reports the slot again, in its
+        /// config download or in an answer to a read, this changes.
+        case linkLost
     }
 
     let slot: Int
@@ -387,6 +391,145 @@ struct MeshtasticChannelReport: Equatable, Identifiable {
         case .noAnswer:
             return "\(label): the radio did not confirm. The change may not have been applied. "
                 + "If the radio answers later this line changes."
+        case .linkLost:
+            return "\(label): the link was lost before the radio confirmed. The change may or may not have been applied. "
+                + "This line changes when the radio reports the slot again, after it connects or on Re-read from radio."
+        }
+    }
+}
+
+// MARK: - What a config write was, and what became of it
+
+/// A value of a sub-config this app writes: what a write sets and what the radio
+/// reports for it.
+enum MeshtasticConfigField: Int, CaseIterable, Hashable {
+    case role = 0
+    case rebroadcastMode
+    case positionInterval
+
+    /// The sub-config the field is in, by its field number inside `Config`.
+    var variant: Int {
+        switch self {
+        case .role, .rebroadcastMode: return MeshtasticAdminCodec.ConfigVariant.device
+        case .positionInterval:       return MeshtasticAdminCodec.ConfigVariant.position
+        }
+    }
+
+    /// The value the radio holds for it, in the bytes of its sub-config.
+    func value(in body: Data) -> UInt64? {
+        switch self {
+        case .role:             return MeshtasticAdminCodec.deviceRole(in: body)
+        case .rebroadcastMode:  return MeshtasticAdminCodec.rebroadcastMode(in: body)
+        case .positionInterval: return MeshtasticAdminCodec.positionBroadcastSeconds(in: body).map { UInt64($0) }
+        }
+    }
+
+    /// The value as the operator reads it.
+    func text(_ value: UInt64) -> String {
+        switch self {
+        case .role:
+            return "role " + (MeshtasticAdminCodec.DeviceRole(rawValue: value)?.displayName ?? String(value))
+        case .rebroadcastMode:
+            return "rebroadcast " + (MeshtasticAdminCodec.RebroadcastMode(rawValue: value)?.displayName ?? String(value))
+        case .positionInterval:
+            return "\(value) s"
+        }
+    }
+
+    /// "role TAK, rebroadcast Local mesh only", in a fixed order.
+    static func list(_ values: [MeshtasticConfigField: UInt64]) -> String {
+        allCases.compactMap { field in values[field].map { field.text($0) } }.joined(separator: ", ")
+    }
+}
+
+/// What is known about a config write: what was sent, and what the radio says
+/// about it, in the answer to the read after the write and then, when the link
+/// comes back, in the config it sends on connecting. A config write makes the
+/// radio restart to save it, and the radio may put a value back when it starts,
+/// so the answer before the restart is not the last word (#153).
+struct MeshtasticConfigReport: Equatable, Identifiable {
+    enum State: Equatable {
+        /// Dispatched. The radio has not answered the read-back yet.
+        case sent
+        /// The radio's answer shows what was sent. It is checked again after the
+        /// restart.
+        case confirmed
+        /// The radio's answer shows other values for these fields.
+        case radioKept([MeshtasticConfigField: UInt64])
+        /// The radio did not answer in time.
+        case noAnswer
+        /// The link changed before the radio answered, as it does over Bluetooth
+        /// when the radio cuts the link to restart.
+        case linkLost
+        /// After the link came back, the radio reports what was sent.
+        case appliedAfterRestart
+        /// After the link came back, the radio reports other values for these
+        /// fields.
+        case differsAfterRestart([MeshtasticConfigField: UInt64])
+
+        /// True once the radio has reported after restarting. What it reported is
+        /// shown for the session it was reported in, and goes at the next connect.
+        var isFinal: Bool {
+            switch self {
+            case .appliedAfterRestart, .differsAfterRestart: return true
+            default: return false
+            }
+        }
+    }
+
+    /// The sub-config, by its field number inside `Config`.
+    let variant: Int
+    /// The radio it was sent to.
+    let node: UInt32
+    /// "Position interval" or "Device config".
+    let what: String
+    /// What was sent.
+    var sent: [MeshtasticConfigField: UInt64]
+    var state: State
+
+    var id: Int { variant }
+
+    private var sentText: String { MeshtasticConfigField.list(sent) }
+
+    private static func capitalizingFirst(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst()
+    }
+
+    /// What the radio is said to report, for the fields that differ.
+    private func reportedText(_ values: [MeshtasticConfigField: UInt64]) -> String {
+        MeshtasticConfigField.list(values)
+    }
+
+    /// The sentence the operator reads after "sent", while the write is not
+    /// settled.
+    var reason: String {
+        switch state {
+        case .sent:
+            return "Waiting for the radio to confirm."
+        case .confirmed:
+            return "The radio reports it. It is checked again when the radio is back after restarting."
+        case .radioKept(let reported):
+            return "The radio reports \(reportedText(reported)), not \(sentText). "
+                + "It is checked again when the radio is back after restarting."
+        case .noAnswer:
+            return "The radio did not confirm. It is checked when the radio next connects."
+        case .linkLost:
+            return "The link changed before the radio confirmed. It is checked when the radio reconnects."
+        case .appliedAfterRestart, .differsAfterRestart:
+            return ""
+        }
+    }
+
+    var text: String {
+        switch state {
+        case .appliedAfterRestart:
+            return "\(what): applied. The radio reports \(sentText) after reconnecting."
+        case .differsAfterRestart(let reported):
+            return "\(what): the radio reports \(reportedText(reported)) after reconnecting. "
+                + "\(Self.capitalizingFirst(sentText)) was sent."
+        default:
+            return "\(what): \(sentText) sent. \(reason)"
         }
     }
 }

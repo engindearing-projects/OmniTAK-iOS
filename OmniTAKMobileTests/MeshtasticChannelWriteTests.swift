@@ -778,7 +778,9 @@ final class MeshtasticChannelWriteTests: XCTestCase {
 
             let outcome = await task.value
             guard case .notConfirmed = outcome.result else { return XCTFail("\(outcome.result)") }
-            XCTAssertEqual(manager.channelReports.first?.state, .noAnswer)
+            XCTAssertEqual(manager.channelReports.first?.state, .linkLost,
+                           "nothing waits for the answer any more, so the line does not promise one")
+            XCTAssertFalse(manager.channelReports.first?.text.contains("this line changes") ?? true)
             XCTAssertEqual(manager.appChannels.first(where: { $0.name == "delta" })?.effectiveState, .notConfirmed)
         }
     }
@@ -845,7 +847,9 @@ final class MeshtasticChannelWriteTests: XCTestCase {
             let outcome = await rig.manager.importChannels(channels)
 
             XCTAssertEqual(outcome.confirmed, [2])
-            XCTAssertEqual(outcome.alreadyThere, 2)
+            XCTAssertEqual(outcome.alreadyThere, 1, "the radio reported slot 1 when it was asked")
+            XCTAssertEqual(outcome.skipped.count, 1, "the same channel twice in one link is added once")
+            XCTAssertTrue(outcome.skipped[0].contains("more than once"))
             XCTAssertEqual(writtenSlots(rig), [2])
         }
     }
@@ -864,7 +868,8 @@ final class MeshtasticChannelWriteTests: XCTestCase {
                 MeshChannel(name: "echo", psk: RadioFixtures.otherKey),
             ])
 
-            XCTAssertEqual(outcome.alreadyThere, 1, "the same channel does not land twice")
+            XCTAssertEqual(outcome.waiting, 1, "the same channel does not land twice, and is not called already there")
+            XCTAssertEqual(outcome.alreadyThere, 0, "the radio has not said it has it")
             XCTAssertEqual(outcome.confirmed, [3], "and slot 2, which is waiting, is not used for the other")
         }
     }
@@ -911,53 +916,249 @@ final class MeshtasticChannelWriteTests: XCTestCase {
         }
     }
 
-    // MARK: - An import that writes more than one channel is one edit
+    // MARK: - An import opens no transaction
 
-    func testAnImportOfSeveralChannelsIsWrappedInOneEdit() async {
+    // While an edit is open the radio holds off saving, and off restarting, until
+    // a commit or a restart. An open one that is never committed leaves every later
+    // write in the radio's memory only. A set_channel saves itself and does not
+    // restart the radio, so nothing here needs one.
+
+    func testAnImportSendsOneSetChannelAfterAnotherAndNoTransaction() async {
+        for count in [1, 3] {
+            await withRig { rig in
+                rig.download(channels: slots(used: []))
+                let channels = (0..<count).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) }
+
+                let outcome = await rig.manager.importChannels(channels)
+
+                XCTAssertEqual(outcome.confirmed, Array(1...count))
+                var expected: [SimulatedRadioModel.Kind] = []
+                for slot in 1...count {
+                    expected += [.getChannel(index: slot), .setChannel(index: slot), .getChannel(index: slot)]
+                }
+                XCTAssertEqual(rig.link.kinds, expected, "a read, a write and a read back for each, and nothing else")
+                XCTAssertFalse(rig.radio.transactionOpen)
+                XCTAssertEqual(rig.radio.commits, 0)
+                XCTAssertFalse(rig.radio.restartRequested, "a channel is saved without a restart")
+            }
+        }
+    }
+
+    func testAnImportOfFourChannelsIsStillOnTheRadioAfterItRestarts() async {
         await withRig { rig in
             rig.download(channels: slots(used: []))
-            let channels = (0..<3).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) }
+            let channels = (0..<4).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) }
 
             let outcome = await rig.manager.importChannels(channels)
+            XCTAssertEqual(outcome.confirmed, [1, 2, 3, 4])
 
-            XCTAssertEqual(outcome.confirmed, [1, 2, 3])
-            XCTAssertTrue(outcome.restarts)
-            XCTAssertEqual(rig.link.kinds, [
-                .beginEdit,
-                .getChannel(index: 1), .setChannel(index: 1), .getChannel(index: 1),
-                .getChannel(index: 2), .setChannel(index: 2), .getChannel(index: 2),
-                .getChannel(index: 3), .setChannel(index: 3), .getChannel(index: 3),
-                .commitEdit,
-            ])
-            XCTAssertEqual(rig.radio.commits, 1)
+            rig.radio.restart()      // a power cycle: only what was saved is left
+            for slot in 1...4 {
+                let held = rig.radio.channels[slot].flatMap { MeshtasticAdminCodec.channelSummary(in: $0) }
+                XCTAssertEqual(held?.name, "imp\(slot - 1)", "slot \(slot)")
+                XCTAssertFalse(held?.isDisabled ?? true)
+            }
+        }
+    }
+
+    func testTheModelLosesWhatIsWrittenWhileAnEditIsOpenAtARestart() async {
+        // What the transaction would cost: it is why the app never opens one. The
+        // radio takes the writes, and the app says applied, and a restart takes
+        // them back.
+        await withRig { rig in
+            rig.download(channels: slots(used: []))
+            guard case .go(let route) = rig.manager.route() else { return XCTFail("no route") }
+            let begun = await rig.manager.sendFrame(
+                ProtoFixture().bool(RadioProto.Admin.beginEditSettings, true).data,
+                wantResponse: false, packetID: rig.manager.freshPacketID(), route: route)
+            XCTAssertTrue(begun)
+            XCTAssertTrue(rig.radio.transactionOpen)
+
+            let outcome = await create(rig, "lost")
+            XCTAssertEqual(outcome.result, .applied, "the radio answers from memory")
+
+            rig.radio.restart()
+            XCTAssertTrue(rig.radio.channels[1].flatMap { MeshtasticAdminCodec.channelSummary(in: $0) }?.isDisabled ?? false,
+                          "and it is gone after the restart")
             XCTAssertFalse(rig.radio.transactionOpen)
         }
     }
 
-    func testAnImportOfOneChannelIsNotAnEdit() async {
+    func testALinkLostDuringAnImportLeavesNoTransactionAndTheRestAreNotTried() async {
         await withRig { rig in
             rig.download(channels: slots(used: []))
-            let outcome = await rig.manager.importChannels([MeshChannel(name: "only", psk: RadioFixtures.key)])
-            XCTAssertEqual(outcome.confirmed, [1])
-            XCTAssertFalse(outcome.restarts)
+            // The link is lost as the first channel is written.
+            rig.link.onSent = { kind in
+                if kind == .setChannel(index: 1) {
+                    rig.link.isUp = false
+                    DispatchQueue.main.async { rig.manager.handleLinkDown(.tcp) }
+                }
+            }
+            let channels = (0..<4).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) }
+
+            let outcome = await rig.manager.importChannels(channels)
+            await rig.settle()
+
+            XCTAssertEqual(outcome.unconfirmed, [1], "it went, and was not read back")
+            XCTAssertTrue(outcome.confirmed.isEmpty)
+            XCTAssertEqual(outcome.notTried, 3, "the other three were not tried")
+            XCTAssertEqual(outcome.noRoom, 0, "and are not said to have no room")
+            XCTAssertEqual(outcome.refusal, MeshtasticWriteResult.linkChanged)
+            XCTAssertFalse(rig.radio.transactionOpen)
             XCTAssertFalse(rig.link.kinds.contains(.beginEdit))
             XCTAssertFalse(rig.link.kinds.contains(.commitEdit))
+            let summary = MeshtasticSettingsMessages.importSummary(outcome, total: 4)
+            XCTAssertTrue(summary.contains("3 not tried"), summary)
+            XCTAssertFalse(summary.lowercased().contains("no free slot"), summary)
         }
     }
 
-    func testAnEditThatWasBegunIsCommittedWhateverHappened() async {
+    func testALinkLostBetweenTwoChannelsOfAnImportStopsItAndCountsTheRest() async {
         await withRig { rig in
             rig.download(channels: slots(used: []))
-            rig.radio.stopsAnsweringAfterAWrite = true
+            // Frames are paced, and the link is lost while the import waits to ask
+            // about the second channel's slot.
+            rig.manager.frameSpacing = 0.3
+            var readBacks = 0
+            rig.link.onSent = { kind in
+                guard kind == .getChannel(index: 1) else { return }
+                readBacks += 1
+                if readBacks == 2 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { rig.manager.handleLinkDown(.tcp) }
+                }
+            }
             let channels = (0..<3).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) }
 
             let outcome = await rig.manager.importChannels(channels)
 
-            XCTAssertEqual(outcome.unconfirmed, [1])
-            XCTAssertEqual(outcome.refusal, MeshtasticWriteResult.noAnswer, "the next slot could not be read")
-            XCTAssertEqual(rig.link.kinds.first, .beginEdit)
-            XCTAssertEqual(rig.link.kinds.last, .commitEdit, "the radio holds off saving until the edit is committed")
-            XCTAssertEqual(rig.radio.commits, 1)
+            XCTAssertEqual(outcome.confirmed, [1])
+            XCTAssertEqual(outcome.notTried, 2)
+            XCTAssertEqual(outcome.noRoom, 0)
+            XCTAssertEqual(outcome.refusal, MeshtasticWriteResult.linkChanged)
+            XCTAssertFalse(rig.radio.transactionOpen)
+            XCTAssertEqual(rig.link.sets.count, 1, "nothing was written after the link was lost")
+        }
+    }
+
+    func testAnImportWithNothingToWriteSendsNothingThatRestartsTheRadio() async {
+        // Every slot is known to be in use.
+        await withRig { rig in
+            rig.download(channels: slots(used: [1, 2, 3, 4, 5, 6, 7]))
+            let outcome = await rig.manager.importChannels((0..<2).map { MeshChannel(name: "new\($0)", psk: RadioFixtures.key) })
+            XCTAssertEqual(outcome.noRoom, 2)
+            XCTAssertTrue(rig.link.sent.isEmpty, "nothing to ask, nothing to write")
+            XCTAssertFalse(rig.radio.restartRequested)
+            XCTAssertEqual(rig.radio.commits, 0)
+        }
+        // Everything is already there: the radio is asked, and nothing is written.
+        await withRig { rig in
+            rig.download(channels: slots(used: [1, 2]))
+            let outcome = await rig.manager.importChannels([
+                MeshChannel(name: "used1", psk: RadioFixtures.otherKey),
+                MeshChannel(name: "used2", psk: RadioFixtures.otherKey),
+            ])
+            XCTAssertEqual(outcome.alreadyThere, 2)
+            XCTAssertEqual(rig.link.kinds, [.getChannel(index: 1), .getChannel(index: 2)], "only reads")
+            XCTAssertTrue(rig.link.sets.isEmpty)
+            XCTAssertFalse(rig.radio.restartRequested)
+            XCTAssertEqual(rig.radio.commits, 0)
+        }
+        // The first read gets no answer.
+        await withRig { rig in
+            rig.download(channels: slots(used: []))
+            rig.radio.answersGets = false
+            let outcome = await rig.manager.importChannels((0..<2).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) })
+            XCTAssertEqual(outcome.refusal, MeshtasticWriteResult.noAnswer)
+            XCTAssertEqual(outcome.notTried, 2)
+            XCTAssertEqual(rig.link.kinds, [.getChannel(index: 1)])
+            XCTAssertFalse(rig.radio.restartRequested)
+            XCTAssertEqual(rig.radio.commits, 0)
+        }
+    }
+
+    func testAnImportWhenSlotsAreNotKnownDoesNotSayThereIsNoRoom() async {
+        await withRig { rig in
+            // The download reported slots 0 and 1 only.
+            let known = slots(used: [1]).filter { $0.key <= 1 }
+            rig.download(channels: known)
+            let outcome = await rig.manager.importChannels((0..<2).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) })
+
+            XCTAssertEqual(outcome.noRoom, 0, "slots that are not known are not slots in use")
+            XCTAssertEqual(outcome.notTried, 2)
+            XCTAssertNotNil(outcome.refusal)
+            XCTAssertTrue(outcome.refusal?.contains("not known yet") ?? false, outcome.refusal ?? "")
+            XCTAssertTrue(rig.link.sent.isEmpty)
+            let summary = MeshtasticSettingsMessages.importSummary(outcome, total: 2)
+            XCTAssertFalse(summary.lowercased().contains("no free slot"), summary)
+            XCTAssertFalse(summary.contains("all seven"), summary)
+        }
+    }
+
+    func testAnImportAsksTheRadioBeforeSayingItAlreadyHasAChannel() async {
+        // What was downloaded says slot 1 holds "used1". The radio has since put
+        // another channel there.
+        await withRig { rig in
+            rig.download(channels: slots(used: [1]))
+            rig.radio.set(channel: RadioFixtures.channel(index: 1, name: "other", psk: RadioFixtures.key), at: 1)
+
+            let outcome = await rig.manager.importChannels([MeshChannel(name: "used1", psk: RadioFixtures.otherKey)])
+
+            XCTAssertEqual(outcome.alreadyThere, 0, "the radio no longer has it")
+            XCTAssertEqual(outcome.confirmed, [2], "so it is added, where there is room")
+        }
+        // The radio still has it: it says so when asked, and nothing is written.
+        await withRig { rig in
+            rig.download(channels: slots(used: [1]))
+            let outcome = await rig.manager.importChannels([MeshChannel(name: "used1", psk: RadioFixtures.otherKey)])
+            XCTAssertEqual(outcome.alreadyThere, 1)
+            XCTAssertEqual(rig.link.kinds, [.getChannel(index: 1)], "it was asked, and not written")
+        }
+    }
+
+    func testAnImportDoesNotAddAChannelTheRadioGainedSinceTheDownload() async {
+        await withRig { rig in
+            rig.download(channels: slots(used: []))
+            // Another app puts this very channel in slot 1 after the download.
+            rig.radio.set(channel: RadioFixtures.channel(index: 1, name: "team", psk: RadioFixtures.key), at: 1)
+
+            let outcome = await rig.manager.importChannels([MeshChannel(name: "team", psk: RadioFixtures.key)])
+
+            XCTAssertEqual(outcome.alreadyThere, 1)
+            XCTAssertTrue(outcome.confirmed.isEmpty)
+            XCTAssertTrue(rig.link.sets.isEmpty, "it is not put in a second slot")
+        }
+    }
+
+    func testACreateOfAChannelTheRadioGainedSinceTheDownloadIsNotMadeASecondTime() async {
+        await withRig { rig in
+            rig.download(channels: slots(used: []))
+            rig.radio.set(channel: RadioFixtures.channel(index: 1, name: "team", psk: RadioFixtures.key), at: 1)
+
+            let outcome = await create(rig, "team")
+
+            XCTAssertEqual(outcome, MeshtasticManager.ChannelOutcome(result: .unchanged, slot: 1))
+            XCTAssertTrue(rig.link.sets.isEmpty, "slot 2 is not written")
+            let slotsHoldingIt = rig.radio.channels.values.compactMap { MeshtasticAdminCodec.channelSummary(in: $0) }
+                .filter { $0.name == "team" && !$0.isDisabled }
+            XCTAssertEqual(slotsHoldingIt.count, 1)
+        }
+    }
+
+    func testACreateAsksTheRadioBeforeSayingItAlreadyHasTheChannel() async {
+        await withRig { rig in
+            rig.download(channels: slots(used: [1]))
+            rig.radio.set(channel: RadioFixtures.channel(index: 1, name: "other", psk: RadioFixtures.key), at: 1)
+
+            let outcome = await create(rig, "used1", key: WriteRig.hex(RadioFixtures.otherKey))
+
+            XCTAssertEqual(outcome.result, .applied, "the slot no longer holds it, so it is created")
+            XCTAssertEqual(outcome.slot, 2)
+        }
+        await withRig { rig in
+            rig.download(channels: slots(used: [1]))
+            let outcome = await create(rig, "used1", key: WriteRig.hex(RadioFixtures.otherKey))
+            XCTAssertEqual(outcome, MeshtasticManager.ChannelOutcome(result: .unchanged, slot: 1))
+            XCTAssertEqual(rig.link.kinds, [.getChannel(index: 1)], "asked, and not written")
         }
     }
 
@@ -971,6 +1172,390 @@ final class MeshtasticChannelWriteTests: XCTestCase {
 
             XCTAssertTrue(outcome.confirmed.isEmpty, "the radio kept its own values")
             XCTAssertEqual(outcome.unconfirmed.count, 2)
+        }
+    }
+
+    // MARK: - The saved list keeps what the radio still holds
+
+    func testARefusedReplaceKeepsTheEntryForTheChannelTheRadioStillHolds() async throws {
+        try await withRig { rig in
+            rig.download()
+            let first = await create(rig, "p1", key: hex(RadioFixtures.key), primary: true)
+            XCTAssertEqual(first.result, .applied)
+
+            rig.radio.appliesChannelWrites = false
+            let second = await create(rig, "p2", key: hex(RadioFixtures.otherKey), primary: true)
+            guard case .notConfirmed = second.result else { return XCTFail("\(second.result)") }
+
+            let kept = rig.manager.appChannels.filter { $0.index == 0 }
+            XCTAssertEqual(kept.count, 1)
+            XCTAssertEqual(kept.first?.name, "p1", "the radio still holds p1")
+            XCTAssertEqual(kept.first?.pskHex, hex(RadioFixtures.key), "with its key")
+            XCTAssertTrue(rig.manager.standing(of: try XCTUnwrap(kept.first)).onRadio)
+        }
+    }
+
+    func testAReplaceThatCannotBeSentKeepsTheEntryToo() async throws {
+        try await withRig { rig in
+            rig.download()
+            _ = await create(rig, "p1", key: hex(RadioFixtures.key), primary: true)
+            // The link refuses what comes after the read of the primary.
+            rig.link.onSent = { kind in
+                if kind == .getChannel(index: 0) { rig.link.accepts = false }
+            }
+
+            let second = await create(rig, "p2", key: hex(RadioFixtures.otherKey), primary: true)
+
+            XCTAssertEqual(second.result, .linkChangedRefusal)
+            let kept = rig.manager.appChannels.filter { $0.index == 0 }
+            XCTAssertEqual(kept.count, 1)
+            XCTAssertEqual(kept.first?.name, "p1")
+            XCTAssertEqual(kept.first?.pskHex, hex(RadioFixtures.key))
+            XCTAssertEqual(kept.first?.effectiveState, .onRadio)
+        }
+    }
+
+    func testALateAnswerThatShowsTheReplacementReplacesTheEntry() async throws {
+        try await withRig { rig in
+            rig.download()
+            _ = await create(rig, "p1", key: hex(RadioFixtures.key), primary: true)
+            rig.radio.holdsAnswersAfterAWrite = true
+            rig.manager.answerTimeout = 0.2
+
+            let second = await create(rig, "p2", key: hex(RadioFixtures.otherKey), primary: true)
+            guard case .notConfirmed = second.result else { return XCTFail("\(second.result)") }
+            XCTAssertEqual(rig.manager.appChannels.first { $0.index == 0 }?.name, "p1",
+                           "until the radio confirms the new one the old entry is as it was")
+
+            rig.radio.releaseAnswers()
+            await rig.settle()
+
+            let entry = rig.manager.appChannels.first { $0.index == 0 }
+            XCTAssertEqual(entry?.name, "p2")
+            XCTAssertEqual(entry?.pskHex, hex(RadioFixtures.otherKey))
+            XCTAssertEqual(entry?.effectiveState, .onRadio)
+        }
+    }
+
+    func testAnEntryAnEarlierVersionSavedIsAdoptedWhenTheRadioHoldsThatChannel() async throws {
+        try await withRig { rig in
+            // Saved by a build that recorded neither the radio nor a state.
+            let legacy = MeshtasticManager.StoredChannel(
+                index: 1, name: "used1", pskHex: hex(RadioFixtures.otherKey), isPrimary: false)
+            rig.manager.appChannels = [legacy]
+            XCTAssertEqual(rig.manager.standing(of: legacy).label, "saved earlier, not checked against a radio")
+
+            rig.download(channels: slots(used: [1]))      // slot 1: "used1" with otherKey
+
+            let adopted = try XCTUnwrap(rig.manager.appChannels.first)
+            XCTAssertEqual(rig.manager.appChannels.count, 1)
+            XCTAssertEqual(adopted.nodeNum, WriteRig.nodeNum)
+            XCTAssertEqual(adopted.effectiveState, .onRadio)
+            XCTAssertEqual(rig.manager.standing(of: adopted).label, "on the radio")
+            XCTAssertTrue(rig.manager.standing(of: adopted).onRadio)
+        }
+    }
+
+    func testAnEntryAnEarlierVersionSavedIsAlsoAdoptedFromAnAnswerToARead() async throws {
+        try await withRig { rig in
+            rig.download(channels: slots(used: []))
+            let legacy = MeshtasticManager.StoredChannel(
+                index: 3, name: "later", pskHex: hex(RadioFixtures.otherKey), isPrimary: false)
+            rig.manager.appChannels = [legacy]
+            XCTAssertEqual(rig.manager.standing(of: legacy).label, "saved earlier, not on the connected radio")
+            // The radio gets that channel in slot 3 (from another app), and is read again.
+            rig.radio.set(channel: RadioFixtures.channel(index: 3, name: "later", psk: RadioFixtures.otherKey), at: 3)
+
+            _ = await rig.manager.rereadFromRadio()
+
+            XCTAssertEqual(rig.manager.appChannels.first?.nodeNum, WriteRig.nodeNum)
+            XCTAssertEqual(rig.manager.appChannels.first?.effectiveState, .onRadio)
+        }
+    }
+
+    func testAnEntryAnEarlierVersionSavedThatTheRadioDoesNotHoldIsNotAdoptedAndSaysSo() async throws {
+        try await withRig { rig in
+            let legacy = MeshtasticManager.StoredChannel(
+                index: 1, name: "gone", pskHex: hex(RadioFixtures.key), isPrimary: false)
+            rig.manager.appChannels = [legacy]
+
+            rig.download(channels: slots(used: [1]))      // slot 1 holds "used1", not "gone"
+
+            let entry = try XCTUnwrap(rig.manager.appChannels.first)
+            XCTAssertNil(entry.nodeNum)
+            XCTAssertEqual(rig.manager.standing(of: entry).label, "saved earlier, not on the connected radio")
+            XCTAssertFalse(rig.manager.standing(of: entry).onRadio)
+        }
+    }
+
+    func testASavedOnlyCreateDoesNotReplaceAnEntryAnEarlierVersionSaved() async throws {
+        try await withRig { rig in
+            let legacy = MeshtasticManager.StoredChannel(
+                index: 1, name: "bravo", pskHex: hex(RadioFixtures.otherKey), isPrimary: false)
+            rig.manager.appChannels = [legacy]
+            rig.manager.disconnect()
+
+            let outcome = await rig.manager.createChannel(
+                name: "bravo", keyText: hex(RadioFixtures.key), noEncryption: false, replacePrimary: false)
+
+            XCTAssertTrue(outcome.savedOnly)
+            let list = rig.manager.appChannels
+            XCTAssertEqual(list.count, 2)
+            XCTAssertTrue(list.contains { $0.index == 1 && $0.pskHex == hex(RadioFixtures.otherKey) },
+                          "the older entry, and its key, is still there")
+            XCTAssertTrue(list.contains { $0.index == -1 && $0.pskHex == hex(RadioFixtures.key) })
+        }
+    }
+
+    func testASecondSavedOnlyCreateOfTheSameNameIsStillOneEntry() async {
+        await withRig { rig in
+            rig.manager.disconnect()
+            _ = await rig.manager.createChannel(name: "bravo", keyText: hex(RadioFixtures.key), noEncryption: false, replacePrimary: false)
+            _ = await rig.manager.createChannel(name: "bravo", keyText: hex(RadioFixtures.otherKey), noEncryption: false, replacePrimary: false)
+            XCTAssertEqual(rig.manager.appChannels.count, 1)
+            XCTAssertEqual(rig.manager.appChannels.first?.pskHex, hex(RadioFixtures.otherKey))
+        }
+    }
+
+    func testACreateOfAnAdoptedChannelIsNotMadeASecondTime() async {
+        await withRig { rig in
+            let legacy = MeshtasticManager.StoredChannel(
+                index: 1, name: "used1", pskHex: hex(RadioFixtures.otherKey), isPrimary: false)
+            rig.manager.appChannels = [legacy]
+            rig.download(channels: slots(used: [1]))
+
+            let outcome = await create(rig, "used1", key: hex(RadioFixtures.otherKey))
+
+            XCTAssertEqual(outcome, MeshtasticManager.ChannelOutcome(result: .unchanged, slot: 1))
+            XCTAssertEqual(rig.manager.appChannels.count, 1)
+        }
+    }
+
+    func testAChannelSavedForSharingBecomesTheRadiosWhenTheRadioHoldsIt() async throws {
+        try await withRig { rig in
+            rig.manager.appChannels = [MeshtasticManager.StoredChannel(
+                index: -1, name: "used1", pskHex: hex(RadioFixtures.otherKey), isPrimary: false, nodeNum: nil, state: .savedOnly)]
+
+            rig.download(channels: slots(used: [1]))      // slot 1: "used1" with otherKey
+
+            let list = rig.manager.appChannels
+            XCTAssertEqual(list.count, 1)
+            XCTAssertEqual(list.first?.index, 1)
+            XCTAssertEqual(list.first?.nodeNum, WriteRig.nodeNum)
+            XCTAssertEqual(list.first?.effectiveState, .onRadio)
+            XCTAssertEqual(rig.manager.standing(of: try XCTUnwrap(list.first)).label, "on the radio")
+        }
+    }
+
+    func testWritingAChannelThatWasSavedForSharingLeavesOneEntryAndNotATwin() async {
+        await withRig { rig in
+            rig.manager.appChannels = [MeshtasticManager.StoredChannel(
+                index: -1, name: "fresh", pskHex: hex(RadioFixtures.key), isPrimary: false, nodeNum: nil, state: .savedOnly)]
+            rig.download(channels: slots(used: []))
+
+            let outcome = await create(rig, "fresh")
+
+            XCTAssertEqual(outcome.result, .applied)
+            let list = rig.manager.appChannels
+            XCTAssertEqual(list.count, 1, "the channel is listed once")
+            XCTAssertEqual(list.first?.nodeNum, WriteRig.nodeNum)
+            XCTAssertEqual(list.first?.effectiveState, .onRadio)
+        }
+    }
+
+    func testJoiningALinkThatWasSavedForSharingPutsItOnTheRadioAndListsEachChannelOnce() async {
+        await withRig { rig in
+            let channels = (0..<3).map { MeshChannel(name: "ops\($0)", psk: RadioFixtures.key) }
+            rig.manager.appChannels = channels.map {
+                MeshtasticManager.StoredChannel(
+                    index: -1, name: $0.name, pskHex: hex($0.psk), isPrimary: false, nodeNum: nil, state: .savedOnly)
+            }
+            rig.download(channels: slots(used: []))
+
+            let outcome = await rig.manager.importChannels(channels)
+
+            XCTAssertEqual(outcome.confirmed, [1, 2, 3])
+            let list = rig.manager.appChannels
+            XCTAssertEqual(list.count, 3, "the saved-only entries became the radio's, with no twins")
+            XCTAssertTrue(list.allSatisfy { $0.nodeNum == WriteRig.nodeNum && $0.effectiveState == .onRadio })
+        }
+    }
+
+    func testAChannelSavedForSharingThatTheRadioDoesNotHoldStaysSavedOnly() async {
+        await withRig { rig in
+            rig.manager.appChannels = [MeshtasticManager.StoredChannel(
+                index: -1, name: "mine", pskHex: hex(RadioFixtures.key), isPrimary: false, nodeNum: nil, state: .savedOnly)]
+            rig.download(channels: slots(used: [1, 2]))
+            XCTAssertEqual(rig.manager.appChannels.first?.nodeNum, nil)
+            XCTAssertEqual(rig.manager.appChannels.first?.effectiveState, .savedOnly)
+            XCTAssertEqual(rig.manager.standing(of: rig.manager.appChannels[0]).label, "saved only, not on a radio")
+        }
+    }
+
+    // MARK: - Joining with no radio connected
+
+    func testJoiningWithNoRadioConnectedKeepsTheChannelsForSharingAndSaysSo() async {
+        await withRig { rig in
+            rig.manager.disconnect()
+            let outcome = await rig.manager.importChannels([
+                MeshChannel(name: "alpha", psk: RadioFixtures.key),
+                MeshChannel(name: "open", psk: Data([0])),
+                MeshChannel(name: "badkey", psk: Data(repeating: 1, count: 20)),
+            ])
+
+            XCTAssertEqual(outcome.savedOnly, 2)
+            XCTAssertEqual(outcome.skipped.count, 1)
+            XCTAssertNil(outcome.refusal)
+            XCTAssertTrue(outcome.sent.isEmpty)
+            let list = rig.manager.appChannels
+            XCTAssertEqual(list.count, 2)
+            XCTAssertTrue(list.allSatisfy { $0.index == -1 && $0.nodeNum == nil && $0.effectiveState == .savedOnly })
+            XCTAssertEqual(list.first { $0.name == "open" }?.pskHex, "00", "an open channel is saved as the one byte 0")
+            XCTAssertEqual(rig.manager.standing(of: list[0]).label, "saved only, not on a radio")
+            let text = MeshtasticSettingsMessages.importSummary(outcome, total: 3)
+            XCTAssertTrue(text.contains("not on a radio"), text)
+            XCTAssertFalse(text.contains("Imported"), text)
+            XCTAssertTrue(rig.link.sent.isEmpty)
+        }
+    }
+
+    // MARK: - The name Default
+
+    func testAChannelNamedDefaultIsStoredByTheRadioWithNoNameAndIsStillApplied() async throws {
+        try await withRig { rig in
+            rig.download()
+
+            let outcome = await create(rig, "Default")
+
+            XCTAssertEqual(outcome.result, .applied, "keeping the name Default as no name is not keeping its own value")
+            XCTAssertEqual(rig.manager.channelReports.first?.state, .applied)
+            let held = try XCTUnwrap(rig.manager.radioSettings.channelSummary(index: 2))
+            XCTAssertEqual(held.name, "", "that is what the radio holds")
+            let entry = try XCTUnwrap(rig.manager.appChannels.first)
+            XCTAssertEqual(entry.name, "Default")
+            XCTAssertTrue(rig.manager.standing(of: entry).onRadio)
+            XCTAssertTrue(MeshtasticSettingsMessages.create(outcome, name: "Default").contains("keeps the name Default as no name"))
+
+            // The same channel again is not a second copy.
+            let again = await create(rig, "Default")
+            XCTAssertEqual(again, MeshtasticManager.ChannelOutcome(result: .unchanged, slot: 2))
+        }
+    }
+
+    func testAnImportOfAChannelNamedDefaultIsConfirmed() async {
+        await withRig { rig in
+            rig.download(channels: slots(used: []))
+            let outcome = await rig.manager.importChannels([MeshChannel(name: "Default", psk: RadioFixtures.key)])
+            XCTAssertEqual(outcome.confirmed, [1])
+            XCTAssertTrue(outcome.unconfirmed.isEmpty)
+        }
+    }
+
+    // MARK: - A link lost before a channel write goes
+
+    func testAChannelWriteWhoseLinkWasLostWhileItWaitedItsTurnDoesNotPutTheSlotBackOnTheOldLink() async {
+        await withRig { rig in
+            rig.download()
+            rig.manager.frameSpacing = 0.3
+            // The link is lost while the write waits its turn after the read.
+            rig.link.onSent = { kind in
+                guard kind == .getChannel(index: 2) else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { rig.manager.handleLinkDown(.tcp) }
+            }
+
+            let outcome = await create(rig, "delta")
+
+            XCTAssertEqual(outcome.result, .linkChangedRefusal)
+            XCTAssertTrue(rig.link.sets.isEmpty)
+            XCTAssertTrue(rig.manager.radioSettings.isEmpty, "the slot the radio reported on a link that is gone is not put back")
+            XCTAssertTrue(rig.manager.pendingChannelWrites.isEmpty)
+            XCTAssertTrue(rig.manager.channelReports.isEmpty)
+            XCTAssertTrue(rig.manager.appChannels.isEmpty, "nothing was sent, so no entry stays")
+        }
+    }
+
+    func testALinkLostRightAfterTheSlotWasReadMarksNothingAndSendsNothing() async {
+        await withRig { rig in
+            rig.download()
+            // The link is heard to drop right after the answer to the read is taken.
+            rig.link.onSent = { kind in
+                if kind == .getChannel(index: 2) {
+                    DispatchQueue.main.async { rig.manager.handleLinkDown(.tcp) }
+                }
+            }
+
+            let outcome = await create(rig, "delta")
+            await rig.settle()
+
+            XCTAssertEqual(outcome.result, .linkChangedRefusal)
+            XCTAssertEqual(rig.link.kinds, [.getChannel(index: 2)])
+            XCTAssertTrue(rig.manager.radioSettings.isEmpty, "the slot was not marked as waiting on a connection that is gone")
+            XCTAssertTrue(rig.manager.pendingChannelWrites.isEmpty)
+            XCTAssertTrue(rig.manager.appChannels.isEmpty)
+        }
+    }
+
+    // MARK: - A write that is not settled
+
+    func testDisconnectingWhileAChannelWriteWaitsLeavesTheEntryNotConfirmedAndNotWaiting() async throws {
+        try await withRig { rig in
+            rig.download()
+            rig.radio.stopsAnsweringAfterAWrite = true
+            rig.manager.answerTimeout = 30
+            let manager = rig.manager
+            let task = Task { await manager.createChannel(name: "delta", keyText: WriteRig.hex(RadioFixtures.key),
+                                                          noEncryption: false, replacePrimary: false) }
+            while !rig.link.kinds.contains(.setChannel(index: 2)) || rig.link.kinds.last != .getChannel(index: 2) {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+
+            manager.disconnect()
+            _ = await task.value
+
+            let entry = try XCTUnwrap(manager.appChannels.first { $0.name == "delta" })
+            XCTAssertEqual(entry.effectiveState, .notConfirmed, "nothing is waiting for the radio any more")
+            XCTAssertEqual(manager.standing(of: entry).label, "not confirmed by the radio")
+            XCTAssertTrue(manager.channelReports.isEmpty)
+        }
+    }
+
+    func testTheDownloadAfterALinkWasLostSettlesTheLineUnderChannelWrites() async throws {
+        try await withRig { rig in
+            rig.download()
+            rig.radio.stopsAnsweringAfterAWrite = true
+            rig.manager.answerTimeout = 30
+            let manager = rig.manager
+            let task = Task { await manager.createChannel(name: "delta", keyText: WriteRig.hex(RadioFixtures.key),
+                                                          noEncryption: false, replacePrimary: false) }
+            while !rig.link.kinds.contains(.setChannel(index: 2)) || rig.link.kinds.last != .getChannel(index: 2) {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            manager.handleLinkDown(.tcp)
+            _ = await task.value
+            XCTAssertEqual(manager.channelReports.first?.state, .linkLost)
+
+            rig.radio.answersGets = true
+            rig.reconnect()
+
+            XCTAssertEqual(manager.channelReports.first?.state, .applied, "the line changes once the radio reports the slot")
+            XCTAssertEqual(manager.appChannels.first { $0.name == "delta" }?.effectiveState, .onRadio)
+            XCTAssertTrue(manager.pendingChannelWrites.isEmpty)
+        }
+    }
+
+    func testAnotherRadioReportingInDropsAnUnsettledChannelWrite() async {
+        await withRig { rig in
+            rig.download()
+            rig.radio.stopsAnsweringAfterAWrite = true
+            rig.manager.answerTimeout = 0.2
+            _ = await create(rig, "delta")
+            XCTAssertFalse(rig.manager.pendingChannelWrites.isEmpty)
+
+            rig.chooseAnotherRadio(node: 0x0D0E_0F10)
+            rig.download()
+
+            XCTAssertTrue(rig.manager.pendingChannelWrites.isEmpty)
+            XCTAssertTrue(rig.manager.channelReports.isEmpty)
         }
     }
 

@@ -626,11 +626,6 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         XCTAssertNil(Codec.configResponse(in: Data([0x32, 0x80])), "not well formed")
     }
 
-    func testBeginAndCommitAreFieldsSixtyFourAndSixtyFiveAsTrue() {
-        XCTAssertEqual(Codec.encodeBeginEditSettings(), Data([0x80, 0x04, 0x01]))
-        XCTAssertEqual(Codec.encodeCommitEditSettings(), Data([0x88, 0x04, 0x01]))
-    }
-
     func testAnAnswerCarriesWhoFromWhichRequestAndWhatItHolds() throws {
         var frame = MeshtasticProtoDecoder.MeshPacketFrame()
         frame.from = 0x1234

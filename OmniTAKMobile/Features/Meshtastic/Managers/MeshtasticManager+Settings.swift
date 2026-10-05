@@ -33,11 +33,25 @@
 //  read-back: a role change rewrites the position config on the radio, and only
 //  the read that follows it says what that became.
 //
-//  Frames are at least `frameSpacing` apart on the link, and an operation that
-//  sets more than one thing wraps its writes in begin_edit_settings and
-//  commit_edit_settings. The radio holds the packets addressed to itself in a
-//  queue of four and drops the oldest when a fifth arrives, so a burst loses the
-//  earliest writes. A commit makes the radio restart.
+//  Frames are at least `frameSpacing` apart on the link. The radio holds the
+//  packets addressed to itself in a queue of four and drops the oldest when a
+//  fifth arrives, so a burst loses the earliest writes.
+//
+//  No edit transaction. The app never sends begin_edit_settings. While one is
+//  open the radio holds off saving, and off restarting, and only a commit or a
+//  restart closes it, so a link that drops, or an app that is suspended or
+//  killed, between the begin and the commit leaves the radio with the
+//  transaction open: every write after that stays in the radio's memory and is
+//  gone at the next power cycle, while the app says "applied". A set_channel
+//  saves itself and does not restart the radio, so a set of channels is sent as
+//  one set_channel after another, paced, with nothing to open or close.
+//
+//  A config write is different. The radio restarts to save it, and over
+//  Bluetooth it cuts the link as soon as it takes one, so the read after the
+//  write may never come, and a value may be put back when the radio starts
+//  (#153). Each write is remembered, and what the radio reports in its config
+//  download when it connects again is compared with what was sent: the report
+//  says "applied", or what the radio reports instead.
 //
 //  Whose bytes. The settings belong to one connection: the one the operator
 //  chose, which delivered a `my_info` naming the radio. A write is addressed to
@@ -189,9 +203,13 @@ extension MeshtasticManager {
     }
 
     /// Everything waiting on the link is over: the connection is gone or was
-    /// replaced. The requests on the table will not be answered. Writes that were
-    /// awaiting their read-back are left unconfirmed (shown, when the link only
-    /// dropped) or forgotten (when another radio was chosen).
+    /// replaced. The requests on the table will not be answered, and a channel
+    /// write that was waiting for its read-back will not hear it on this link.
+    /// When the link only dropped, the line the operator reads says so, and an
+    /// entry the write put in the saved list stops waiting. The write itself
+    /// stays on the list of those not settled: the radio may have taken it, and
+    /// says so when it reports the slot again, after it connects or on a re-read.
+    /// Config writes are not touched: they are checked when the radio reports in.
     func abandonRequests(markPendingWrites: Bool) {
         let requests = Array(outstandingRequests.values)
         outstandingRequests.removeAll()
@@ -201,13 +219,30 @@ extension MeshtasticManager {
             request.waiter?.fulfil(.linkLost)
             request.waiter = nil
         }
-        if markPendingWrites {
-            for (slot, pending) in pendingChannelWrites {
-                setChannelReport(slot: slot, name: pending.name, state: .noAnswer)
+        for (slot, pending) in pendingChannelWrites {
+            if markPendingWrites {
+                setChannelReport(slot: slot, name: pending.name, state: .linkLost)
+            }
+            if pending.entryInserted {
                 noteSavedChannel(node: pending.node, slot: slot, state: .notConfirmed)
             }
         }
-        pendingChannelWrites.removeAll()
+    }
+
+    /// The radio reported a channel slot in its config download. A write to it
+    /// that was never settled (the link was lost, or it was not answered) is
+    /// settled by what the radio reports now.
+    func settleChannelWriteAfterReconnect(slot: Int, body: Data) {
+        guard let pending = pendingChannelWrites[slot], pending.node == radioSettings.nodeNum else { return }
+        settlePendingChannelWrite(slot: slot, answer: body)
+    }
+
+    /// Another radio has reported in: a channel write to the one before is not
+    /// something it can settle.
+    func dropChannelWrites(notFor node: UInt32) {
+        let dropped = pendingChannelWrites.filter { $0.value.node != node }.map(\.key)
+        for slot in dropped { pendingChannelWrites[slot] = nil }
+        if !dropped.isEmpty { channelReports.removeAll { dropped.contains($0.slot) } }
     }
 
     /// An admin answer arrived on the chosen connection. It is kept only if it
@@ -241,10 +276,12 @@ extension MeshtasticManager {
         switch answer.content {
         case .config(let variant, let body):
             radioSettings.storeConfig(variant: variant, body: body)
+            settleConfigReadBack(variant: variant, body: body, node: request.node)
             bytes = body
         case .channel(let index, let body):
             radioSettings.storeChannel(index: index, body: body)
             settlePendingChannelWrite(slot: index, answer: body)
+            adoptSavedChannel(slot: index)
             bytes = body
         }
         request.waiter?.fulfil(.answer(bytes))
@@ -262,19 +299,28 @@ extension MeshtasticManager {
     /// nothing is sent (`.unchanged`). The rest of the device config (time zone,
     /// LED, button, buzzer) stays as the radio has it. A role change makes the
     /// firmware install that role's defaults, including a new position config,
-    /// so the position config is read again afterwards.
+    /// so the position config is not known from the moment the write goes, and
+    /// is read again afterwards.
+    ///
+    /// The radio restarts to save a config, so what it answers before the restart
+    /// is not the last word: the write is remembered, and compared with what the
+    /// radio reports when it connects again (`configReports`).
     func applyDeviceConfig(
         role: MeshtasticAdminCodec.DeviceRole?,
         rebroadcastMode: MeshtasticAdminCodec.RebroadcastMode?
     ) async -> MeshtasticWriteResult {
-        let result = await writeConfig(
+        var expected: [MeshtasticConfigField: UInt64] = [:]
+        if let role { expected[.role] = role.rawValue }
+        if let rebroadcastMode { expected[.rebroadcastMode] = rebroadcastMode.rawValue }
+        return await writeConfig(
             variant: MeshtasticAdminCodec.ConfigVariant.device,
-            build: { MeshtasticAdminCodec.encodeSetDeviceConfig(current: $0, role: role, rebroadcastMode: rebroadcastMode) },
-            confirms: { answer in
-                (role == nil || MeshtasticAdminCodec.deviceRole(in: answer) == role?.rawValue)
-                    && (rebroadcastMode == nil || MeshtasticAdminCodec.rebroadcastMode(in: answer) == rebroadcastMode?.rawValue)
-            })
-        return result
+            what: "Device config",
+            expected: expected,
+            rewritesPosition: { fresh in
+                guard let role else { return false }
+                return MeshtasticAdminCodec.deviceRole(in: fresh) != role.rawValue
+            },
+            build: { MeshtasticAdminCodec.encodeSetDeviceConfig(current: $0, role: role, rebroadcastMode: rebroadcastMode) })
     }
 
     /// Apply the position broadcast interval via AdminMessage.set_config, the
@@ -284,14 +330,17 @@ extension MeshtasticManager {
     func applyPositionBroadcastInterval(seconds: UInt32) async -> MeshtasticWriteResult {
         await writeConfig(
             variant: MeshtasticAdminCodec.ConfigVariant.position,
-            build: { MeshtasticAdminCodec.encodeSetPositionBroadcastInterval(current: $0, seconds: seconds) },
-            confirms: { MeshtasticAdminCodec.positionBroadcastSeconds(in: $0) == seconds })
+            what: "Position interval",
+            expected: [.positionInterval: UInt64(seconds)],
+            build: { MeshtasticAdminCodec.encodeSetPositionBroadcastInterval(current: $0, seconds: seconds) })
     }
 
     private func writeConfig(
         variant: Int,
-        build: @escaping (Data) -> MeshtasticAdminCodec.Write?,
-        confirms: @escaping (Data) -> Bool
+        what: String,
+        expected: [MeshtasticConfigField: UInt64],
+        rewritesPosition: @escaping (Data) -> Bool = { _ in false },
+        build: @escaping (Data) -> MeshtasticAdminCodec.Write?
     ) async -> MeshtasticWriteResult {
         await serialized {
             let route: Route
@@ -309,30 +358,160 @@ extension MeshtasticManager {
             }
             guard let write = build(fresh) else { return .refused(MeshtasticWriteResult.unreadable) }
             guard !write.changesNothing else { return .unchanged }
+            // The link may have been lost while the answer was being taken. What
+            // the settings held went with it, and nothing is sent or marked.
+            guard routeIsCurrent(route) else { return .refused(MeshtasticWriteResult.linkChanged) }
 
-            // From here on what the radio holds is not known until it says.
+            // From here on what the radio holds is not known until it says. A role
+            // change makes the firmware install the new role's defaults, a new
+            // position config among them, so what the screen shows of that is not
+            // known either.
+            let device = MeshtasticAdminCodec.ConfigVariant.device
+            let position = MeshtasticAdminCodec.ConfigVariant.position
+            let positionBefore = radioSettings.config(variant: position)
+            let rewritesPositionConfig = variant == device && rewritesPosition(fresh)
             radioSettings.invalidateConfig(variant: variant)
+            if rewritesPositionConfig { radioSettings.invalidateConfig(variant: position) }
+            let before = noteConfigWrite(variant: variant, node: route.node, what: what, expected: expected)
+
             guard await sendFrame(write.payload, wantResponse: false, packetID: freshPacketID(), route: route) else {
-                radioSettings.storeConfig(variant: variant, body: fresh)
+                // Nothing went. When this is still the connection the settings came
+                // from they are as they were. When it is not, they went with the
+                // connection and are not put back.
+                restoreConfigWrite(variant: variant, before)
+                if routeIsCurrent(route) {
+                    radioSettings.storeConfig(variant: variant, body: fresh)
+                    if rewritesPositionConfig, let positionBefore {
+                        radioSettings.storeConfig(variant: position, body: positionBefore)
+                    }
+                }
                 return .refused(MeshtasticWriteResult.linkChanged)
             }
 
-            // What the radio holds now, and what the operator is told.
-            let result: MeshtasticWriteResult
+            // What the radio holds now, and what the operator is told. The answer
+            // settles the report when it is taken (`acceptAnswer`).
             switch await read(.config(variant: variant), route: route) {
-            case .answer(let bytes):
-                result = confirms(bytes) ? .applied : .notConfirmed("The radio kept its own value.")
+            case .answer:
+                break
             case .noAnswer:
-                result = .notConfirmed("The radio did not confirm. The change may not have been applied.")
+                setConfigReportState(variant: variant, .noAnswer, ifCurrently: .sent)
             case .linkLost:
-                result = .notConfirmed("The radio link changed before the radio confirmed.")
+                setConfigReportState(variant: variant, .linkLost, ifCurrently: .sent)
+            }
+            let result: MeshtasticWriteResult
+            if let report = configReports.first(where: { $0.variant == variant }) {
+                result = report.state == .confirmed ? .applied : .notConfirmed(report.reason)
+            } else {
+                result = .notConfirmed(MeshtasticWriteResult.linkChanged)
             }
 
             // A role change rewrites the position config on the radio.
-            if variant == MeshtasticAdminCodec.ConfigVariant.device, routeIsCurrent(route) {
-                _ = await read(.config(variant: MeshtasticAdminCodec.ConfigVariant.position), route: route)
+            if variant == device, routeIsCurrent(route) {
+                _ = await read(.config(variant: position), route: route)
             }
             return result
+        }
+    }
+
+    // MARK: - What became of a config write
+
+    /// What a config write replaced in the reports, so that a write that was
+    /// never sent can put it back.
+    struct ConfigWriteSnapshot {
+        let pending: PendingConfigWrite?
+        let report: MeshtasticConfigReport?
+    }
+
+    /// A config write is about to go. Its values are remembered, merged over the
+    /// writes to the same sub-config since the radio last reported, and the
+    /// report says it is waiting.
+    private func noteConfigWrite(
+        variant: Int, node: UInt32, what: String, expected: [MeshtasticConfigField: UInt64]
+    ) -> ConfigWriteSnapshot {
+        let snapshot = ConfigWriteSnapshot(
+            pending: pendingConfigWrites[variant], report: configReports.first { $0.variant == variant })
+        var merged: [MeshtasticConfigField: UInt64] = [:]
+        if let earlier = pendingConfigWrites[variant], earlier.node == node { merged = earlier.expected }
+        for (field, value) in expected { merged[field] = value }
+        nextWriteToken += 1
+        pendingConfigWrites[variant] = PendingConfigWrite(
+            token: nextWriteToken, node: node, variant: variant, expected: merged)
+        setConfigReport(MeshtasticConfigReport(variant: variant, node: node, what: what, sent: merged, state: .sent))
+        return snapshot
+    }
+
+    private func restoreConfigWrite(variant: Int, _ snapshot: ConfigWriteSnapshot) {
+        pendingConfigWrites[variant] = snapshot.pending
+        configReports.removeAll { $0.variant == variant }
+        if let report = snapshot.report { setConfigReport(report) }
+    }
+
+    func setConfigReport(_ report: MeshtasticConfigReport) {
+        var reports = configReports.filter { $0.variant != report.variant }
+        reports.append(report)
+        reports.sort { $0.variant < $1.variant }
+        configReports = reports
+    }
+
+    private func setConfigReportState(
+        variant: Int, _ state: MeshtasticConfigReport.State, ifCurrently only: MeshtasticConfigReport.State? = nil
+    ) {
+        guard var report = configReports.first(where: { $0.variant == variant }) else { return }
+        if let only, report.state != only { return }
+        guard report.state != state else { return }
+        report.state = state
+        setConfigReport(report)
+    }
+
+    /// For each field that was sent, the value the radio reports when it is not
+    /// the one that was sent. Nil when the message cannot be read.
+    static func differences(
+        from expected: [MeshtasticConfigField: UInt64], in body: Data
+    ) -> [MeshtasticConfigField: UInt64]? {
+        var differing: [MeshtasticConfigField: UInt64] = [:]
+        for (field, value) in expected {
+            guard let reported = field.value(in: body) else { return nil }
+            if reported != value { differing[field] = reported }
+        }
+        return differing
+    }
+
+    /// The radio's answer to the read after a config write, on time or late: what
+    /// it holds right now. It settles a write that is still waiting for one.
+    func settleConfigReadBack(variant: Int, body: Data, node: UInt32) {
+        guard let pending = pendingConfigWrites[variant], pending.node == node,
+              let report = configReports.first(where: { $0.variant == variant }) else { return }
+        // Only a write still waiting for its answer. After the link was lost, or
+        // once the radio has reported again after restarting, an answer is about
+        // something else.
+        switch report.state {
+        case .sent, .noAnswer: break
+        default: return
+        }
+        guard let reported = Self.differences(from: pending.expected, in: body) else { return }
+        setConfigReportState(variant: variant, reported.isEmpty ? .confirmed : .radioKept(reported))
+    }
+
+    /// The radio reported a sub-config in its config download. When a write to it
+    /// was sent before, this is the radio after it restarted, and the report says
+    /// whether it kept what was sent.
+    func settleConfigWriteAfterRestart(variant: Int, body: Data) {
+        guard let pending = pendingConfigWrites[variant], pending.node == radioSettings.nodeNum,
+              let reported = Self.differences(from: pending.expected, in: body) else { return }
+        pendingConfigWrites[variant] = nil
+        setConfigReportState(variant: variant, reported.isEmpty ? .appliedAfterRestart : .differsAfterRestart(reported))
+    }
+
+    /// A config download is starting. Another radio's writes cannot be checked
+    /// against it, so what was sent to the one before goes. And what a radio
+    /// reported after its restart was said for the session it was reported in: a
+    /// new session starts without it.
+    func dropConfigWrites(notFor node: UInt32) {
+        for (variant, pending) in pendingConfigWrites where pending.node != node {
+            pendingConfigWrites[variant] = nil
+        }
+        if configReports.contains(where: { $0.node != node || $0.state.isFinal }) {
+            configReports.removeAll { $0.node != node || $0.state.isFinal }
         }
     }
 
@@ -355,17 +534,23 @@ extension MeshtasticManager {
         /// The slots written to whose confirmation did not come, or showed
         /// something else.
         var unconfirmed: [Int] = []
-        /// Channels the radio already has under that name and key.
+        /// Channels the radio reported it already has, under that name and key,
+        /// when it was asked just now.
         var alreadyThere = 0
-        /// Channels left out because the radio has no free slot for them.
+        /// Channels that have a write waiting for the radio's answer, and were not
+        /// sent again.
+        var waiting = 0
+        /// Channels left out because every secondary slot is known to be in use.
         var noRoom = 0
         /// Channels left out because they cannot be written, and why.
         var skipped: [String] = []
+        /// Channels not tried because the import stopped: the link was lost, the
+        /// radio did not answer, or the slots were not known.
+        var notTried = 0
+        /// Channels kept in the saved list only, because no radio was connected.
+        var savedOnly = 0
         /// Why nothing could be sent at all, or why the import stopped.
         var refusal: String?
-        /// True when the writes were saved with a commit, which restarts the
-        /// radio.
-        var restarts = false
 
         /// The slots written to.
         var sent: [Int] { confirmed + unconfirmed }
@@ -442,6 +627,12 @@ extension MeshtasticManager {
         }
     }
 
+    /// Whether what the radio reports for a slot is this channel: in use, with the
+    /// name the radio keeps for it and this key.
+    static func holds(_ summary: MeshtasticAdminCodec.ChannelSummary, name: String, key: Data) -> Bool {
+        !summary.isDisabled && summary.name == MeshtasticAdminCodec.storedName(name) && summary.psk == key
+    }
+
     private func replacePrimaryChannel(
         route: Route, name: String, key: MeshtasticAdminCodec.KeyChange
     ) async -> ChannelOutcome {
@@ -486,12 +677,22 @@ extension MeshtasticManager {
         // The same channel is not put on the radio twice, whether the radio
         // says it has it or a write for it is still waiting for its answer.
         if let holder = slotHolding(name: name, key: psk) {
-            if holder.confirmed {
-                return ChannelOutcome(result: .unchanged, slot: holder.slot)
+            if !holder.confirmed {
+                return refusedChannel(
+                    "A channel \"\(name)\" with that key was already sent to slot \(holder.slot) and the radio has not "
+                    + "confirmed it. Use Re-read from radio to see whether it is there.")
             }
-            return refusedChannel(
-                "A channel \"\(name)\" with that key was already sent to slot \(holder.slot) and the radio has not "
-                + "confirmed it. Use Re-read from radio to see whether it is there.")
+            // What this app holds says the radio has it. The radio is asked before
+            // the app says so.
+            switch await read(.channel(index: holder.slot), route: route) {
+            case .answer(let bytes):
+                if let summary = MeshtasticAdminCodec.channelSummary(in: bytes),
+                   Self.holds(summary, name: name, key: psk) {
+                    return ChannelOutcome(result: .unchanged, slot: holder.slot)
+                }
+            case .noAnswer: return refusedChannel(MeshtasticWriteResult.noAnswer)
+            case .linkLost: return refusedChannel(MeshtasticWriteResult.linkChanged)
+            }
         }
 
         var stale = Set<Int>()
@@ -510,6 +711,10 @@ extension MeshtasticManager {
                 return refusedChannel(MeshtasticWriteResult.unreadable)
             }
             if !summary.isDisabled || summary.index != slot {
+                // Taken since. If what took it is this very channel, it is there.
+                if summary.index == slot, Self.holds(summary, name: name, key: psk) {
+                    return ChannelOutcome(result: .unchanged, slot: slot)
+                }
                 stale.insert(slot)
                 continue
             }
@@ -524,14 +729,26 @@ extension MeshtasticManager {
         }
     }
 
+    /// The secondary slots nothing is known about, or that have a write waiting
+    /// for its answer. They may be in use, so they are neither free nor known to
+    /// be in use.
+    func unknownSlots() -> [Int] {
+        (1...7).filter { radioSettings.channelSummary(index: $0) == nil || pendingChannelWrites[$0] != nil }
+    }
+
+    /// What is said when no slot can be chosen because some are not known.
+    static func slotsNotKnownReason(_ unknown: [Int]) -> String {
+        "Some of this radio's channel slots are not known yet (slots \(unknown.map(String.init).joined(separator: ", "))). "
+            + "A write may be waiting for the radio to confirm it. Use Re-read from radio and try again."
+    }
+
     /// Why no slot can be chosen: all are in use, or some are not known.
     private func noFreeSlotReason() -> String {
-        let unknown = (1...7).filter { radioSettings.channelSummary(index: $0) == nil || pendingChannelWrites[$0] != nil }
+        let unknown = unknownSlots()
         if unknown.isEmpty {
             return "No free channel slot. All seven secondary slots on this radio are in use."
         }
-        return "Some of this radio's channel slots are not known yet (slots \(unknown.map(String.init).joined(separator: ", "))). "
-            + "A write may be waiting for the radio to confirm it. Use Re-read from radio and try again."
+        return Self.slotsNotKnownReason(unknown)
     }
 
     /// Save a new channel in the app's list only, because no radio is connected.
@@ -562,6 +779,11 @@ extension MeshtasticManager {
             return ChannelOutcome(
                 result: .notConfirmed("The radio did not confirm. If it answers later, the line under Channel writes changes."),
                 slot: slot)
+        case .linkLost:
+            return ChannelOutcome(
+                result: .notConfirmed("The link was lost before the radio confirmed. The line under Channel writes changes "
+                                      + "when the radio reports the slot again, after it connects or on Re-read from radio."),
+                slot: slot)
         case .notSent:
             return refusedChannel(MeshtasticWriteResult.linkChanged)
         }
@@ -571,12 +793,20 @@ extension MeshtasticManager {
         case applied
         case radioKept(String)
         case unconfirmed
+        /// The link was lost after the write went, and the read-back could not be asked.
+        case linkLost
         case notSent
     }
 
     /// Send a channel write and read the slot back. The slot is not known from
     /// the moment the write goes until the radio answers, and a write that did not
     /// settle keeps counting as in use.
+    ///
+    /// The saved list is not touched for a slot that already has an entry until
+    /// the radio has confirmed the new channel: a write the radio refuses, or that
+    /// cannot be sent, must not cost the entry, and its key, for the channel the
+    /// radio still holds. A new entry is put in at once, so that its key is not
+    /// lost with the link, and taken out again if nothing was sent.
     private func writeChannel(
         route: Route,
         slot: Int,
@@ -584,20 +814,27 @@ extension MeshtasticManager {
         expected: MeshtasticAdminCodec.ChannelSummary,
         saved: StoredChannel?
     ) async -> SlotWriteResult {
+        // The link may have been lost since the slot was read. Nothing is marked
+        // or sent for a connection that is gone.
+        guard routeIsCurrent(route) else { return .notSent }
         let before = radioSettings.channel(index: slot)
         radioSettings.invalidateChannel(index: slot)
         nextWriteToken += 1
+        let hadEntry = appChannels.contains { $0.nodeNum == route.node && $0.index == slot }
+        let insert = saved != nil && !hadEntry
         pendingChannelWrites[slot] = PendingChannelWrite(
-            token: nextWriteToken, name: expected.name, expected: expected, node: route.node)
+            token: nextWriteToken, name: expected.name, expected: expected, node: route.node,
+            saved: saved, entryInserted: insert)
         setChannelReport(slot: slot, name: expected.name, state: .sent)
-        if let saved { upsertAppChannel(saved) }
+        if insert, let saved { upsertAppChannel(saved) }
 
         guard await sendFrame(write.payload, wantResponse: false, packetID: freshPacketID(), route: route) else {
-            // Nothing went. Put back what the radio said.
+            // Nothing went. Put back what the radio said, if this is still the
+            // connection it said it on.
             pendingChannelWrites[slot] = nil
             channelReports.removeAll { $0.slot == slot }
-            if let before { radioSettings.storeChannel(index: slot, body: before) }
-            if let saved { removeAppChannel(saved) }
+            if routeIsCurrent(route), let before { radioSettings.storeChannel(index: slot, body: before) }
+            if insert, let saved { removeAppChannel(saved) }
             return .notSent
         }
 
@@ -608,12 +845,20 @@ extension MeshtasticManager {
             case .applied: return .applied
             case .radioKept(let held): return .radioKept(held)
             }
-        case .noAnswer, .linkLost:
+        case .noAnswer:
             if activeLink == route.active, let pending = pendingChannelWrites[slot] {
                 setChannelReport(slot: slot, name: pending.name, state: .noAnswer)
-                noteSavedChannel(node: route.node, slot: slot, state: .notConfirmed)
+                if pending.entryInserted { noteSavedChannel(node: route.node, slot: slot, state: .notConfirmed) }
             }
             return .unconfirmed
+        case .linkLost:
+            // abandonRequests says so when the link drops. When this is reached
+            // first, it is said now, unless the connection was given up on.
+            if activeLink == route.active, let pending = pendingChannelWrites[slot] {
+                setChannelReport(slot: slot, name: pending.name, state: .linkLost)
+                if pending.entryInserted { noteSavedChannel(node: route.node, slot: slot, state: .notConfirmed) }
+            }
+            return .linkLost
         }
     }
 
@@ -622,26 +867,32 @@ extension MeshtasticManager {
         case radioKept(String)
     }
 
-    /// Whether the radio's answer is the channel that was asked for: the name,
-    /// the key and the role.
+    /// Whether the radio's answer is the channel that was asked for: the name as
+    /// the radio keeps it, the key and the role.
     static func verdict(of answer: Data, expected: MeshtasticAdminCodec.ChannelSummary) -> ChannelVerdict {
         guard let held = MeshtasticAdminCodec.channelSummary(in: answer) else { return .radioKept("") }
-        let matches = held.name == expected.name && held.psk == expected.psk && held.role == expected.role
+        let matches = held.name == MeshtasticAdminCodec.storedName(expected.name)
+            && held.psk == expected.psk && held.role == expected.role
         return matches ? .applied : .radioKept(held.name)
     }
 
     /// An answer for a slot that has a write waiting for it. It settles the
-    /// write, whenever it comes: the row says what the radio reports.
+    /// write, whenever it comes: the row says what the radio reports. The entry
+    /// for the saved list goes in, replacing the one that was there, only when the
+    /// radio confirms it.
     func settlePendingChannelWrite(slot: Int, answer: Data) {
         guard let pending = pendingChannelWrites[slot] else { return }
         pendingChannelWrites[slot] = nil
         switch Self.verdict(of: answer, expected: pending.expected) {
         case .applied:
             setChannelReport(slot: slot, name: pending.name, state: .applied)
-            noteSavedChannel(node: pending.node, slot: slot, state: .onRadio)
+            if var saved = pending.saved {
+                saved.state = .onRadio
+                upsertAppChannel(saved)
+            }
         case .radioKept(let held):
             setChannelReport(slot: slot, name: pending.name, state: .radioKept(held))
-            noteSavedChannel(node: pending.node, slot: slot, state: .radioKept)
+            if pending.entryInserted { noteSavedChannel(node: pending.node, slot: slot, state: .radioKept) }
         }
     }
 
@@ -666,14 +917,24 @@ extension MeshtasticManager {
     /// Each channel goes into a slot the radio reports as disabled, in order,
     /// after that slot is read again, and inherits nothing from the slot's old
     /// occupant. The primary is never touched, and no slot in use is
-    /// overwritten. A channel the radio already has under that name and key, or
-    /// has a write waiting for, is not added again. When there are more channels
-    /// than free slots the rest are left out and counted. When more than one
-    /// channel is written the writes are wrapped in begin_edit_settings and
-    /// commit_edit_settings, which makes the radio restart. What is reported is
-    /// what the radio's own answers confirmed.
+    /// overwritten. A channel the radio reports it already has under that name
+    /// and key (it is asked just now, not taken from what was downloaded) is not
+    /// added again, nor is one that has a write waiting for its answer. When
+    /// there are more channels than free slots the rest are left out and counted,
+    /// and when the slots are not known, or the link is lost, or the radio does
+    /// not answer, the rest are counted as not tried.
+    ///
+    /// Each channel is a set_channel of its own, paced, and the radio saves it as
+    /// it takes it. There is no edit transaction (see the top of this file). What
+    /// is reported is what the radio's own answers confirmed.
+    ///
+    /// With no radio connected the channels are kept in the saved list, as a
+    /// create is, and the outcome says they are not on a radio.
     func importChannels(_ channels: [MeshChannel]) async -> ImportOutcome {
-        await serialized {
+        if activeLink == nil || !isConnected {
+            return saveImportedChannelsOnly(channels)
+        }
+        return await serialized {
             var outcome = ImportOutcome()
             let route: Route
             switch self.route() {
@@ -686,7 +947,7 @@ extension MeshtasticManager {
 
             // Which channels can be written at all.
             var planned: [(name: String, psk: Data)] = []
-            for channel in channels {
+            planning: for (index, channel) in channels.enumerated() {
                 if let problem = Self.channelNameProblem(channel.name) {
                     outcome.skipped.append(problem)
                     continue
@@ -695,49 +956,83 @@ extension MeshtasticManager {
                     outcome.skipped.append(Self.unusableKeyReason(name: channel.name, psk: channel.psk))
                     continue
                 }
-                if slotHolding(name: channel.name, key: channel.psk) != nil
-                    || planned.contains(where: { $0.name == channel.name && $0.psk == channel.psk }) {
-                    outcome.alreadyThere += 1
+                if planned.contains(where: { $0.name == channel.name && $0.psk == channel.psk }) {
+                    outcome.skipped.append("\"\(channel.name)\" is in the link more than once. It is added once.")
                     continue
+                }
+                if let holder = slotHolding(name: channel.name, key: channel.psk) {
+                    if !holder.confirmed {
+                        outcome.waiting += 1
+                        continue
+                    }
+                    // What this app holds says the radio has it. The radio is
+                    // asked before the app says so.
+                    switch await read(.channel(index: holder.slot), route: route) {
+                    case .answer(let bytes):
+                        if let summary = MeshtasticAdminCodec.channelSummary(in: bytes),
+                           Self.holds(summary, name: channel.name, key: channel.psk) {
+                            outcome.alreadyThere += 1
+                            continue
+                        }
+                    case .noAnswer:
+                        outcome.refusal = MeshtasticWriteResult.noAnswer
+                        outcome.notTried += planned.count + (channels.count - index)
+                        break planning
+                    case .linkLost:
+                        outcome.refusal = MeshtasticWriteResult.linkChanged
+                        outcome.notTried += planned.count + (channels.count - index)
+                        break planning
+                    }
                 }
                 planned.append((channel.name, channel.psk))
             }
-            guard !planned.isEmpty else { return outcome }
-
-            // More than one write is one edit: the radio saves once, at the end.
-            let edit = planned.count > 1
-            if edit {
-                let began = await sendFrame(
-                    MeshtasticAdminCodec.encodeBeginEditSettings(),
-                    wantResponse: false, packetID: freshPacketID(), route: route)
-                guard began else {
-                    outcome.refusal = MeshtasticWriteResult.linkChanged
-                    return outcome
-                }
-            }
+            guard outcome.refusal == nil, !planned.isEmpty else { return outcome }
 
             var stale = Set<Int>()
-            placing: for item in planned {
+            placing: for (position, item) in planned.enumerated() {
+                // The channels from this one on, if the import stops here.
+                let remaining = planned.count - position
+                guard routeIsCurrent(route) else {
+                    outcome.refusal = MeshtasticWriteResult.linkChanged
+                    outcome.notTried += remaining
+                    break placing
+                }
                 // Find a slot that is free now.
                 var slotToWrite: (slot: Int, current: Data)?
                 while slotToWrite == nil {
                     guard let slot = candidateFreeSlots(excluding: stale).first else {
-                        outcome.noRoom += 1
-                        continue placing
+                        let unknown = unknownSlots()
+                        if unknown.isEmpty {
+                            outcome.noRoom += 1
+                            continue placing
+                        }
+                        // Slots nothing is known about are not slots in use.
+                        outcome.refusal = Self.slotsNotKnownReason(unknown)
+                        outcome.notTried += remaining
+                        break placing
                     }
                     switch await read(.channel(index: slot), route: route) {
                     case .answer(let bytes):
-                        if let summary = MeshtasticAdminCodec.channelSummary(in: bytes),
-                           summary.isDisabled, summary.index == slot {
-                            slotToWrite = (slot, bytes)
+                        if let summary = MeshtasticAdminCodec.channelSummary(in: bytes), summary.index == slot {
+                            if summary.isDisabled {
+                                slotToWrite = (slot, bytes)
+                            } else if Self.holds(summary, name: item.name, key: item.psk) {
+                                // Put there since the download: it is there.
+                                outcome.alreadyThere += 1
+                                continue placing
+                            } else {
+                                stale.insert(slot)
+                            }
                         } else {
                             stale.insert(slot)
                         }
                     case .noAnswer:
                         outcome.refusal = MeshtasticWriteResult.noAnswer
+                        outcome.notTried += remaining
                         break placing
                     case .linkLost:
                         outcome.refusal = MeshtasticWriteResult.linkChanged
+                        outcome.notTried += remaining
                         break placing
                     }
                 }
@@ -759,22 +1054,41 @@ extension MeshtasticManager {
                     outcome.confirmed.append(target.slot)
                 case .radioKept, .unconfirmed:
                     outcome.unconfirmed.append(target.slot)
+                case .linkLost:
+                    // The write went and the link was lost before it was read back.
+                    outcome.unconfirmed.append(target.slot)
+                    outcome.refusal = MeshtasticWriteResult.linkChanged
+                    outcome.notTried += remaining - 1
+                    break placing
                 case .notSent:
                     outcome.refusal = MeshtasticWriteResult.linkChanged
+                    outcome.notTried += remaining
                     break placing
                 }
             }
-
-            // Whatever happened, an edit that was begun is committed: the radio
-            // holds off saving until it is.
-            if edit, routeIsCurrent(route) {
-                let committed = await sendFrame(
-                    MeshtasticAdminCodec.encodeCommitEditSettings(),
-                    wantResponse: false, packetID: freshPacketID(), route: route)
-                outcome.restarts = committed
-            }
             return outcome
         }
+    }
+
+    /// With no radio connected: keep what the link carries in the saved list, for
+    /// sharing, and say it is not on a radio.
+    private func saveImportedChannelsOnly(_ channels: [MeshChannel]) -> ImportOutcome {
+        var outcome = ImportOutcome()
+        for channel in channels {
+            if let problem = Self.channelNameProblem(channel.name) {
+                outcome.skipped.append(problem)
+                continue
+            }
+            guard MeshtasticChannelKey.isUsable(channel.psk) else {
+                outcome.skipped.append(Self.unusableKeyReason(name: channel.name, psk: channel.psk))
+                continue
+            }
+            upsertAppChannel(StoredChannel(
+                index: -1, name: channel.name, pskHex: MeshCoreChannelCodec.hex(channel.psk), isPrimary: false,
+                nodeNum: nil, state: .savedOnly))
+            outcome.savedOnly += 1
+        }
+        return outcome
     }
 
     /// The reason a channel's key is not one the radio would take.
@@ -822,13 +1136,18 @@ extension MeshtasticManager {
     /// What came of asking the radio for everything again.
     struct RereadOutcome: Equatable {
         var answered = 0
+        /// What did not answer. Asking stops there: another request to a radio
+        /// that is not answering would wait as long again.
         var missing: [String] = []
+        /// What was not asked because of that.
+        var notAsked: [String] = []
         var refusal: String?
     }
 
     /// Ask the radio for its device config, position config and all eight
     /// channels again. What it says replaces what the app holds, and settles a
-    /// channel write that was waiting for its answer.
+    /// channel write that was waiting for its answer. It stops at the first thing
+    /// the radio does not answer.
     func rereadFromRadio() async -> RereadOutcome {
         await serialized {
             var outcome = RereadOutcome()
@@ -845,10 +1164,14 @@ extension MeshtasticManager {
                 ("position config", .config(variant: MeshtasticAdminCodec.ConfigVariant.position)),
             ]
             for index in MeshtasticRadioSettings.channelSlots { subjects.append(("channel \(index)", .channel(index: index))) }
-            for (label, subject) in subjects {
-                switch await read(subject, route: route) {
-                case .answer: outcome.answered += 1
-                case .noAnswer: outcome.missing.append(label)
+            for (position, entry) in subjects.enumerated() {
+                switch await read(entry.1, route: route) {
+                case .answer:
+                    outcome.answered += 1
+                case .noAnswer:
+                    outcome.missing.append(entry.0)
+                    outcome.notAsked = subjects.dropFirst(position + 1).map { $0.0 }
+                    return outcome
                 case .linkLost:
                     outcome.refusal = MeshtasticWriteResult.linkChanged
                     return outcome
@@ -866,25 +1189,77 @@ extension MeshtasticManager {
     /// that the slot is in use. Anything else is the state it was left in.
     func standing(of channel: StoredChannel) -> (label: String, onRadio: Bool) {
         let saved = channel.effectiveState
+        // Saved by an earlier version, which did not record the radio it was
+        // written to. What the connected radio holds in that slot says.
+        if channel.nodeNum == nil, channel.index >= 0 {
+            guard radioSettings.nodeNum != nil else {
+                return ("saved earlier, not checked against a radio", false)
+            }
+            if let held = radioSettings.channelSummary(index: channel.index),
+               Self.holds(held, name: channel.name, key: MeshCoreChannelCodec.dehex(channel.pskHex) ?? Data()) {
+                return (SavedChannelState.onRadio.label, true)
+            }
+            return ("saved earlier, not on the connected radio", false)
+        }
         // Written to a radio that is not the one connected: what was last known
         // of it, and not a claim about this radio.
         if let node = channel.nodeNum, let connected = radioSettings.nodeNum, node != connected {
             return ("another radio: \(saved.label)", false)
         }
-        guard channel.index >= 0, let node = channel.nodeNum,
-              node == radioSettings.nodeNum,
-              pendingChannelWrites[channel.index] == nil,
-              let held = radioSettings.channelSummary(index: channel.index) else {
+        guard channel.index >= 0, let node = channel.nodeNum, node == radioSettings.nodeNum else {
+            return (saved.label, saved == .onRadio)
+        }
+        if let pending = pendingChannelWrites[channel.index], pending.node == node {
+            // An entry this write put in says so. One that was there before is of
+            // what the radio held, and a replacement for it has not been confirmed.
+            return pending.entryInserted
+                ? (saved.label, false)
+                : ("a new channel for this slot is waiting for the radio to confirm", false)
+        }
+        guard let held = radioSettings.channelSummary(index: channel.index) else {
             return (saved.label, saved == .onRadio)
         }
         let key = MeshCoreChannelCodec.dehex(channel.pskHex) ?? Data()
         if held.isDisabled {
             return ("not on the radio now: slot \(channel.index) is empty", false)
         }
-        if held.name != channel.name || held.psk != key {
+        if held.name != MeshtasticAdminCodec.storedName(channel.name) || held.psk != key {
             return ("not on the radio now: slot \(channel.index) holds another channel", false)
         }
         return (SavedChannelState.onRadio.label, true)
+    }
+
+    /// An entry that was saved with no radio, by an earlier version from a slot or
+    /// for sharing (no slot at all), is on a radio when the connected radio holds
+    /// exactly that channel, name and key. It then takes that radio and slot and
+    /// says so. When this radio's slot already has an entry for the same channel
+    /// (a write just made one), the entry that was saved with no radio is that
+    /// channel's twin, and goes: the channel is listed once.
+    func adoptSavedChannel(slot: Int) {
+        guard let node = radioSettings.nodeNum,
+              let held = radioSettings.channelSummary(index: slot), !held.isDisabled else { return }
+        var list = appChannels
+        var changed = false
+        for i in list.indices.reversed() where list[i].nodeNum == nil && (list[i].index == slot || list[i].index < 0) {
+            let entry = list[i]
+            guard Self.holds(held, name: entry.name, key: MeshCoreChannelCodec.dehex(entry.pskHex) ?? Data()) else { continue }
+            if let existing = list.firstIndex(where: { $0.nodeNum == node && $0.index == slot }) {
+                if list[existing].name == entry.name && list[existing].pskHex == entry.pskHex {
+                    list.remove(at: i)
+                    changed = true
+                }
+                continue
+            }
+            list[i].nodeNum = node
+            list[i].index = slot
+            list[i].isPrimary = slot == 0
+            list[i].state = .onRadio
+            changed = true
+        }
+        if changed {
+            list.sort { ($0.nodeNum ?? 0, $0.index) < ($1.nodeNum ?? 0, $1.index) }
+            appChannels = list
+        }
     }
 
     // MARK: - Reports

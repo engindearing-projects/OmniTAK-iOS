@@ -16,8 +16,14 @@
 //     the radio to itself that echoes the request's packet id in
 //     Data.request_id and carries no receive metadata, but only when the packet
 //     asks for a response;
-//   - begin_edit_settings and commit_edit_settings open and close an edit, and a
-//     commit calls `onCommit` (a real radio restarts then);
+//   - what it holds in memory is saved when it takes a write, unless an edit is
+//     open (begin_edit_settings): then it is only in memory, and `restart()`,
+//     a power cycle, puts back what was saved. A commit saves everything and
+//     asks for a restart. A config write that needs a restart (the device and
+//     position configs) saves and asks for one as well, and, when
+//     `cutsBluetoothOnRestartingWrite` is set, cuts the link at once, as the
+//     firmware does over Bluetooth (`disableBluetooth` in AdminModule). A
+//     set_channel saves itself and asks for no restart;
 //   - packets addressed to the radio itself wait in a queue of four, and the
 //     oldest is dropped when another arrives (`processingDelay` is how long the
 //     radio is busy with each packet, so that a burst can fill the queue).
@@ -26,6 +32,7 @@
 //
 
 import Foundation
+@testable import OmniTAK
 
 final class SimulatedRadioModel: @unchecked Sendable {
 
@@ -73,6 +80,13 @@ final class SimulatedRadioModel: @unchecked Sendable {
     private var _device: Data
     private var _position: Data
     private var _channels: [Int: Data]
+    // What was saved: what the radio comes back with after a restart.
+    private var _savedDevice: Data
+    private var _savedPosition: Data
+    private var _savedChannels: [Int: Data]
+    private var _restartRequested = false
+    private var _restarts = 0
+    private var _linkCut = false
     private var _processed: [Record] = []
     private var _dropped: [Record] = []
     private var _held: [Data] = []
@@ -99,6 +113,8 @@ final class SimulatedRadioModel: @unchecked Sendable {
     private var _roleDefaults: ((UInt64) -> ProtoFixture?)?
     private var _onCommit: (() -> Void)?
     private var _holdAnswers = false
+    private var _cutsBluetoothOnRestartingWrite = false
+    private var _onLinkCut: (() -> Void)?
 
     /// False: it takes get requests and never answers them.
     var answersGets: Bool {
@@ -178,6 +194,17 @@ final class SimulatedRadioModel: @unchecked Sendable {
         get { lock.lock(); defer { lock.unlock() }; return _holdAnswers }
         set { lock.lock(); _holdAnswers = newValue; lock.unlock() }
     }
+    /// True: when it takes a config write that needs a restart, outside an edit,
+    /// or a commit, it cuts the link at once, as a radio does over Bluetooth.
+    var cutsBluetoothOnRestartingWrite: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _cutsBluetoothOnRestartingWrite }
+        set { lock.lock(); _cutsBluetoothOnRestartingWrite = newValue; lock.unlock() }
+    }
+    /// Called when the radio cuts the link.
+    var onLinkCut: (() -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onLinkCut }
+        set { lock.lock(); _onLinkCut = newValue; lock.unlock() }
+    }
 
     // MARK: What the radio holds
 
@@ -186,6 +213,15 @@ final class SimulatedRadioModel: @unchecked Sendable {
     var channels: [Int: Data] { lock.lock(); defer { lock.unlock() }; return _channels }
     var transactionOpen: Bool { lock.lock(); defer { lock.unlock() }; return _transactionOpen }
     var commits: Int { lock.lock(); defer { lock.unlock() }; return _commits }
+    /// What was saved, which is what the radio comes back with after a restart.
+    var savedDeviceConfig: Data { lock.lock(); defer { lock.unlock() }; return _savedDevice }
+    var savedPositionConfig: Data { lock.lock(); defer { lock.unlock() }; return _savedPosition }
+    var savedChannels: [Int: Data] { lock.lock(); defer { lock.unlock() }; return _savedChannels }
+    /// True once something it took asks for a restart (a commit, or a config
+    /// write outside an edit) and until `restart()`.
+    var restartRequested: Bool { lock.lock(); defer { lock.unlock() }; return _restartRequested }
+    /// How many times it has restarted.
+    var restarts: Int { lock.lock(); defer { lock.unlock() }; return _restarts }
 
     /// The packets it took, in order.
     var processed: [Record] { lock.lock(); defer { lock.unlock() }; return _processed }
@@ -202,20 +238,57 @@ final class SimulatedRadioModel: @unchecked Sendable {
         self._device = device.data
         self._position = position.data
         self._channels = channels.mapValues { $0.data }
+        self._savedDevice = device.data
+        self._savedPosition = position.data
+        self._savedChannels = channels.mapValues { $0.data }
     }
 
-    /// Put the radio in a state, as if it had been configured so.
+    /// Put the radio in a state, as if it had been configured so, and saved.
     func set(device: ProtoFixture? = nil, position: ProtoFixture? = nil, channels: [Int: ProtoFixture]? = nil) {
         lock.lock()
-        if let device { _device = device.data }
-        if let position { _position = position.data }
-        if let channels { _channels = channels.mapValues { $0.data } }
+        if let device { _device = device.data; _savedDevice = device.data }
+        if let position { _position = position.data; _savedPosition = position.data }
+        if let channels { _channels = channels.mapValues { $0.data }; _savedChannels = _channels }
         lock.unlock()
     }
 
-    /// Put one channel slot in a state.
+    /// Put one channel slot in a state, saved.
     func set(channel: ProtoFixture, at index: Int) {
-        lock.lock(); _channels[index] = channel.data; lock.unlock()
+        lock.lock(); _channels[index] = channel.data; _savedChannels[index] = channel.data; lock.unlock()
+    }
+
+    /// A power cycle: what was only in memory is gone, and what was saved is what
+    /// the radio holds. An open edit is closed, the link is back and nothing asks
+    /// for a restart.
+    func restart() {
+        lock.lock()
+        _device = _savedDevice
+        _position = _savedPosition
+        _channels = _savedChannels
+        _transactionOpen = false
+        _restartRequested = false
+        _linkCut = false
+        _restarts += 1
+        lock.unlock()
+    }
+
+    /// Save what is in memory, as the firmware does when it takes a change and no
+    /// edit is open. Called with the lock held.
+    private func saveLocked(config: Bool, channels: Bool) {
+        if config { _savedDevice = _device; _savedPosition = _position }
+        if channels { _savedChannels = _channels }
+    }
+
+    /// What the firmware does to a channel it stores (`Channels::fixupChannel`):
+    /// the name "Default" is kept as no name.
+    static func fixup(_ channel: Data) -> Data {
+        guard let summary = MeshtasticAdminCodec.channelSummary(in: channel),
+              summary.name == "Default",
+              let fixed = ProtoFields.patch(channel, [
+                  .nested(MeshtasticAdminCodec.ChannelField.settings,
+                          [.string(MeshtasticAdminCodec.ChannelSettingsField.name, "")]),
+              ]) else { return channel }
+        return fixed
     }
 
     // MARK: - Taking a packet
@@ -299,6 +372,7 @@ final class SimulatedRadioModel: @unchecked Sendable {
         }
 
         lock.lock()
+        var cutLink = false
         switch kind {
         case .setConfig(let variant):
             if _stopsAnsweringAfterAWrite { _answersGets = false }
@@ -316,18 +390,30 @@ final class SimulatedRadioModel: @unchecked Sendable {
                 } else if variant == RadioProto.Config.position {
                     _position = member.value
                 }
+                // These configs need a restart. Outside an edit the radio saves
+                // them, asks for the restart, and over Bluetooth cuts the link.
+                if !_transactionOpen {
+                    saveLocked(config: true, channels: false)
+                    _restartRequested = true
+                    cutLink = _cutsBluetoothOnRestartingWrite && !_linkCut
+                }
             }
         case .setChannel(let index):
             if _stopsAnsweringAfterAWrite { _answersGets = false }
             if _holdsAnswersAfterAWrite { _holdAnswers = true }
             if _appliesChannelWrites, let top = FixtureReader.fields(packet.admin)?.first {
-                _channels[index] = _transformChannelWrite?(top.value) ?? top.value
+                _channels[index] = Self.fixup(_transformChannelWrite?(top.value) ?? top.value)
+                // A channel saves itself, and asks for no restart.
+                if !_transactionOpen { saveLocked(config: false, channels: true) }
             }
         case .beginEdit:
             _transactionOpen = true
         case .commitEdit:
             _transactionOpen = false
             _commits += 1
+            saveLocked(config: true, channels: true)
+            _restartRequested = true
+            cutLink = _cutsBluetoothOnRestartingWrite && !_linkCut
             commit = _onCommit
         case .getConfig(let variant):
             if packet.wantResponse, _answersGets {
@@ -351,9 +437,15 @@ final class SimulatedRadioModel: @unchecked Sendable {
         let delay = _answerDelay
         let hold = _holdAnswers
         if let answer, hold { _held.append(answer) }
+        var cut: (() -> Void)?
+        if cutLink {
+            _linkCut = true
+            cut = _onLinkCut
+        }
         lock.unlock()
 
         commit?()
+        cut?()
         if let answer, !hold {
             if delay > 0 {
                 queue.asyncAfter(deadline: .now() + delay) { deliver(answer) }

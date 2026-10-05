@@ -101,6 +101,13 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     @Published var nodes: [UInt32: MeshNode] = [:]
     @Published var lastError: String?
 
+    /// Why the last `sendAdmin` was refused, or nil when it was not. A refusal is
+    /// the answer to the caller that asked, and the settings screen says it. It is
+    /// not a connection error, so it is not `lastError`, which the connection
+    /// screens show as a banner and which the Bluetooth state callbacks also set.
+    /// Main thread only: the manager asks from the main actor.
+    private(set) var lastRefusal: String?
+
     enum ConnectionState: String {
         case disconnected = "Disconnected"
         case scanning = "Scanning..."
@@ -490,16 +497,17 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     ) -> Bool {
         // The write is for one radio. Without that radio's node number here,
         // or with another one, nothing goes out.
+        lastRefusal = nil
         guard myNodeNum == nodeNum,
               let toRadio = MeshtasticAdminCodec.toRadioFrame(
                   adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse, packetID: packetID) else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.linkChanged }
+            lastRefusal = MeshtasticWriteResult.linkChanged
             return false
         }
         guard let peripheral = connectedPeripheral,
               let characteristic = toRadioCharacteristic,
               peripheral.state == .connected else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notConnected }
+            lastRefusal = MeshtasticWriteResult.notConnected
             return false
         }
         sendToRadio(toRadio, peripheral: peripheral, characteristic: characteristic)

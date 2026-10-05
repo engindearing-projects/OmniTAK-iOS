@@ -330,7 +330,7 @@ final class MeshtasticAdminRequestTests: XCTestCase {
         rig.manager.frameSpacing = spacing
         guard case .go(let route) = rig.manager.route() else { return XCTFail("no route") }
         for _ in 0..<6 {
-            let sent = await rig.manager.sendFrame(MeshtasticAdminCodec.encodeBeginEditSettings(), wantResponse: false,
+            let sent = await rig.manager.sendFrame(MeshtasticAdminCodec.encodeGetChannelRequest(index: 1), wantResponse: false,
                                                    packetID: rig.manager.freshPacketID(), route: route)
             XCTAssertTrue(sent)
         }

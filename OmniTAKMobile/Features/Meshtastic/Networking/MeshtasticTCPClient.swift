@@ -67,6 +67,21 @@ class MeshtasticTCPClient: ObservableObject {
     /// before the client closes that connection on its side.
     var endOfStreamHook: (() -> Void)?
 
+    /// For tests: called by `sendAdmin` after it has taken the connection it
+    /// checked and before it sends on it, which is where a `connect` that begins
+    /// in between would show.
+    var beforeAdminSendHook: (() -> Void)?
+
+    /// Why the last `sendAdmin` was refused, or nil when it was not. A refusal is
+    /// the answer to the caller that asked, and the settings screen says it. It is
+    /// not a connection error, so it is not `lastError`, which the connection
+    /// screens show as a banner.
+    private(set) var lastRefusal: String? {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _lastRefusal }
+        set { stateLock.lock(); _lastRefusal = newValue; stateLock.unlock() }
+    }
+    private var _lastRefusal: String?
+
     private let queue = DispatchQueue(label: "com.omnitak.meshtastic.tcp", qos: .userInitiated)
     private var receiveBuffer = Data()
     private var host: String = ""
@@ -486,18 +501,20 @@ class MeshtasticTCPClient: ObservableObject {
         wantResponse: Bool = false,
         packetID: UInt32 = UInt32.random(in: 1...UInt32.max)
     ) -> Bool {
+        lastRefusal = nil
         guard isConnected, let current = currentConnection(ifSerial: expected) else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notConnected }
+            lastRefusal = MeshtasticWriteResult.notConnected
             return false
         }
         guard myNodeNum == nodeNum,
               let toRadio = MeshtasticAdminCodec.toRadioFrame(
                   adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse, packetID: packetID) else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.linkChanged }
+            lastRefusal = MeshtasticWriteResult.linkChanged
             return false
         }
+        beforeAdminSendHook?()
         guard sendToRadio(toRadio, on: current) else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notConnected }
+            lastRefusal = MeshtasticWriteResult.notConnected
             return false
         }
         return true

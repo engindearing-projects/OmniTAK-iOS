@@ -642,4 +642,38 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         XCTAssertEqual(MeshtasticWriteResult.linkChanged, "The radio link changed. Reconnect and try again.")
         XCTAssertEqual(MeshtasticWriteResult.nothingToChange, "Nothing to change. The radio already has these settings.")
     }
+
+    // MARK: - The name the radio keeps
+
+    func testASlotHoldingTheNameDefaultIsFoundByThatNameWhateverTheRadioStoresIt() {
+        var settings = MeshtasticRadioSettings()
+        settings.apply(.downloadStarted(nodeNum: 1))
+        // The radio keeps the name "Default" as no name.
+        settings.apply(.channel(index: 1, body: RadioFixtures.channel(index: 1, name: "", psk: RadioFixtures.key).data))
+        XCTAssertEqual(settings.slotHolding(name: "Default", key: RadioFixtures.key), 1)
+        XCTAssertNil(settings.slotHolding(name: "Other", key: RadioFixtures.key))
+        XCTAssertEqual(MeshtasticAdminCodec.storedName("Default"), "")
+        XCTAssertEqual(MeshtasticAdminCodec.storedName("default"), "default", "only the exact name is kept as no name")
+        XCTAssertEqual(MeshtasticAdminCodec.storedName("Defaults"), "Defaults")
+    }
+
+    func testAConfigFieldIsReadFromTheBytesTheRadioSentAndSaidInWords() {
+        let body = RadioFixtures.positionConfig(broadcastSecs: 900).data
+        XCTAssertEqual(MeshtasticConfigField.positionInterval.value(in: body), 900)
+        XCTAssertEqual(MeshtasticConfigField.positionInterval.text(900), "900 s")
+        XCTAssertEqual(MeshtasticConfigField.role.text(7), "role TAK")
+        XCTAssertEqual(MeshtasticConfigField.role.text(99), "role 99", "a role with no name is its number")
+        XCTAssertEqual(MeshtasticConfigField.rebroadcastMode.text(3), "rebroadcast Known channels only")
+        XCTAssertEqual(MeshtasticConfigField.list([.rebroadcastMode: 3, .role: 7]), "role TAK, rebroadcast Known channels only",
+                       "in a fixed order, whatever the order they were sent in")
+        XCTAssertNil(MeshtasticConfigField.positionInterval.value(in: Data([0x08, 0x80])), "not well formed")
+    }
+
+    @MainActor
+    func testWhatDiffersIsWhatTheRadioReportsForTheFieldsThatWereSent() {
+        let body = RadioFixtures.positionConfig(broadcastSecs: 3600).data
+        XCTAssertEqual(MeshtasticManager.differences(from: [.positionInterval: 900], in: body), [.positionInterval: 3600])
+        XCTAssertEqual(MeshtasticManager.differences(from: [.positionInterval: 3600], in: body), [:])
+        XCTAssertNil(MeshtasticManager.differences(from: [.positionInterval: 900], in: Data([0x08, 0x80])))
+    }
 }

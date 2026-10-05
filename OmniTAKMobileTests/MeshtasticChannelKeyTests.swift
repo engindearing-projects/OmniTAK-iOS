@@ -196,4 +196,64 @@ final class MeshtasticChannelKeyTests: XCTestCase {
                        "a secondary channel with no key is not open")
         XCTAssertEqual(Stored(index: 0, name: "a", pskHex: "", isPrimary: true).keyKind, .open)
     }
+
+    // MARK: Any spelling of the default key is the default key
+
+    /// The 16 bytes the radio expands the one-byte shorthand N to: the published
+    /// default key with N minus one added to its last byte (Channels::getKey).
+    private func expanded(_ shorthand: UInt8) -> Data {
+        var bytes = MeshtasticChannelKey.publishedDefaultKey
+        bytes[bytes.index(before: bytes.endIndex)] = bytes[bytes.index(before: bytes.endIndex)] &+ shorthand &- 1
+        return bytes
+    }
+
+    func testTheShorthandAndItsSixteenByteSpellingAreTheSameKeyAndTheSameLabel() {
+        for shorthand in UInt8(1)...UInt8(10) {
+            let short = MeshtasticChannelKey.kind(of: Data([shorthand]), isPrimary: false)
+            let full = MeshtasticChannelKey.kind(of: expanded(shorthand), isPrimary: false)
+            XCTAssertEqual(short, .defaultKey, "shorthand \(shorthand)")
+            XCTAssertEqual(full, .defaultKey, "shorthand \(shorthand) typed out in full")
+            XCTAssertEqual(MeshtasticChannelKey.kind(of: expanded(shorthand), isPrimary: true), .defaultKey)
+        }
+    }
+
+    func testTheDefaultKeyTypedInFullIsLabelledDefaultWhetherItIsTypedAsHexOrBase64() {
+        let full = MeshtasticChannelKey.publishedDefaultKey
+        for text in [hex(full), hex(full).uppercased(), full.base64EncodedString()] {
+            guard case .key(let bytes) = parse(text) else { return XCTFail("not accepted as a key") }
+            XCTAssertEqual(bytes.count, 16)
+            XCTAssertEqual(MeshtasticChannelKey.kind(of: bytes, isPrimary: false).label, "default key, not private")
+        }
+    }
+
+    func testAKeyThatIsNearTheDefaultKeyButNotOfItsFamilyIsPrivate() {
+        // The next value after the last shorthand.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: expanded(11), isPrimary: false), .privateKey)
+        // Below the default key.
+        var below = MeshtasticChannelKey.publishedDefaultKey
+        below[below.index(before: below.endIndex)] = 0x00
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: below, isPrimary: false), .privateKey)
+        // A different first byte.
+        var other = MeshtasticChannelKey.publishedDefaultKey
+        other[other.startIndex] ^= 0xFF
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: other, isPrimary: false), .privateKey)
+        // 32 bytes that start with the default key are not it: AES-256 is another key.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: MeshtasticChannelKey.publishedDefaultKey + key16, isPrimary: false), .privateKey)
+        // Fifteen bytes of it are not a key at all.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data(MeshtasticChannelKey.publishedDefaultKey.prefix(15)), isPrimary: false),
+                       .unusual(length: 15))
+    }
+
+    func testASavedChannelWithTheDefaultKeyTypedInFullIsLabelledDefault() {
+        typealias Stored = MeshtasticManager.StoredChannel
+        let entry = Stored(index: 2, name: "a", pskHex: hex(MeshtasticChannelKey.publishedDefaultKey), isPrimary: false)
+        XCTAssertEqual(entry.keyKind, .defaultKey)
+    }
+
+    func testThePublishedDefaultKeyIsSixteenBytes() {
+        XCTAssertEqual(MeshtasticChannelKey.publishedDefaultKey.count, 16)
+        XCTAssertTrue(MeshtasticChannelKey.isDefaultKeyFamily(MeshtasticChannelKey.publishedDefaultKey))
+        XCTAssertFalse(MeshtasticChannelKey.isDefaultKeyFamily(key16))
+        XCTAssertFalse(MeshtasticChannelKey.isDefaultKeyFamily(Data()))
+    }
 }

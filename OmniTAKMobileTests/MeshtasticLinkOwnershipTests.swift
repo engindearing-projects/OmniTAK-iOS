@@ -434,6 +434,64 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         XCTAssertEqual(radioB.accepted, 1)
     }
 
+    func testAFrameCheckedAgainstOneConnectionIsNotSentDownTheNextOne() async throws {
+        let radioA = LoopbackRadio(nodeNum: nodeA)
+        let radioB = LoopbackRadio(nodeNum: nodeB)
+        let portA = try await radioA.start()
+        let portB = try await radioB.start()
+        defer { radioA.stop(); radioB.stop() }
+        let rig = makeRig()
+        try await connect(rig, to: radioA, port: portA)
+        defer { rig.manager.disconnect() }
+        let client = rig.client
+        let serial = client.connectionSerial
+
+        // A connection to the second radio begins after the client has checked
+        // the first one and before it sends.
+        client.beforeAdminSendHook = { client.connect(host: "127.0.0.1", port: portB) }
+        _ = client.sendAdmin(payload: MeshtasticAdminCodec.encodeGetChannelRequest(index: 0),
+                             to: nodeA, connection: serial, wantResponse: true)
+        client.beforeAdminSendHook = nil
+
+        let up = try await eventually { radioB.isClientConnected }
+        XCTAssertTrue(up)
+        try await settle()
+        XCTAssertTrue(radioB.admin.isEmpty, "a frame for the first radio did not go to the second")
+        XCTAssertTrue(radioA.admin.isEmpty)
+    }
+
+    func testARefusalByTheRealClientIsNotAConnectionErrorOnTheConnectionScreens() async throws {
+        let radioA = LoopbackRadio(nodeNum: nodeA)
+        let portA = try await radioA.start()
+        defer { radioA.stop() }
+        let rig = makeRig()
+        try await connect(rig, to: radioA, port: portA)
+        defer { rig.manager.disconnect() }
+        XCTAssertNil(rig.manager.lastError)
+
+        // The settings the manager holds say another radio. The client holds this
+        // one's node number, and refuses a write for the other.
+        rig.manager.handleSettingsEvent(.downloadStarted(nodeNum: nodeB))
+        rig.manager.handleSettingsEvent(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
+        let result = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+        try await settle()
+
+        XCTAssertEqual(result, .refused(MeshtasticWriteResult.linkChanged))
+        XCTAssertEqual(rig.client.lastRefusal, MeshtasticWriteResult.linkChanged, "the client refused it")
+        XCTAssertNil(rig.client.lastError)
+        XCTAssertNil(rig.manager.lastError, "and a refusal is not a banner on the connection screens")
+        XCTAssertTrue(radioA.admin.isEmpty)
+    }
+
+    func testAClientThatRefusesTellsTheCallerWhyAndNotTheBanner() {
+        let client = MeshtasticTCPClient()
+        XCTAssertNil(client.lastRefusal)
+        XCTAssertFalse(client.sendAdmin(payload: MeshtasticAdminCodec.encodeGetChannelRequest(index: 0),
+                                        to: nodeA, connection: client.connectionSerial, wantResponse: true))
+        XCTAssertEqual(client.lastRefusal, MeshtasticWriteResult.notConnected)
+        XCTAssertNil(client.lastError)
+    }
+
     func testSendAdminSaysSoWhenNothingWasSent() {
         let client = MeshtasticTCPClient()
         XCTAssertFalse(client.sendAdmin(payload: MeshtasticAdminCodec.encodeGetChannelRequest(index: 0),

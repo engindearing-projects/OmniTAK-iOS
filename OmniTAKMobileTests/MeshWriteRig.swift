@@ -46,6 +46,14 @@ final class FakeRadioLink: MeshtasticAdminLink {
     var accepts = true
     /// False: refuses the requests that ask for an answer, and takes the writes.
     var acceptsRequests = true
+    /// False: the link is down, as when the radio has cut it. Nothing goes, and
+    /// nothing comes back.
+    var isUp = true
+    /// Called when the radio cuts the link. The rig makes the manager hear of it
+    /// on a later turn of the main queue, as it does from a client.
+    var onCut: (() -> Void)?
+    /// Called after the radio has taken a frame, with what it asked for.
+    var onSent: ((SimulatedRadioModel.Kind) -> Void)?
 
     private(set) var sent: [Sent] = []
 
@@ -53,10 +61,14 @@ final class FakeRadioLink: MeshtasticAdminLink {
         self.radio = radio
         self.transport = transport
         self.heldNode = radio.nodeNum
+        radio.onLinkCut = { [weak self] in
+            self?.isUp = false
+            self?.onCut?()
+        }
     }
 
     func sendAdmin(payload: Data, to nodeNum: UInt32, connection: Int, wantResponse: Bool, packetID: UInt32) -> Bool {
-        guard accepts, connection == connectionSerial, nodeNum == heldNode else { return false }
+        guard isUp, accepts, connection == connectionSerial, nodeNum == heldNode else { return false }
         if wantResponse && !acceptsRequests { return false }
         sent.append(Sent(payload: payload, node: nodeNum, connection: connection,
                          wantResponse: wantResponse, packetID: packetID, uptime: SimulatedRadioModel.uptime()))
@@ -64,11 +76,12 @@ final class FakeRadioLink: MeshtasticAdminLink {
         radio.receive(SimulatedRadioModel.Packet(
             to: nodeNum, admin: payload, wantResponse: wantResponse, packetID: packetID)
         ) { [weak self] fromRadio in
-            guard let self = self,
+            guard let self = self, self.isUp,
                   let decoded = MeshtasticProtoDecoder.decodeFromRadio(fromRadio),
                   let event = MeshtasticRadioSettings.Event(decoded) else { return }
             self.events.send(MeshtasticLinkEvent(transport: self.transport, connection: tag, event: event))
         }
+        onSent?(SimulatedRadioModel.kind(of: payload))
         return true
     }
 
@@ -114,6 +127,8 @@ final class WriteRig {
 
     init(transport: MeshtasticConnectionType = .tcp) {
         radio = SimulatedRadioModel(nodeNum: WriteRig.nodeNum)
+        // A radio cuts a Bluetooth link as it takes a config that needs a restart.
+        radio.cutsBluetoothOnRestartingWrite = transport == .bluetooth
         link = FakeRadioLink(radio: radio, transport: transport)
         savedChannels = manager.appChannels
         manager.appChannels = []
@@ -132,6 +147,10 @@ final class WriteRig {
             .sink { [weak manager] event in manager?.handleLinkEvent(event) }
             .store(in: &cancellables)
         manager.adminLinkOverride = link
+        // The manager hears of a cut link on a later turn, as from a client.
+        link.onCut = { [weak manager] in
+            DispatchQueue.main.async { manager?.handleLinkDown(transport) }
+        }
         manager.beginLink(
             .init(transport: transport, connection: link.connectionSerial),
             device: MeshtasticDevice(
@@ -143,6 +162,7 @@ final class WriteRig {
     /// simulated radio behind it. It has not downloaded anything yet.
     func chooseAnotherRadio(node: UInt32) {
         radio = SimulatedRadioModel(nodeNum: node)
+        radio.cutsBluetoothOnRestartingWrite = link.transport == .bluetooth
         let next = FakeRadioLink(radio: radio, transport: link.transport)
         next.connectionSerial = link.connectionSerial + 1
         link = next
@@ -152,6 +172,31 @@ final class WriteRig {
     func restore() {
         manager.appChannels = savedChannels
         cancellables.removeAll()
+    }
+
+    /// The radio is back after a restart, on the same link as before: what it
+    /// saved is what it holds, the link is up again and the manager hears so, and
+    /// the radio sends its config download.
+    func reconnect() {
+        radio.restart()
+        link.isUp = true
+        manager.handleLinkUp(link.transport)
+        redownload()
+    }
+
+    /// The radio sends its config download again, as it does on connecting.
+    func redownload() {
+        for frame in radio.downloadFrames() {
+            guard let decoded = MeshtasticProtoDecoder.decodeFromRadio(frame),
+                  let event = MeshtasticRadioSettings.Event(decoded) else { continue }
+            manager.handleSettingsEvent(event)
+        }
+    }
+
+    /// Let what is waiting on the main queue run: a link that was cut is heard of
+    /// on a later turn.
+    func settle() async {
+        try? await Task.sleep(nanoseconds: 30_000_000)
     }
 
     /// What the radio sends in a config download, for the parts a test names, and
