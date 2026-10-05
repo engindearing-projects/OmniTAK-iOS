@@ -13,14 +13,19 @@ import Combine
 // MARK: - Meshtastic BLE UUIDs
 
 enum MeshtasticBLEUUID {
-    // Canonical Meshtastic BLE GATT UUIDs (must match the firmware exactly,
-    // same values the working Android client uses). Earlier builds had wrong
-    // fromRadio/fromNum UUIDs, so the characteristics never matched on
-    // discovery — the radio could never be read and the node list stayed empty.
+    // Meshtastic BLE GATT UUIDs. They must match the firmware exactly
+    // (src/BluetoothCommon.h: MESH_SERVICE_UUID, TORADIO_UUID, FROMRADIO_UUID,
+    // FROMNUM_UUID). Earlier builds had wrong fromRadio/fromNum UUIDs, so the
+    // characteristics never matched on discovery — the radio could never be
+    // read and the node list stayed empty.
     static let service = CBUUID(string: "6ba1b218-15a8-461f-9fa8-5dcae273eafd")
     static let toRadio = CBUUID(string: "f75c76d2-129e-4dad-a1dd-7866124401e7")
     static let fromRadio = CBUUID(string: "2c55e69e-4993-11ed-b878-0242ac120002")
-    static let fromNum = CBUUID(string: "ed9da18c-a800-4f66-a670-aa7547de15e6")
+    // This ended in …de15e6 (copied from the Android client, which had the
+    // same typo), which matches nothing on the radio: fromNum was never
+    // found, its notifications were never enabled, and frames only came in
+    // on the once-a-second read timer.
+    static let fromNum = CBUUID(string: "ed9da18c-a800-4f66-a670-aa7547e34453")
 }
 
 // MARK: - BLE Protocol Constants

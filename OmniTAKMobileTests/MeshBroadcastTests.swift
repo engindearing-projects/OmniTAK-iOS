@@ -293,3 +293,21 @@ final class MeshBroadcastTests: XCTestCase {
         }
     }
 }
+
+// MARK: - Meshtastic GATT UUIDs
+
+/// The characteristic UUIDs have to match the firmware byte for byte: a
+/// UUID that is off by a few digits is not an error anywhere, the
+/// characteristic is just never found. fromNum was wrong that way from the
+/// start, so its notifications were never enabled and frames only arrived on
+/// the once-a-second read timer.
+final class MeshtasticBLEUUIDTests: XCTestCase {
+
+    func testUUIDsMatchTheFirmware() {
+        // Values from the firmware's src/BluetoothCommon.h.
+        XCTAssertEqual(MeshtasticBLEUUID.service.uuidString, "6BA1B218-15A8-461F-9FA8-5DCAE273EAFD")
+        XCTAssertEqual(MeshtasticBLEUUID.toRadio.uuidString, "F75C76D2-129E-4DAD-A1DD-7866124401E7")
+        XCTAssertEqual(MeshtasticBLEUUID.fromRadio.uuidString, "2C55E69E-4993-11ED-B878-0242AC120002")
+        XCTAssertEqual(MeshtasticBLEUUID.fromNum.uuidString, "ED9DA18C-A800-4F66-A670-AA7547E34453")
+    }
+}
