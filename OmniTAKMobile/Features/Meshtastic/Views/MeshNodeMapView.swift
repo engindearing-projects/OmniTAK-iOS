@@ -255,16 +255,16 @@ struct MeshNodeDetailCard: View {
                         .font(.caption)
                     }
 
-                    if let battery = node.batteryLevel {
+                    if let battery = node.batteryLevel, let batteryText = node.batteryLabel {
                         HStack(spacing: 4) {
-                            Image(systemName: batteryIcon(battery))
-                            Text("\(battery)%")
+                            Image(systemName: node.isPowered ? "bolt.fill" : batteryIcon(battery))
+                            Text(batteryText)
                         }
                         .font(.caption)
-                        .foregroundColor(batteryColor(battery))
+                        .foregroundColor(node.isPowered ? .green : batteryColor(battery))
                     }
 
-                    Text(timeAgo(from: node.lastHeard))
+                    Text(node.lastHeardLabel())
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -300,13 +300,6 @@ struct MeshNodeDetailCard: View {
         case 21...50: return .orange
         default: return .red
         }
-    }
-
-    private func timeAgo(from date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "\(seconds)s ago" }
-        if seconds < 3600 { return "\(seconds / 60)m ago" }
-        return "\(seconds / 3600)h ago"
     }
 }
 

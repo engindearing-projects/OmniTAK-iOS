@@ -385,15 +385,15 @@ struct MeshNodeDetailRow: View {
                         .foregroundColor(.secondary)
                 }
 
-                if let battery = node.batteryLevel {
-                    Label("\(battery)%", systemImage: "battery.100")
+                if let battery = node.batteryLabel {
+                    Label(battery, systemImage: node.isPowered ? "bolt.fill" : "battery.100")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
 
-                Text(timeAgo(from: node.lastHeard))
+                Text(node.lastHeardLabel())
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -416,13 +416,6 @@ struct MeshNodeDetailRow: View {
         case 2: return .orange
         default: return .red
         }
-    }
-
-    private func timeAgo(from date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
-        if seconds < 60 { return "\(seconds)s ago" }
-        if seconds < 3600 { return "\(seconds / 60)m ago" }
-        return "\(seconds / 3600)h ago"
     }
 }
 
