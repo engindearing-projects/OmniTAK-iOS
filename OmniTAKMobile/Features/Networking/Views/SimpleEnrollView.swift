@@ -798,7 +798,12 @@ struct SimpleEnrollView: View {
                 useTLS: false
             ))
             ServerManager.shared.setActiveServer(server)
-            TAKService.shared.connect(host: server.host, port: server.port, protocolType: "tcp", useTLS: false)
+            // addServer has already dialed a new server that is switched on.
+            // The legacy TAKService.connect() dialed it a second time, which
+            // opened a second connection to the same server. connectToServer
+            // leaves a link that is up or being dialed alone, and dials a saved
+            // server that has no link.
+            if server.enabled { TAKService.shared.connectToServer(server) }
             enrollmentState = .success
         }
         print("[SimpleEnroll] Added plain-TCP server \(host):\(port) and connecting")
