@@ -28,6 +28,8 @@ struct PointDropperView: View {
     @State private var showAdvanced: Bool = false
     @State private var showIconPackImporter: Bool = false
     @State private var importedPacks: [ImportedPack] = []
+    /// The marker a delete button was tapped on, until the user confirms.
+    @State private var markerPendingDelete: PointMarker?
 
     var body: some View {
         NavigationView {
@@ -141,6 +143,7 @@ struct PointDropperView: View {
         .sheet(isPresented: $showMarkerList) {
             MarkerListView(service: service)
         }
+        .confirmMarkerDelete($markerPendingDelete) { service.deleteMarker($0) }
         .sheet(isPresented: $showIconPackImporter) {
             IconPackImporterSheet(onImported: { pack in
                 importedPacks = IconPackRegistry.shared.allPacks()
@@ -591,7 +594,7 @@ struct PointDropperView: View {
                                     service.broadcastMarker(marker)
                                 },
                                 onDelete: {
-                                    service.deleteMarker(marker)
+                                    markerPendingDelete = marker
                                 }
                             )
                         }
@@ -976,24 +979,36 @@ struct RecentMarkerCard: View {
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundColor(.gray)
 
+            // Three separate 44 pt targets (the icons were 12 pt, 8 pt apart, with
+            // delete right next to broadcast). Delete only asks: the card's owner
+            // shows the confirmation.
             HStack(spacing: 8) {
                 Button(action: onTap) {
                     Image(systemName: "doc.text.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: 16))
                         .foregroundColor(.purple)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel("SALUTE report for \(marker.name)")
 
                 Button(action: onBroadcast) {
                     Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 12))
+                        .font(.system(size: 16))
                         .foregroundColor(.cyan)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel("Broadcast \(marker.name)")
 
                 Button(action: onDelete) {
                     Image(systemName: "trash.fill")
-                        .font(.system(size: 12))
+                        .font(.system(size: 16))
                         .foregroundColor(.red)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel("Delete \(marker.name)")
             }
 
             if marker.isBroadcast {
@@ -1016,8 +1031,9 @@ struct RecentMarkerCard: View {
                     .cornerRadius(4)
             }
         }
-        .padding()
-        .frame(width: 140)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(width: 172) // 3 x 44 pt targets + 2 x 8 pt gaps fit the padded width
         .background(Color.black.opacity(0.5))
         .cornerRadius(10)
         .overlay(
@@ -1055,6 +1071,8 @@ struct MarkerListView: View {
     @ObservedObject var service: PointDropperService
     @State private var searchText: String = ""
     @State private var filterAffiliation: MarkerAffiliation?
+    /// The marker a swipe-to-delete was started on, until the user confirms.
+    @State private var markerPendingDelete: PointMarker?
     @Environment(\.dismiss) var dismiss
 
     var filteredMarkers: [PointMarker] {
@@ -1118,15 +1136,22 @@ struct MarkerListView: View {
                         ForEach(filteredMarkers) { marker in
                             MarkerRowView(marker: marker, service: service)
                                 .listRowBackground(Color.clear)
-                        }
-                        .onDelete { indexSet in
-                            for index in indexSet {
-                                let marker = filteredMarkers[index]
-                                service.deleteMarker(marker)
-                            }
+                                // Swipe left to delete. It asks first, and it is not a
+                                // full swipe: a stray flick must not remove a marker.
+                                // (A plain tinted button rather than a .destructive one:
+                                // the row has to stay put until the user confirms.)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button {
+                                        markerPendingDelete = marker
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .tint(.red)
+                                }
                         }
                     }
                     .listStyle(PlainListStyle())
+                    .confirmMarkerDelete($markerPendingDelete) { service.deleteMarker($0) }
                 }
             }
             .navigationTitle("All Markers (\(filteredMarkers.count))")
@@ -1209,26 +1234,50 @@ struct MarkerRowView: View {
 
             Spacer()
 
-            // Actions
-            VStack(spacing: 8) {
-                Button(action: {
-                    service.broadcastMarker(marker)
-                }) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 14))
-                        .foregroundColor(.cyan)
-                }
-
-                Button(action: {
-                    service.deleteMarker(marker)
-                }) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14))
-                        .foregroundColor(.red)
-                }
+            // Broadcast. Delete is a swipe action on the row (see MarkerListView),
+            // so it is no longer a second button next to this one.
+            //
+            // .borderless is what makes this button its own tap target. In a List
+            // row the default button style turns the whole row into one target for
+            // EVERY button in it, so one tap on the antenna also fired the trash
+            // button beside it and deleted the marker (#118).
+            Button {
+                service.broadcastMarker(marker)
+            } label: {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 18))
+                    .foregroundColor(.cyan)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Broadcast \(marker.name)")
         }
         .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Delete confirmation
+
+private extension View {
+    /// Asks before a marker is deleted. Delete buttons only set `marker`;
+    /// nothing is removed until the user confirms the dialog.
+    func confirmMarkerDelete(_ marker: Binding<PointMarker?>,
+                             onConfirm: @escaping (PointMarker) -> Void) -> some View {
+        confirmationDialog(
+            "Delete this marker?",
+            isPresented: Binding(
+                get: { marker.wrappedValue != nil },
+                set: { if !$0 { marker.wrappedValue = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: marker.wrappedValue
+        ) { pending in
+            Button("Delete \(pending.name)", role: .destructive) { onConfirm(pending) }
+            Button("Cancel", role: .cancel) {}
+        } message: { pending in
+            Text("\(pending.name) will be removed from the map and the marker list. This can't be undone.")
+        }
     }
 }
 
