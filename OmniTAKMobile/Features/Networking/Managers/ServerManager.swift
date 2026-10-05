@@ -169,6 +169,23 @@ class ServerManager: ObservableObject {
         return server
     }
 
+    /// For a server the operator has just asked for (Add Server, a connect link):
+    /// add it, or find the record already saved for that address, and make sure that
+    /// saved record is switched on and is the active one. A record that was switched
+    /// off is switched on through `enableServer`, so it is saved. The record that
+    /// comes back is the saved one (its id is the one the Servers list knows), and
+    /// the caller dials it with `TAKService.connectToServer`.
+    @discardableResult
+    func addAndSwitchOn(_ server: TAKServer) -> TAKServer {
+        var saved = addServer(server)
+        if !saved.enabled {
+            enableServer(saved)
+            saved = servers.first { $0.id == saved.id } ?? saved
+        }
+        setActiveServer(saved)
+        return saved
+    }
+
     func updateServer(_ server: TAKServer) {
         if let index = servers.firstIndex(where: { $0.id == server.id }) {
             servers[index] = server
