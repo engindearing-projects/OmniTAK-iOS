@@ -53,9 +53,17 @@ final class MeshtasticChannelKeyTests: XCTestCase {
         XCTAssertEqual(parse("  \(hex(key16))  \n"), .key(key16))
     }
 
-    func testTwoHexDigitsAreTheOneByteDefaultKeyShorthand() {
+    func testTwoHexDigitsAreTheOneByteShorthandFromZeroToTen() {
+        XCTAssertEqual(parse("00"), .key(Data([0x00])), "encryption off")
         XCTAssertEqual(parse("01"), .key(Data([0x01])))
         XCTAssertEqual(parse("0a"), .key(Data([0x0A])))
+        XCTAssertEqual(parse("0A"), .key(Data([0x0A])))
+    }
+
+    func testAOneByteValueTheRadioGivesNoMeaningIsNotAKey() {
+        for text in ["0b", "0B", "10", "7f", "ab", "AB", "ff"] {
+            XCTAssertEqual(parse(text), .invalid(MeshtasticChannelKey.invalidMessage), text)
+        }
     }
 
     // MARK: Base64
@@ -77,9 +85,19 @@ final class MeshtasticChannelKeyTests: XCTestCase {
         XCTAssertEqual(parse(unpadded), .key(tricky))
     }
 
+    func testBase64IsNeverTheOneByteShorthand() {
+        // Two base64 characters are too easily something else. "AA==" and "AQ=="
+        // are one byte, 0 and 1, and the shorthand is only taken as hex.
+        XCTAssertEqual(parse("AA=="), .invalid(MeshtasticChannelKey.invalidMessage))
+        XCTAssertEqual(parse("AQ=="), .invalid(MeshtasticChannelKey.invalidMessage))
+        XCTAssertEqual(parse("AA"), .invalid(MeshtasticChannelKey.invalidMessage))
+        XCTAssertEqual(parse("ab"), .invalid(MeshtasticChannelKey.invalidMessage), "hex 0xAB is not a shorthand either")
+    }
+
     func testAStringThatIsBothHexAndBase64IsReadAsHex() {
-        // "ab" is one byte as hex and one byte as unpadded base64.
-        XCTAssertEqual(parse("ab"), .key(Data([0xAB])))
+        // 32 characters of hex digits are also base64, of 24 bytes, which is not a key length.
+        XCTAssertEqual(parse(hex(key16)), .key(key16))
+        XCTAssertEqual(parse("0a"), .key(Data([0x0A])), "and two hex digits in range are the shorthand")
     }
 
     // MARK: Refused
@@ -105,7 +123,7 @@ final class MeshtasticChannelKeyTests: XCTestCase {
     }
 
     func testAKeyOfTheWrongLengthIsInvalid() {
-        for length in [0, 2, 3, 8, 15, 17, 24, 31, 33, 48, 64] where length != 0 {
+        for length in [2, 3, 8, 15, 17, 24, 31, 33, 48, 64] {
             let bytes = Data(repeating: 0x42, count: length)
             XCTAssertEqual(parse(hex(bytes)), .invalid(MeshtasticChannelKey.invalidMessage), "\(length) bytes as hex")
             XCTAssertEqual(parse(bytes.base64EncodedString()), .invalid(MeshtasticChannelKey.invalidMessage), "\(length) bytes as base64")
@@ -123,7 +141,59 @@ final class MeshtasticChannelKeyTests: XCTestCase {
         XCTAssertFalse("\(MeshtasticChannelKey.Input.key(key32))".contains(hex(key32).prefix(8)))
     }
 
-    func testTheValidLengthsAreTheOnesTheRadioAccepts() {
-        XCTAssertEqual(MeshtasticChannelKey.validLengths, [1, 16, 32])
+    func testThePrivateLengthsAreSixteenAndThirtyTwoBytes() {
+        XCTAssertEqual(MeshtasticChannelKey.privateLengths, [16, 32])
+    }
+
+    func testAKeyIsUsableWhenTheRadioTakesItForAKey() {
+        XCTAssertTrue(MeshtasticChannelKey.isUsable(key16))
+        XCTAssertTrue(MeshtasticChannelKey.isUsable(key32))
+        XCTAssertTrue(MeshtasticChannelKey.isUsable(Data([0])))
+        XCTAssertTrue(MeshtasticChannelKey.isUsable(Data([10])))
+        XCTAssertFalse(MeshtasticChannelKey.isUsable(Data([11])))
+        XCTAssertFalse(MeshtasticChannelKey.isUsable(Data()), "no key at all means something else on each channel")
+        XCTAssertFalse(MeshtasticChannelKey.isUsable(Data(repeating: 1, count: 15)))
+        XCTAssertFalse(MeshtasticChannelKey.isUsable(Data(repeating: 1, count: 17)))
+        XCTAssertEqual(MeshtasticChannelKey.open, Data([0]))
+    }
+
+    // MARK: What a key amounts to
+
+    func testWhatAKeyAmountsToIsWhatTheRadioTakesItFor() {
+        typealias Kind = MeshtasticChannelKey.Kind
+        // One byte 0 is encryption off, on either channel.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data([0]), isPrimary: false), .open)
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data([0]), isPrimary: true), .open)
+        // One byte 1 to 10 is the public default key family.
+        for value in UInt8(1)...UInt8(10) {
+            XCTAssertEqual(MeshtasticChannelKey.kind(of: Data([value]), isPrimary: false), .defaultKey)
+        }
+        // No key: on a secondary, the primary's; on the primary, off.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data(), isPrimary: false), .samePrimary)
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data(), isPrimary: true), .open)
+        // A private key.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: key16, isPrimary: false), .privateKey)
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: key32, isPrimary: true), .privateKey)
+        // Anything else is not described as private or open.
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data(repeating: 1, count: 20), isPrimary: false), .unusual(length: 20))
+        XCTAssertEqual(MeshtasticChannelKey.kind(of: Data([200]), isPrimary: false), .unusual(length: 1))
+    }
+
+    func testTheLabelsSayWhatItIs() {
+        XCTAssertEqual(MeshtasticChannelKey.Kind.open.label, "open")
+        XCTAssertEqual(MeshtasticChannelKey.Kind.defaultKey.label, "default key, not private")
+        XCTAssertEqual(MeshtasticChannelKey.Kind.samePrimary.label, "same key as primary")
+        XCTAssertEqual(MeshtasticChannelKey.Kind.privateKey.label, "private key")
+        XCTAssertEqual(MeshtasticChannelKey.Kind.unusual(length: 20).label, "unusual key (20 bytes)")
+    }
+
+    func testASavedChannelIsLabelledByWhatItsKeyIs() {
+        typealias Stored = MeshtasticManager.StoredChannel
+        XCTAssertEqual(Stored(index: 2, name: "a", pskHex: "00", isPrimary: false).keyKind, .open)
+        XCTAssertEqual(Stored(index: 2, name: "a", pskHex: "01", isPrimary: false).keyKind, .defaultKey)
+        XCTAssertEqual(Stored(index: 2, name: "a", pskHex: hex(key32), isPrimary: false).keyKind, .privateKey)
+        XCTAssertEqual(Stored(index: 2, name: "a", pskHex: "", isPrimary: false).keyKind, .samePrimary,
+                       "a secondary channel with no key is not open")
+        XCTAssertEqual(Stored(index: 0, name: "a", pskHex: "", isPrimary: true).keyKind, .open)
     }
 }

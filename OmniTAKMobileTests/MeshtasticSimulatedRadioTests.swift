@@ -34,13 +34,21 @@
 //  nothing when the test already did.
 //
 //  The app's own path runs end to end: MeshtasticTCPClient reads the config
-//  download, MeshtasticProtoDecoder decodes it, MeshtasticManager keeps it and
-//  builds the write from it. A config write makes the radio save and restart
-//  about 7 seconds later, so those tests wait, reconnect, download again and
-//  compare what the radio now holds with what it held. A channel write does not
-//  restart it; the app reads the channel back and reports it applied only when
-//  the radio's answer matches. Key bytes are never printed or put in an
-//  assertion message; they are compared and only the result is reported.
+//  download, MeshtasticProtoDecoder decodes it, MeshtasticManager asks the radio
+//  for the sub-config again, builds the write from the answer, sends it and reads
+//  it back. A config write makes the radio save and restart about 7 seconds
+//  later, so those tests wait, reconnect, download again and compare what the
+//  radio now holds with what it held. A channel write does not restart it. The
+//  app reports "applied" only when the radio's own answer to the read-back
+//  matches. Key bytes are never printed or put in an assertion message; they
+//  are compared and only the result is reported.
+//
+//  One test only reads. It asks the radio for each kind of thing the app asks
+//  for and reports what the answers carry: the id of the request echoed in
+//  Data.request_id, and the receive metadata a packet from outside would have
+//  (signal strength, signal-to-noise ratio, MQTT flag, transport mechanism),
+//  together with the arrival time and hop start the radio sets on its own
+//  packets.
 //
 
 import XCTest
@@ -273,13 +281,6 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         try XCTUnwrap(manager.radioSettings.config(variant: variant), "the radio did not send config \(variant)")
     }
 
-    private func report(_ manager: MeshtasticManager, slot: Int) async throws -> MeshtasticChannelReport.State? {
-        _ = try await wait(upTo: 10) {
-            manager.channelReports.first(where: { $0.slot == slot }).map { $0.state != .sent } ?? false
-        }
-        return manager.channelReports.first(where: { $0.slot == slot })?.state
-    }
-
     // MARK: - Putting it back
 
     /// Put the position interval back to `seconds`, if it is not there. Connects
@@ -287,10 +288,11 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
     private func restorePositionInterval(_ seconds: UInt32) async {
         guard let manager = try? await connect() else { return }
         defer { manager.disconnect() }
-        switch manager.applyPositionBroadcastInterval(seconds: seconds) {
+        let result = await manager.applyPositionBroadcastInterval(seconds: seconds)
+        switch result {
         case .unchanged:
             return
-        case .sent:
+        case .applied, .notConfirmed:
             try? await letTheRadioRestart(manager)
             if let again = try? await connect() {
                 if again.radioSettings.positionBroadcastSeconds != seconds {
@@ -307,10 +309,11 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
     private func restoreRebroadcast(_ mode: MeshtasticAdminCodec.RebroadcastMode) async {
         guard let manager = try? await connect() else { return }
         defer { manager.disconnect() }
-        switch manager.applyDeviceConfig(role: manager.radioSettings.namedDeviceRole, rebroadcastMode: mode) {
+        let result = await manager.applyDeviceConfig(role: manager.radioSettings.namedDeviceRole, rebroadcastMode: mode)
+        switch result {
         case .unchanged:
             return
-        case .sent:
+        case .applied, .notConfirmed:
             try? await letTheRadioRestart(manager)
             if let again = try? await connect() {
                 if again.radioSettings.namedRebroadcastMode != mode {
@@ -328,15 +331,36 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
     private func restorePrimaryName(_ name: String) async {
         guard let manager = try? await connect() else { return }
         defer { manager.disconnect() }
-        let outcome = manager.createChannel(name: name, keyText: "", noEncryption: false, replacePrimary: true)
+        let outcome = await manager.createChannel(name: name, keyText: "", noEncryption: false, replacePrimary: true)
         switch outcome.result {
-        case .unchanged:
+        case .unchanged, .applied:
             return
-        case .sent:
-            let state = try? await report(manager, slot: 0)
-            if state != .applied { XCTFail("could not put the name of channel 0 back") }
+        case .notConfirmed(let reason):
+            XCTFail("could not put the name of channel 0 back: \(reason)")
         case .refused(let reason):
             XCTFail("could not put the name of channel 0 back: \(reason)")
+        }
+    }
+
+    // MARK: - 0. What a local answer carries (reads only)
+
+    func testALocalAnswerEchoesTheRequestIdAndCarriesNoReceiveMetadata() async throws {
+        try await requireSimulator()
+        let probe = AnswerProbe()
+        let findings = await probe.measure(host: host, port: port)
+        XCTAssertFalse(findings.isEmpty, "the radio answered nothing")
+        XCTAssertEqual(findings.count, 4, "a device config, a position config and two channels")
+        for finding in findings {
+            // The seven fields, as measured.
+            print("simulated radio answer to \(finding.asked): \(finding.report)")
+            XCTAssertTrue(finding.answered, "\(finding.asked): no answer")
+            XCTAssertTrue(finding.requestIdEchoed, "\(finding.asked): request_id is the id of the request")
+            XCTAssertEqual(finding.from, finding.node, "\(finding.asked): from the radio itself")
+            // Zero is the same as absent.
+            XCTAssertEqual(finding.rxRssi ?? 0, 0, "\(finding.asked): rx_rssi")
+            XCTAssertEqual(finding.rxSnr ?? 0, 0, "\(finding.asked): rx_snr")
+            XCTAssertEqual(finding.viaMqtt ?? 0, 0, "\(finding.asked): via_mqtt")
+            XCTAssertEqual(finding.transportMechanism ?? 0, 0, "\(finding.asked): transport_mechanism")
         }
     }
 
@@ -354,13 +378,16 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         // Registered before the write, so that it runs if anything below fails.
         restores.append { [self] in await restorePositionInterval(UInt32(oldSeconds)) }
 
-        // Applying the interval the radio already has sends nothing, so the
+        // Applying the interval the radio already has sends no write, so the
         // radio does not restart for it.
-        XCTAssertEqual(first.applyPositionBroadcastInterval(seconds: UInt32(oldSeconds)), .unchanged)
+        let unchanged = await first.applyPositionBroadcastInterval(seconds: UInt32(oldSeconds))
+        XCTAssertEqual(unchanged, .unchanged)
 
-        XCTAssertEqual(first.applyPositionBroadcastInterval(seconds: newSeconds), .sent)
-        // The app does not claim to know what the radio holds now.
-        XCTAssertNil(first.radioSettings.positionBroadcastSeconds)
+        // The radio is asked, the write goes, and the radio is asked again: it
+        // says what it holds, and the app reports applied.
+        let applied = await first.applyPositionBroadcastInterval(seconds: newSeconds)
+        XCTAssertEqual(applied, .applied)
+        XCTAssertEqual(first.radioSettings.positionBroadcastSeconds, newSeconds, "the radio's own answer")
         try await letTheRadioRestart(first)
 
         let second = try await connect()
@@ -377,7 +404,8 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         print("simulated radio: position_broadcast_secs \(oldSeconds) -> \(newSeconds) -> restore")
 
         // Put it back.
-        XCTAssertEqual(second.applyPositionBroadcastInterval(seconds: UInt32(oldSeconds)), .sent)
+        let back = await second.applyPositionBroadcastInterval(seconds: UInt32(oldSeconds))
+        XCTAssertEqual(back, .applied)
         try await letTheRadioRestart(second)
         let third = try await connect()
         XCTAssertEqual(differingFields(before, try config(RadioProto.Config.position, of: third)), [], "restored")
@@ -407,15 +435,17 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         XCTAssertEqual(FixtureReader.varint(RadioProto.Device.role, in: before) ?? 0, RadioProto.DeviceRole.client,
                        "the radio's role is CLIENT")
 
-        // Applying the controls as they stand sends nothing.
+        // Applying the controls as they stand sends no write.
         let untouched = controls.deviceEdits(against: first.radioSettings)
-        XCTAssertEqual(first.applyDeviceConfig(role: untouched.role, rebroadcastMode: untouched.rebroadcast), .unchanged)
+        let nothing = await first.applyDeviceConfig(role: untouched.role, rebroadcastMode: untouched.rebroadcast)
+        XCTAssertEqual(nothing, .unchanged)
 
         // The rebroadcast mode only. A role change makes the firmware install
         // that role's defaults, so the role is left as the radio has it: the
         // role control still stands at CLIENT when the operator moves the other.
         let newMode: MeshtasticAdminCodec.RebroadcastMode = oldMode == 2 ? .knownOnly : .localOnly
-        XCTAssertEqual(first.applyDeviceConfig(role: controls.role, rebroadcastMode: newMode), .sent)
+        let applied = await first.applyDeviceConfig(role: controls.role, rebroadcastMode: newMode)
+        XCTAssertEqual(applied, .applied)
         try await letTheRadioRestart(first)
 
         let second = try await connect()
@@ -434,7 +464,8 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         print("simulated radio: rebroadcast_mode \(oldMode) -> \(newMode.rawValue) -> restore, role still CLIENT")
 
         // Put it back.
-        XCTAssertEqual(second.applyDeviceConfig(role: second.radioSettings.namedDeviceRole, rebroadcastMode: oldRestore), .sent)
+        let back = await second.applyDeviceConfig(role: second.radioSettings.namedDeviceRole, rebroadcastMode: oldRestore)
+        XCTAssertEqual(back, .applied)
         try await letTheRadioRestart(second)
         let third = try await connect()
         XCTAssertEqual(differingFields(before, try config(RadioProto.Config.device, of: third)), [], "restored")
@@ -461,18 +492,12 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         // A new name and nothing in the key field: the radio's key is kept. The
         // operator chose to replace the primary.
         let newName = oldName == "simtest2" ? "simtest3" : "simtest2"
-        let outcome = first.createChannel(name: newName, keyText: "", noEncryption: false, replacePrimary: true)
-        XCTAssertEqual(outcome.result, .sent)
-        XCTAssertEqual(outcome.slot, 0)
+        let outcome = await first.createChannel(name: newName, keyText: "", noEncryption: false, replacePrimary: true)
+        XCTAssertEqual(outcome, MeshtasticManager.ChannelOutcome(result: .applied, slot: 0),
+                       "applied: the radio's own answer to the read-back matched")
+        XCTAssertEqual(first.channelReports.first(where: { $0.slot == 0 })?.state, .applied)
 
-        // "Sent" is all that is known until the radio answers. Then it is applied
-        // only if the radio's own answer has the new name, the same key and the
-        // same role.
-        XCTAssertNil(first.radioSettings.channel(index: 0), "what was sent is not taken for what the radio holds")
-        let state = try await report(first, slot: 0)
-        XCTAssertEqual(state, .applied, "the radio's answer to the read-back matched")
-
-        // The answer is now what the app holds, and it is what the radio holds.
+        // The answer is what the app holds, and it is what the radio holds.
         let answered = try XCTUnwrap(first.radioSettings.channel(index: 0))
         let answeredSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: answered))
         XCTAssertEqual(differingFields(before, answered), [RadioProto.Channel.settings], "only the settings may differ")
@@ -485,7 +510,8 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         print("simulated radio: channel 0 renamed \(oldName.count) -> \(newName.count) characters, key length \(key.count), precision \(oldPrecision), read back and reported applied")
 
         // A second apply of the same thing is not sent again.
-        XCTAssertEqual(first.createChannel(name: newName, keyText: "", noEncryption: false, replacePrimary: true).result, .unchanged)
+        let again = await first.createChannel(name: newName, keyText: "", noEncryption: false, replacePrimary: true)
+        XCTAssertEqual(again.result, .unchanged)
 
         // And it is what a fresh download says too, whether or not the link
         // restarted, so compare after reconnecting.
@@ -498,11 +524,204 @@ final class MeshtasticSimulatedRadioTests: XCTestCase {
         XCTAssertEqual(differingFields(beforeSettings, afterSettings), [RadioProto.ChannelSettings.name])
 
         // Put the name back, and see it read back as applied.
-        let restore = second.createChannel(name: oldName, keyText: "", noEncryption: false, replacePrimary: true)
-        XCTAssertEqual(restore.result, .sent)
-        let restored = try await report(second, slot: 0)
-        XCTAssertEqual(restored, .applied)
+        let restore = await second.createChannel(name: oldName, keyText: "", noEncryption: false, replacePrimary: true)
+        XCTAssertEqual(restore.result, .applied)
         XCTAssertTrue(second.radioSettings.channel(index: 0) == before, "restored, byte for byte")
         second.disconnect()
+    }
+}
+
+// MARK: - Measuring what an answer carries
+
+/// What one answer from the radio carried. A field that was not in the packet
+/// is nil.
+private struct AnswerFinding {
+    let asked: String
+    let node: UInt32
+    let answered: Bool
+    let requestIdEchoed: Bool
+    let from: UInt32?
+    let rxRssi: UInt64?
+    let rxSnr: UInt64?
+    let rxTime: UInt64?
+    let hopStart: UInt64?
+    let viaMqtt: UInt64?
+    let transportMechanism: UInt64?
+    let requestId: UInt64?
+
+    /// The seven fields, as text.
+    var report: String {
+        func show(_ value: UInt64?) -> String { value.map { String($0) } ?? "absent" }
+        return "request_id \(requestIdEchoed ? "equals the id of the request" : "DOES NOT equal it (\(show(requestId)))"), "
+            + "rx_rssi \(show(rxRssi)), rx_snr \(show(rxSnr)), rx_time \(show(rxTime)), "
+            + "hop_start \(show(hopStart)), via_mqtt \(show(viaMqtt)), transport_mechanism \(show(transportMechanism))"
+    }
+}
+
+/// Connects to the radio on a connection of its own, downloads its config, and
+/// then asks for a device config, a position config and two channels, one at a
+/// time and 100 ms apart, never writing. It reads the packets that answer with a
+/// reader of its own, not the code under test.
+private final class AnswerProbe: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "test.answer.probe")
+    private var connection: NWConnection?
+    private var buffer = Data()
+    private var inbox: [Data] = []
+    private var waiter: CheckedContinuation<Data?, Never>?
+
+    func measure(host: String, port: UInt16) async -> [AnswerFinding] {
+        guard await open(host: host, port: port) else { return [] }
+        defer { connection?.cancel() }
+
+        // The download, for the radio's node number.
+        let configID = UInt64.random(in: 1...UInt64(UInt32.max))
+        send(ProtoFixture().varint(3, configID).data)
+        var node: UInt32 = 0
+        download: while let frame = await next(timeout: 15) {
+            if let info = FixtureReader.bytes(RadioProto.FromRadio.myInfo, in: frame),
+               let number = FixtureReader.varint(1, in: info) { node = UInt32(truncatingIfNeeded: number) }
+            if FixtureReader.varint(RadioProto.FromRadio.configCompleteId, in: frame) == configID { break download }
+        }
+        guard node != 0 else { return [] }
+
+        let requests: [(String, Data)] = [
+            ("get_config_request(device)", ProtoFixture().varint(RadioProto.Admin.getConfigRequest, 0).data),
+            ("get_config_request(position)", ProtoFixture().varint(RadioProto.Admin.getConfigRequest, 1).data),
+            ("get_channel_request(slot 0)", ProtoFixture().varint(RadioProto.Admin.getChannelRequest, 1).data),
+            ("get_channel_request(slot 1)", ProtoFixture().varint(RadioProto.Admin.getChannelRequest, 2).data),
+        ]
+        var findings: [AnswerFinding] = []
+        for (label, admin) in requests {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let id = UInt32.random(in: 1...UInt32.max)
+            send(Self.toRadio(admin: admin, node: node, id: id))
+            findings.append(await answer(to: id, label: label, node: node))
+        }
+        return findings
+    }
+
+    private static func toRadio(admin: Data, node: UInt32, id: UInt32) -> Data {
+        let data = ProtoFixture()
+            .varint(RadioProto.DataMessage.portnum, RadioProto.adminPortnum)
+            .bytes(RadioProto.DataMessage.payload, admin)
+            .varint(RadioProto.DataMessage.wantResponse, 1)
+        let packet = ProtoFixture()
+            .fixed32(RadioProto.MeshPacket.to, node)
+            .message(RadioProto.MeshPacket.decoded, data)
+            .fixed32(RadioProto.MeshPacket.id, id)
+            .varint(RadioProto.MeshPacket.hopLimit, 3)
+            .varint(RadioProto.MeshPacket.wantAck, 1)
+        return ProtoFixture().message(RadioProto.ToRadio.packet, packet).data
+    }
+
+    private func answer(to id: UInt32, label: String, node: UInt32) async -> AnswerFinding {
+        while let frame = await next(timeout: 5) {
+            guard let packet = FixtureReader.bytes(RadioProto.FromRadio.packet, in: frame),
+                  let fields = FixtureReader.fields(packet),
+                  let decoded = FixtureReader.bytes(RadioProto.MeshPacket.decoded, in: packet),
+                  FixtureReader.varint(RadioProto.DataMessage.portnum, in: decoded) == RadioProto.adminPortnum,
+                  let admin = FixtureReader.bytes(RadioProto.DataMessage.payload, in: decoded),
+                  let answerKind = FixtureReader.fields(admin)?.first?.number,
+                  [RadioProto.Admin.getConfigResponse, RadioProto.Admin.getChannelResponse].contains(answerKind) else { continue }
+            func fixed32(_ number: Int) -> UInt32? {
+                guard let field = fields.last(where: { $0.number == number && $0.wire == 5 }) else { return nil }
+                return field.value.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
+            }
+            func varint(_ number: Int) -> UInt64? { FixtureReader.varint(number, in: packet) }
+            let requestId = FixtureReader.fields(decoded)?.last(where: { $0.number == RadioProto.DataMessage.requestId && $0.wire == 5 })
+                .map { $0.value.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) } }
+            // A zero is as good as absent for the receive fields, and is reported as a value.
+            return AnswerFinding(
+                asked: label, node: node, answered: true, requestIdEchoed: requestId == id, from: fixed32(RadioProto.MeshPacket.from),
+                rxRssi: varint(RadioProto.MeshPacket.rxRssi), rxSnr: fixed32(RadioProto.MeshPacket.rxSnr).map { UInt64($0) },
+                rxTime: fixed32(RadioProto.MeshPacket.rxTime).map { UInt64($0) },
+                hopStart: varint(RadioProto.MeshPacket.hopStart), viaMqtt: varint(RadioProto.MeshPacket.viaMqtt),
+                transportMechanism: varint(RadioProto.MeshPacket.transportMechanism),
+                requestId: requestId.map { UInt64($0) })
+        }
+        return AnswerFinding(asked: label, node: node, answered: false, requestIdEchoed: false, from: nil, rxRssi: nil,
+                             rxSnr: nil, rxTime: nil, hopStart: nil, viaMqtt: nil, transportMechanism: nil, requestId: nil)
+    }
+
+    // MARK: Connection
+
+    private func open(host: String, port: UInt16) async -> Bool {
+        await withCheckedContinuation { continuation in
+            guard let endpoint = NWEndpoint.Port(rawValue: port) else { return continuation.resume(returning: false) }
+            let connection = NWConnection(host: NWEndpoint.Host(host), port: endpoint, using: .tcp)
+            self.connection = connection
+            let once = OnceFlag()
+            connection.stateUpdateHandler = { [weak self] state in
+                switch state {
+                case .ready:
+                    if once.first() { continuation.resume(returning: true) }
+                    self?.receive()
+                case .failed, .cancelled:
+                    if once.first() { continuation.resume(returning: false) }
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+        }
+    }
+
+    private func send(_ payload: Data) {
+        connection?.send(content: LoopbackRadio.frame(payload), completion: .contentProcessed { _ in })
+    }
+
+    private func receive() {
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            if let data { self.buffer.append(data); self.drain() }
+            if error != nil || isComplete { return }
+            self.receive()
+        }
+    }
+
+    private func drain() {
+        while buffer.count >= 4 {
+            let bytes = [UInt8](buffer.prefix(4))
+            guard bytes[0] == 0x94, bytes[1] == 0xC3 else { buffer.removeFirst(); continue }
+            let length = Int(bytes[2]) << 8 | Int(bytes[3])
+            guard buffer.count >= 4 + length else { return }
+            let payload = Data(buffer.dropFirst(4).prefix(length))
+            buffer.removeFirst(4 + length)
+            if let waiting = waiter {
+                waiter = nil
+                waiting.resume(returning: payload)
+            } else {
+                inbox.append(payload)
+            }
+        }
+    }
+
+    /// The next frame, or nil when none comes in time.
+    private func next(timeout: TimeInterval) async -> Data? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                if !self.inbox.isEmpty {
+                    return continuation.resume(returning: self.inbox.removeFirst())
+                }
+                self.waiter = continuation
+                self.queue.asyncAfter(deadline: .now() + timeout) {
+                    if let waiting = self.waiter {
+                        self.waiter = nil
+                        waiting.resume(returning: nil)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var used = false
+    func first() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if used { return false }
+        used = true
+        return true
     }
 }

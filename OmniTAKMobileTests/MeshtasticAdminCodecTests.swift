@@ -242,14 +242,16 @@ final class MeshtasticAdminCodecTests: XCTestCase {
                        "a one-byte key is the default-key shorthand and is passed through")
     }
 
-    func testABlankNameAndKeyClearThemAndNothingElse() throws {
+    func testABlankNameAndNoEncryptionClearTheNameAndMakeTheKeyOpenAndNothingElse() throws {
         let current = RadioFixtures.channel(index: 4).data
         let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "", key: .clear, role: .secondary))
 
         let oldSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: current))
         let newSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
         let edited: Set = [RadioProto.ChannelSettings.psk, RadioProto.ChannelSettings.name]
-        XCTAssertEqual(try rest(newSettings, except: []), try rest(oldSettings, except: edited))
+        XCTAssertEqual(try rest(newSettings, except: edited), try rest(oldSettings, except: edited))
+        XCTAssertNil(FixtureReader.bytes(RadioProto.ChannelSettings.name, in: newSettings))
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: newSettings), Data([0]))
         XCTAssertTrue(FixtureReader.fields(write.stored)?.contains { $0.number == RadioProto.Channel.settings } ?? false,
                       "the settings message stays")
     }
@@ -361,14 +363,16 @@ final class MeshtasticAdminCodecTests: XCTestCase {
                        "the key and every other setting are byte for byte what the radio sent")
     }
 
-    func testRemovingTheKeyIsItsOwnCaseAndTouchesNothingElse() throws {
+    func testNoEncryptionIsItsOwnCaseAndWritesTheOneByteZero() throws {
         let current = RadioFixtures.channel(index: 2, name: "alpha", psk: RadioFixtures.key).data
         let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "alpha", key: .clear, role: .secondary))
 
         let oldSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: current))
         let newSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
-        XCTAssertNil(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: newSettings))
-        XCTAssertEqual(try rest(newSettings, except: []), try rest(oldSettings, except: [RadioProto.ChannelSettings.psk]))
+        // Not an absent key: on a secondary channel that means the primary's key.
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: newSettings), Data([0]))
+        XCTAssertEqual(try rest(newSettings, except: [RadioProto.ChannelSettings.psk]),
+                       try rest(oldSettings, except: [RadioProto.ChannelSettings.psk]))
     }
 
     func testASetKeyWithNoBytesIsRefusedNotTakenForARemoval() {
@@ -408,12 +412,21 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         XCTAssertTrue(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: settings) == RadioFixtures.key)
     }
 
-    func testANewChannelWithNoKeyIsAnOpenChannelOnlyBecauseTheCallerAskedForOne() throws {
+    func testAnOpenNewChannelCarriesTheOneByteZero() throws {
         let write = try XCTUnwrap(Codec.encodeNewChannel(
-            index: 2, current: RadioFixtures.disabledChannel(index: 2).data, name: "open", psk: Data()))
+            index: 2, current: RadioFixtures.disabledChannel(index: 2).data, name: "open", psk: Data([0])))
         let channel = try XCTUnwrap(FixtureReader.setChannel(in: write.payload))
         let settings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: channel))
-        XCTAssertNil(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: settings))
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: settings), Data([0]))
+    }
+
+    func testANewChannelNeverGoesOutWithNoKeyBecauseOnASecondaryThatMeansThePrimarysKey() {
+        let free = RadioFixtures.disabledChannel(index: 2).data
+        XCTAssertNil(Codec.encodeNewChannel(index: 2, current: free, name: "x", psk: Data()))
+        // Nor with a key of a length the radio pads or expands.
+        XCTAssertNil(Codec.encodeNewChannel(index: 2, current: free, name: "x", psk: Data(repeating: 1, count: 15)))
+        XCTAssertNil(Codec.encodeNewChannel(index: 2, current: free, name: "x", psk: Data([11])))
+        XCTAssertNotNil(Codec.encodeNewChannel(index: 2, current: free, name: "x", psk: Data([10])))
     }
 
     func testANewChannelIsOnlyBuiltForASlotTheRadioReportsAsDisabled() {
@@ -576,5 +589,75 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         let payload = Data([0x92, 0x02, 0x00])
         XCTAssertNil(Codec.toRadioFrame(adminPayload: payload, myNodeNum: 0))
         XCTAssertNil(Codec.toRadioFrame(adminPayload: payload, myNodeNum: 0xFFFF_FFFF))
+    }
+
+    // MARK: - get_config and the edit transaction
+
+    func testAGetConfigRequestIsFieldFiveEvenForTheDeviceConfigWhoseValueIsZero() {
+        XCTAssertEqual(Codec.encodeGetConfigRequest(.device), Data([0x28, 0x00]),
+                       "field 5, varint 0: present, because being present is what asks")
+        XCTAssertEqual(Codec.encodeGetConfigRequest(.position), Data([0x28, 0x01]))
+    }
+
+    func testTheConfigTypeIsTheSubConfigsFieldNumberMinusOne() {
+        XCTAssertEqual(Codec.ConfigType.device.variant, RadioProto.Config.device)
+        XCTAssertEqual(Codec.ConfigType.position.variant, RadioProto.Config.position)
+        XCTAssertEqual(Codec.ConfigType(variant: RadioProto.Config.device), .device)
+        XCTAssertEqual(Codec.ConfigType(variant: RadioProto.Config.position), .position)
+        XCTAssertNil(Codec.ConfigType(variant: RadioProto.Config.security), "the app never reads the security config")
+        XCTAssertNil(Codec.ConfigType(variant: RadioProto.Config.network))
+    }
+
+    func testTheSubConfigInAGetConfigResponseIsFieldSix() throws {
+        let position = RadioFixtures.positionConfig()
+        let admin = ProtoFixture().message(RadioProto.Admin.getConfigResponse,
+                                           ProtoFixture().message(RadioProto.Config.position, position)).data
+        let response = try XCTUnwrap(Codec.configResponse(in: admin))
+        XCTAssertEqual(response.variant, RadioProto.Config.position)
+        XCTAssertEqual(response.body, position.data)
+
+        // An empty sub-config is a real answer: a radio at defaults sends one.
+        let empty = ProtoFixture().message(RadioProto.Admin.getConfigResponse,
+                                           ProtoFixture().message(RadioProto.Config.device, ProtoFixture())).data
+        XCTAssertEqual(Codec.configResponse(in: empty)?.variant, RadioProto.Config.device)
+        XCTAssertEqual(Codec.configResponse(in: empty)?.body, Data())
+
+        XCTAssertNil(Codec.configResponse(in: ProtoFixture().bytes(RadioProto.Admin.getChannelResponse, Data()).data))
+        XCTAssertNil(Codec.configResponse(in: Data([0x32, 0x80])), "not well formed")
+    }
+
+    func testBeginAndCommitAreFieldsSixtyFourAndSixtyFiveAsTrue() {
+        XCTAssertEqual(Codec.encodeBeginEditSettings(), Data([0x80, 0x04, 0x01]))
+        XCTAssertEqual(Codec.encodeCommitEditSettings(), Data([0x88, 0x04, 0x01]))
+    }
+
+    func testAnAnswerCarriesWhoFromWhichRequestAndWhatItHolds() throws {
+        var frame = MeshtasticProtoDecoder.MeshPacketFrame()
+        frame.from = 0x1234
+        frame.portNum = 6
+        frame.requestId = 99
+        let channel = RadioFixtures.channel(index: 5, name: "echo")
+        frame.payload = ProtoFixture().bytes(RadioProto.Admin.getChannelResponse, channel.data).data
+
+        let answer = try XCTUnwrap(Codec.answer(in: frame))
+        XCTAssertEqual(answer.from, 0x1234)
+        XCTAssertEqual(answer.requestId, 99)
+        XCTAssertFalse(answer.hasReceiveSignals)
+        XCTAssertEqual(answer.content, .channel(index: 5, body: channel.data))
+
+        frame.requestId = nil
+        XCTAssertNil(Codec.answer(in: frame)?.requestId)
+        frame.portNum = 72
+        XCTAssertNil(Codec.answer(in: frame), "not the admin port")
+    }
+
+    func testAnAdminFrameCarriesThePacketIDItIsGiven() throws {
+        let payload = Codec.encodeGetChannelRequest(index: 1)
+        let frame = try XCTUnwrap(Codec.toRadioFrame(adminPayload: payload, myNodeNum: 0x1234, wantResponse: true, packetID: 0xABCD_1234))
+        let packet = try XCTUnwrap(FixtureReader.adminPacket(in: frame))
+        XCTAssertEqual(packet.packetID, 0xABCD_1234)
+        XCTAssertTrue(packet.wantResponse)
+        XCTAssertEqual(packet.to, 0x1234)
+        XCTAssertNil(Codec.toRadioFrame(adminPayload: payload, myNodeNum: 0x1234, packetID: 0), "an id of 0 is no id")
     }
 }

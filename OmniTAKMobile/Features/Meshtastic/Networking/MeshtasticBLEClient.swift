@@ -481,19 +481,25 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     /// the broadcast address: that would put the admin message, and for
     /// set_channel the channel key, on the air.
     @discardableResult
-    func sendAdmin(payload: Data, to nodeNum: UInt32, connection expected: Int, wantResponse: Bool = false) -> Bool {
-        guard let peripheral = connectedPeripheral,
-              let characteristic = toRadioCharacteristic,
-              peripheral.state == .connected else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notConnected }
-            return false
-        }
+    func sendAdmin(
+        payload: Data,
+        to nodeNum: UInt32,
+        connection expected: Int,
+        wantResponse: Bool = false,
+        packetID: UInt32 = UInt32.random(in: 1...UInt32.max)
+    ) -> Bool {
         // The write is for one radio. Without that radio's node number here,
         // or with another one, nothing goes out.
         guard myNodeNum == nodeNum,
               let toRadio = MeshtasticAdminCodec.toRadioFrame(
-                  adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse) else {
+                  adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse, packetID: packetID) else {
             DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.linkChanged }
+            return false
+        }
+        guard let peripheral = connectedPeripheral,
+              let characteristic = toRadioCharacteristic,
+              peripheral.state == .connected else {
+            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notConnected }
             return false
         }
         sendToRadio(toRadio, peripheral: peripheral, characteristic: characteristic)
@@ -586,7 +592,7 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
 
     // MARK: - FromRadio handling (decoding lives in MeshtasticProtoDecoder)
 
-    private func parseFromRadio(_ data: Data) {
+    func parseFromRadio(_ data: Data) {
         guard let payload = MeshtasticProtoDecoder.decodeFromRadio(data) else { return }
 
         if let event = MeshtasticRadioSettings.Event(payload) {

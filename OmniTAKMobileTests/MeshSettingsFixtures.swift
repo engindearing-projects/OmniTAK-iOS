@@ -32,21 +32,36 @@ enum RadioProto {
     }
 
     enum MeshPacket {
+        static let from = 1
         static let to = 2
         static let decoded = 4
         static let id = 6
+        static let rxTime = 7
+        static let rxSnr = 8
         static let hopLimit = 9
         static let wantAck = 10
+        static let rxRssi = 12
+        static let viaMqtt = 14
+        static let hopStart = 15
+        static let transportMechanism = 21
     }
 
     enum DataMessage {
         static let portnum = 1
         static let payload = 2
+        static let wantResponse = 3
+        static let requestId = 6
     }
 
     enum Admin {
+        static let getChannelRequest = 1
+        static let getChannelResponse = 2
+        static let getConfigRequest = 5
+        static let getConfigResponse = 6
         static let setChannel = 33
         static let setConfig = 34
+        static let beginEditSettings = 64
+        static let commitEditSettings = 65
     }
 
     /// The oneof inside `Config`.
@@ -281,6 +296,24 @@ enum FixtureReader {
               top[0].number == RadioProto.Admin.setChannel, top[0].wire == 2 else { return nil }
         return top[0].value
     }
+
+    /// The `AdminMessage` and the id of the packet in a ToRadio frame. Nil unless
+    /// the frame is an admin packet.
+    static func adminPacket(in toRadio: Data) -> (admin: Data, packetID: UInt32, to: UInt32, wantResponse: Bool, wantAck: Bool)? {
+        guard let top = fields(toRadio),
+              let packet = top.first(where: { $0.number == RadioProto.ToRadio.packet && $0.wire == 2 }),
+              let mp = fields(packet.value),
+              let decoded = mp.first(where: { $0.number == RadioProto.MeshPacket.decoded && $0.wire == 2 }),
+              varint(RadioProto.DataMessage.portnum, in: decoded.value) == RadioProto.adminPortnum,
+              let admin = bytes(RadioProto.DataMessage.payload, in: decoded.value) else { return nil }
+        func fixed32(_ number: Int) -> UInt32 {
+            guard let field = mp.last(where: { $0.number == number && $0.wire == 5 }) else { return 0 }
+            return field.value.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
+        }
+        return (admin, fixed32(RadioProto.MeshPacket.id), fixed32(RadioProto.MeshPacket.to),
+                (varint(RadioProto.DataMessage.wantResponse, in: decoded.value) ?? 0) != 0,
+                (varint(RadioProto.MeshPacket.wantAck, in: packet.value) ?? 0) != 0)
+    }
 }
 
 // MARK: - Made-up radio settings
@@ -409,6 +442,19 @@ enum RadioFixtures {
         ProtoFixture()
             .message(RadioProto.FromRadio.myInfo, ProtoFixture().varint(1, UInt64(nodeNum)))
             .data
+    }
+
+    /// Eight channel slots with the primary named "simtest", the slots in `used`
+    /// in use, and the rest disabled.
+    static func channelSlots(used: Set<Int>) -> [Int: ProtoFixture] {
+        var out: [Int: ProtoFixture] = [:]
+        for index in 0...7 {
+            out[index] = used.contains(index)
+                ? channel(index: index, name: "used\(index)", psk: otherKey)
+                : disabledChannel(index: index)
+        }
+        out[0] = channel(index: 0, name: "simtest", role: RadioProto.ChannelRole.primary)
+        return out
     }
 
     /// Eight channel slots as a radio sends them: slot 0 primary, slot 1 in

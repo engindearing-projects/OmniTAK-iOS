@@ -344,7 +344,6 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         settings.apply(.config(variant: RadioProto.Config.device, body: RadioFixtures.deviceConfig().data))
         settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
         settings.apply(.channel(index: 0, body: RadioFixtures.channelSlots()[0]!.data))
-        settings.apply(.channelReadBack(from: 5, body: RadioFixtures.channelSlots()[0]!.data))
 
         XCTAssertNil(settings.nodeNum)
         XCTAssertTrue(settings.isEmpty, "frames that belong to nobody are not kept")
@@ -372,7 +371,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
 
     // MARK: What a write drops
 
-    func testAWriteDropsTheConfigItTouchedAndRemembersTheRadioIsRestarting() {
+    func testAWriteDropsTheConfigItTouchedUntilTheRadioSaysItAgain() {
         var settings = started()
         settings.apply(.config(variant: RadioProto.Config.device, body: RadioFixtures.deviceConfig().data))
         settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
@@ -385,12 +384,22 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         XCTAssertFalse(settings.isAwaitingRestart(variant: RadioProto.Config.device))
         XCTAssertTrue(settings.isAwaitingAnyRestart)
 
-        // A new download is the radio's word again.
+        // The radio's word again, in a download or in an answer, ends the wait.
+        settings.storeConfig(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig(broadcastSecs: 900).data)
+        XCTAssertFalse(settings.isAwaitingRestart(variant: RadioProto.Config.position),
+                       "a config that is stored again is no longer waited for")
+        XCTAssertFalse(settings.isAwaitingAnyRestart)
+        XCTAssertEqual(settings.positionBroadcastSeconds, 900)
+    }
+
+    func testANewDownloadEndsTheWaitForAConfig() {
+        var settings = started()
+        settings.invalidateConfig(variant: RadioProto.Config.position)
         settings.apply(.downloadStarted(nodeNum: 0x0A0B_0C0D))
         XCTAssertFalse(settings.isAwaitingAnyRestart)
     }
 
-    func testAWriteDropsTheChannelUntilTheRadioAnswers() {
+    func testAWriteDropsTheChannelUntilTheRadioSaysItAgain() {
         var settings = started()
         settings.apply(.channel(index: 2, body: RadioFixtures.channel(index: 2, name: "old").data))
 
@@ -399,32 +408,40 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         XCTAssertTrue(settings.isAwaitingReadBack(index: 2))
 
         let answer = RadioFixtures.channel(index: 2, name: "new")
-        settings.apply(.channelReadBack(from: 0x0A0B_0C0D, body: answer.data))
+        settings.storeChannel(index: 2, body: answer.data)
         XCTAssertEqual(settings.channel(index: 2), answer.data)
         XCTAssertFalse(settings.isAwaitingReadBack(index: 2))
     }
 
-    func testAnAnswerFromAnotherNodeIsNotTheRadiosWord() {
+    func testAnAnswerIsNotAppliedByTheSettingsThemselves() {
+        // An answer is the manager's to match to a request. The settings do not
+        // keep one on their own, whoever it says it is from.
         var settings = started(node: 0x0A0B_0C0D)
         settings.invalidateChannel(index: 2)
-        settings.apply(.channelReadBack(from: 0x9999, body: RadioFixtures.channel(index: 2, name: "other").data))
+        let answer = MeshtasticAdminCodec.Answer(
+            from: 0x0A0B_0C0D, requestId: 5, hasReceiveSignals: false,
+            content: .channel(index: 2, body: RadioFixtures.channel(index: 2, name: "other").data))
+        settings.apply(.answer(answer))
         XCTAssertNil(settings.channel(index: 2))
         XCTAssertTrue(settings.isAwaitingReadBack(index: 2))
     }
 
-    func testAnAnswerThatIsNotAChannelIsNotKept() {
-        var settings = started()
-        settings.apply(.channelReadBack(from: 0x0A0B_0C0D, body: Data([0x08, 0x80])))
-        XCTAssertTrue(settings.channels.isEmpty)
-    }
-
-    func testAnAdminAnswerInAMeshPacketBecomesAReadBack() {
+    func testAnAdminAnswerInAMeshPacketBecomesAnAnswerEvent() {
         var frame = MeshtasticProtoDecoder.MeshPacketFrame()
         frame.from = 0x0A0B_0C0D
         frame.portNum = 6
+        frame.requestId = 321
         let channel = RadioFixtures.channel(index: 3, name: "echo")
         frame.payload = ProtoFixture().bytes(2, channel.data).data
-        XCTAssertEqual(Settings.Event(.packet(frame)), .channelReadBack(from: 0x0A0B_0C0D, body: channel.data))
+        XCTAssertEqual(Settings.Event(.packet(frame)), .answer(MeshtasticAdminCodec.Answer(
+            from: 0x0A0B_0C0D, requestId: 321, hasReceiveSignals: false, content: .channel(index: 3, body: channel.data))))
+
+        // A config answer too.
+        let config = ProtoFixture().message(RadioProto.Config.position, RadioFixtures.positionConfig())
+        frame.payload = ProtoFixture().message(RadioProto.Admin.getConfigResponse, config).data
+        XCTAssertEqual(Settings.Event(.packet(frame)), .answer(MeshtasticAdminCodec.Answer(
+            from: 0x0A0B_0C0D, requestId: 321, hasReceiveSignals: false,
+            content: .config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))))
 
         // Anything else on the admin port, or any other port, is not one.
         frame.payload = ProtoFixture().bytes(34, channel.data).data
@@ -432,6 +449,37 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         frame.payload = ProtoFixture().bytes(2, channel.data).data
         frame.portNum = 3
         XCTAssertNil(Settings.Event(.packet(frame)))
+    }
+
+    func testAnAnswerThatIsNotAChannelIsNotAnEvent() {
+        var frame = MeshtasticProtoDecoder.MeshPacketFrame()
+        frame.portNum = 6
+        frame.payload = ProtoFixture().bytes(2, Data([0x08, 0x80])).data
+        XCTAssertNil(Settings.Event(.packet(frame)))
+    }
+
+    func testAnAnswerRecordsWhetherThePacketCarriedReceiveMetadata() {
+        var frame = MeshtasticProtoDecoder.MeshPacketFrame()
+        frame.portNum = 6
+        frame.payload = ProtoFixture().bytes(2, RadioFixtures.disabledChannel(index: 4).data).data
+        frame.rxRssi = -70
+        guard case .answer(let withRssi)? = Settings.Event(.packet(frame)) else { return XCTFail("no answer") }
+        XCTAssertTrue(withRssi.hasReceiveSignals)
+        frame.rxRssi = 0
+        frame.rxSnr = 3.5
+        guard case .answer(let withSnr)? = Settings.Event(.packet(frame)) else { return XCTFail("no answer") }
+        XCTAssertTrue(withSnr.hasReceiveSignals)
+        frame.rxSnr = 0
+        frame.viaMQTT = true
+        guard case .answer(let withMqtt)? = Settings.Event(.packet(frame)) else { return XCTFail("no answer") }
+        XCTAssertTrue(withMqtt.hasReceiveSignals)
+        frame.viaMQTT = false
+        frame.transportMechanism = 1
+        guard case .answer(let withTransport)? = Settings.Event(.packet(frame)) else { return XCTFail("no answer") }
+        XCTAssertTrue(withTransport.hasReceiveSignals)
+        frame.transportMechanism = 0
+        guard case .answer(let plain)? = Settings.Event(.packet(frame)) else { return XCTFail("no answer") }
+        XCTAssertFalse(plain.hasReceiveSignals)
     }
 
     // MARK: Free slots
@@ -575,10 +623,23 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
                        "Radio settings are not loaded yet. Reconnect and try again.")
     }
 
-    func testAWriteResultSaysWhetherItWasSentAndWhyNot() {
-        XCTAssertTrue(MeshtasticWriteResult.sent.isSent)
-        XCTAssertNil(MeshtasticWriteResult.sent.refusal)
-        XCTAssertFalse(MeshtasticWriteResult.refused("why").isSent)
+    func testAWriteResultSaysWhetherItWasSentWhetherTheRadioConfirmedAndWhyNot() {
+        XCTAssertTrue(MeshtasticWriteResult.applied.isApplied)
+        XCTAssertTrue(MeshtasticWriteResult.applied.wasSent)
+        XCTAssertNil(MeshtasticWriteResult.applied.refusal)
+
+        XCTAssertFalse(MeshtasticWriteResult.notConfirmed("no answer").isApplied, "sent is not applied")
+        XCTAssertTrue(MeshtasticWriteResult.notConfirmed("no answer").wasSent)
+        XCTAssertNil(MeshtasticWriteResult.notConfirmed("no answer").refusal)
+
+        XCTAssertFalse(MeshtasticWriteResult.unchanged.wasSent)
+        XCTAssertFalse(MeshtasticWriteResult.refused("why").wasSent)
         XCTAssertEqual(MeshtasticWriteResult.refused("why").refusal, "why")
+    }
+
+    func testTheMessagesTheOperatorSees() {
+        XCTAssertEqual(MeshtasticWriteResult.noAnswer, "The radio did not answer. Nothing was sent.")
+        XCTAssertEqual(MeshtasticWriteResult.linkChanged, "The radio link changed. Reconnect and try again.")
+        XCTAssertEqual(MeshtasticWriteResult.nothingToChange, "Nothing to change. The radio already has these settings.")
     }
 }

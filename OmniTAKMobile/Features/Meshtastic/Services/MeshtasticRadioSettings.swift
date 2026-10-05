@@ -20,12 +20,17 @@
 //
 //  What a write leaves behind. The radio may not do what was asked, and a role
 //  change makes the firmware install that role's defaults, so what was sent is
-//  not what the radio holds. After a write the entries it touched are dropped,
-//  not updated:
-//   - A config entry stays dropped. The radio restarts to apply a config, and
-//     the next download refills it (`isAwaitingRestart`).
-//   - A channel entry is dropped until the radio's answer to a read-back request
-//     arrives (`channelReadBack`), and then holds what the radio says.
+//  not what the radio holds. A write therefore never starts from what is kept
+//  here: it asks the radio for the sub-config or channel first (a get request,
+//  answered with the id of the request echoed), and after the write it asks
+//  again. Meanwhile the entry a write touched is dropped, not updated to what
+//  was sent, and is filled again only by the radio's own word:
+//   - A config entry stays dropped until the radio says it again, in an answer or
+//     in the next download (`isAwaitingRestart`).
+//   - A channel entry is dropped until the radio's answer to the read-back
+//     arrives, and then holds what the radio says (`isAwaitingReadBack`).
+//  What the radio says in an answer is kept only when MeshtasticManager has
+//  matched it to a request it sent; this struct never applies an answer itself.
 //
 //  Only the sub-configs the app can write are kept. The rest of the config
 //  download is dropped on arrival: nothing here edits it, the security config
@@ -59,9 +64,12 @@ struct MeshtasticRadioSettings: Equatable {
         case config(variant: Int, body: Data)
         /// A channel slot: its index and the bytes of the whole Channel message.
         case channel(index: Int, body: Data)
-        /// The radio's answer to a `get_channel_request`: the node it came from
-        /// and the bytes of the whole Channel message.
-        case channelReadBack(from: UInt32, body: Data)
+        /// An admin answer to a get request (`get_config_response` or
+        /// `get_channel_response`), with what is needed to decide whether it
+        /// answers a request this app sent. It changes nothing by itself:
+        /// MeshtasticManager matches it to a request it made, and only then are
+        /// the bytes kept.
+        case answer(MeshtasticAdminCodec.Answer)
 
         /// The event a decoded FromRadio frame stands for, or nil for a frame that
         /// does not change what is known about the radio's settings.
@@ -76,9 +84,8 @@ struct MeshtasticRadioSettings: Equatable {
             case .channel(let index, let body):
                 self = .channel(index: index, body: body)
             case .packet(let frame):
-                guard frame.portNum == Int(MeshtasticAdminCodec.adminPortnum),
-                      let channel = MeshtasticAdminCodec.channelResponse(in: frame.payload) else { return nil }
-                self = .channelReadBack(from: frame.from, body: channel)
+                guard let answer = MeshtasticAdminCodec.answer(in: frame) else { return nil }
+                self = .answer(answer)
             default:
                 return nil
             }
@@ -130,10 +137,10 @@ struct MeshtasticRadioSettings: Equatable {
         case .channel(let index, let body):
             guard nodeNum != nil else { return }
             storeChannel(index: index, body: body)
-        case .channelReadBack(let node, let body):
-            // Only an answer from the radio these settings are from counts.
-            guard node == nodeNum, let summary = MeshtasticAdminCodec.channelSummary(in: body) else { return }
-            storeChannel(index: summary.index, body: body)
+        case .answer:
+            // Not applied here. An answer is kept only when the manager has
+            // matched it to a request it sent (see MeshtasticManager).
+            break
         }
     }
 
@@ -149,6 +156,7 @@ struct MeshtasticRadioSettings: Equatable {
     mutating func storeConfig(variant: Int, body: Data) {
         guard Self.storedConfigVariants.contains(variant) else { return }
         configs[variant] = body
+        awaitingRestart.remove(variant)
     }
 
     /// Keep a channel, if the index is a slot the radio has.
@@ -282,10 +290,11 @@ struct MeshtasticRadioSettings: Equatable {
 
 /// What became of a request to change a radio setting.
 public enum MeshtasticWriteResult: Equatable {
-    /// The write went to the radio. That is all this says: the radio applies it
-    /// after that, or does not. A config change makes it restart a few seconds
-    /// later, and a channel change is read back (`MeshtasticChannelReport`).
-    case sent
+    /// The radio's own answer to a read after the write shows what was asked for.
+    case applied
+    /// The write was sent and the radio did not confirm it. The text says why:
+    /// it did not answer, or its answer shows another value.
+    case notConfirmed(String)
     /// Nothing was sent, because the radio already has every value that was
     /// asked for. A config write makes the radio restart, so a write that
     /// changes nothing is not sent.
@@ -299,10 +308,11 @@ public enum MeshtasticWriteResult: Equatable {
     /// Shown when nothing was sent because nothing differs from the radio.
     public static let nothingToChange = "Nothing to change. The radio already has these settings."
 
-    /// Shown when the radio's current settings are not known, so a write could
-    /// not be built from them. Nothing is sent in that case: the radio replaces
-    /// a whole sub-config with what it receives, so a write built without the
-    /// radio's own values would reset everything the operator did not touch.
+    /// Shown when the radio has not yet said who it is or what it holds, so
+    /// nothing can be asked of it. Nothing is sent in that case: the radio
+    /// replaces a whole sub-config with what it receives, so a write built
+    /// without the radio's own values would reset everything the operator did
+    /// not touch.
     public static let notLoaded = "Radio settings are not loaded yet. Reconnect and try again."
 
     /// Shown when a config was sent and the radio has not been heard from since.
@@ -312,9 +322,25 @@ public enum MeshtasticWriteResult: Equatable {
     /// would go out on.
     public static let linkChanged = "The radio link changed. Reconnect and try again."
 
-    public var isSent: Bool {
-        if case .sent = self { return true }
+    /// Shown when the radio did not answer the read that comes before a write.
+    public static let noAnswer = "The radio did not answer. Nothing was sent."
+
+    /// Shown when the radio's answer to that read is not a message this app can
+    /// change.
+    public static let unreadable = "The radio's settings could not be read. Nothing was sent."
+
+    /// True when the radio confirmed the change.
+    public var isApplied: Bool {
+        if case .applied = self { return true }
         return false
+    }
+
+    /// True when the write went to the radio, whether or not it confirmed.
+    public var wasSent: Bool {
+        switch self {
+        case .applied, .notConfirmed: return true
+        case .unchanged, .refused: return false
+        }
     }
 
     /// The reason a write was refused, or nil when it was sent or there was
@@ -326,7 +352,8 @@ public enum MeshtasticWriteResult: Equatable {
 }
 
 /// What is known about a channel write. "Sent" means dispatched; the report only
-/// says "applied" once the radio's own answer matches.
+/// says "applied" once the radio's own answer matches, and it changes if a late
+/// answer arrives.
 struct MeshtasticChannelReport: Equatable, Identifiable {
     enum State: Equatable {
         /// Dispatched. The radio has not answered the read-back yet.
@@ -335,7 +362,7 @@ struct MeshtasticChannelReport: Equatable, Identifiable {
         case applied
         /// The radio answered with something else. The text is the name it has.
         case radioKept(String)
-        /// The radio did not answer.
+        /// The radio did not answer in time. If it answers later, this changes.
         case noAnswer
     }
 
@@ -354,24 +381,28 @@ struct MeshtasticChannelReport: Equatable, Identifiable {
         case .applied:
             return "\(label): applied. The radio reports it."
         case .radioKept(let held):
-            return "\(label): the radio kept its own value (\"\(held)\")."
+            return held.isEmpty
+                ? "\(label): the radio kept its own value."
+                : "\(label): the radio kept its own value (\"\(held)\")."
         case .noAnswer:
-            return "\(label): the radio did not confirm. The change may not have been applied."
+            return "\(label): the radio did not confirm. The change may not have been applied. "
+                + "If the radio answers later this line changes."
         }
     }
 }
 
 /// A radio link a settings write can go out on. The BLE and TCP clients are the
-/// two real ones; tests use a recording stand-in.
+/// two real ones; tests use a stand-in.
 protocol MeshtasticAdminLink: AnyObject {
     /// The client's count of connections. A write names the connection it was
     /// built on, and the client refuses it when a newer one has begun.
     var connectionSerial: Int { get }
 
     /// Wrap an AdminMessage for the radio `nodeNum` and send it, on the
-    /// connection `connection`. False when it cannot go, and then nothing was
-    /// sent: not connected, a newer connection has begun, or the node number
-    /// the client holds for its radio is not `nodeNum`.
+    /// connection `connection`, in a packet with the id `packetID`. False when it
+    /// cannot go, and then nothing was sent: not connected, a newer connection
+    /// has begun, or the node number the client holds for its radio is not
+    /// `nodeNum`.
     @discardableResult
-    func sendAdmin(payload: Data, to nodeNum: UInt32, connection: Int, wantResponse: Bool) -> Bool
+    func sendAdmin(payload: Data, to nodeNum: UInt32, connection: Int, wantResponse: Bool, packetID: UInt32) -> Bool
 }

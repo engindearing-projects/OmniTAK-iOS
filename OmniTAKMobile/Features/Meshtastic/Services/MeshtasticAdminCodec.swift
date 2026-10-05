@@ -28,13 +28,16 @@
 //  off, the device role cleared the time zone, a channel rename reset the
 //  location precision. So nothing in this file builds a set_config or
 //  set_channel from scratch. Each encoder takes the bytes the radio reported for
-//  that sub-config or channel during the config download, changes the fields the
-//  operator edited and leaves every other field as it was (ProtoFields). The
-//  caller sends the payload and keeps `Write.stored`, so a second edit builds on
-//  the first.
+//  that sub-config or channel, changes the fields the operator edited and leaves
+//  every other field as it was (ProtoFields). The bytes are the radio's answer to
+//  a get request made just before the write (MeshtasticManager asks every time:
+//  what was downloaded at connect is only as fresh as the connection), and the
+//  caller reads the radio again afterwards to see what it holds.
 //
 //  A key is only changed when asked (#148): `KeyChange.keep` leaves the radio's
-//  key as it is, `.set` replaces it, and removing it is its own case, `.clear`.
+//  key as it is, `.set` replaces it, and making the channel open is its own case,
+//  `.clear`, which writes the one byte 0: with no key at all a secondary channel
+//  uses the primary's key (MeshtasticChannelKey).
 //  A new channel goes into a slot the radio reports as disabled and is built
 //  from that slot's index alone (`encodeNewChannel`), so it inherits nothing from
 //  whatever used the slot before. That is the one message here that does not
@@ -44,8 +47,13 @@
 //  Wire layout (field numbers / enum values are facts):
 //      AdminMessage.get_channel_request  = 1  (uint32: channel index + 1)
 //      AdminMessage.get_channel_response = 2  (Channel submessage)
+//      AdminMessage.get_config_request   = 5  (ConfigType enum: DEVICE=0, POSITION=1)
+//      AdminMessage.get_config_response  = 6  (Config submessage)
 //      AdminMessage.set_channel = 33  (Channel submessage)
 //      AdminMessage.set_config  = 34  (Config submessage)
+//      AdminMessage.begin_edit_settings  = 64 (bool)
+//      AdminMessage.commit_edit_settings = 65 (bool)
+//      Data.request_id = 6 (fixed32): the id of the MeshPacket a reply answers
 //      Channel{ index=1 (int32), settings=2 (ChannelSettings), role=3 (Role enum) }
 //      ChannelSettings{ psk=2 (bytes), name=3 (string); others are left as they are }
 //      Channel.Role: DISABLED=0, PRIMARY=1, SECONDARY=2
@@ -72,8 +80,32 @@ enum MeshtasticAdminCodec {
     enum AdminField {
         static let getChannelRequest = 1
         static let getChannelResponse = 2
+        static let getConfigRequest = 5
+        static let getConfigResponse = 6
         static let setChannel = 33
         static let setConfig = 34
+        static let beginEditSettings = 64
+        static let commitEditSettings = 65
+    }
+
+    /// The enum `get_config_request` carries: which sub-config to send. For the
+    /// two this app reads it is the sub-config's field number inside `Config`
+    /// minus one (measured against firmware 2.7.26: device 0 is answered with
+    /// `Config.device`, position 1 with `Config.position`).
+    enum ConfigType: UInt64 {
+        case device = 0
+        case position = 1
+
+        /// The field number of the sub-config inside `Config`.
+        var variant: Int { Int(rawValue) + 1 }
+
+        init?(variant: Int) {
+            switch variant {
+            case ConfigVariant.device:   self = .device
+            case ConfigVariant.position: self = .position
+            default: return nil
+            }
+        }
     }
 
     /// The longest a channel name may be. The firmware's string field holds 11
@@ -167,7 +199,9 @@ enum MeshtasticAdminCodec {
         /// The `AdminMessage` to send on the ADMIN_APP portnum.
         let payload: Data
         /// The sub-config (or channel) as the radio will hold it once it applies
-        /// `payload`. The caller keeps it so the next edit starts from it.
+        /// `payload`, if it applies it as sent. A role change makes the firmware
+        /// change more than that, so the next edit starts from a fresh read of the
+        /// radio, not from this.
         let stored: Data
         /// True when `stored` is what the radio already held: every value asked
         /// for was one it already had. There is nothing to send then, and the
@@ -191,8 +225,10 @@ enum MeshtasticAdminCodec {
         case keep
         /// Replace it. The bytes are a key of a valid length, never empty.
         case set(Data)
-        /// Remove it, which makes the channel unencrypted. Only ever asked for
-        /// explicitly.
+        /// Turn encryption off: the key becomes the one byte 0, which is how the
+        /// radio is told "open". No key at all would not do it: on a secondary
+        /// channel the radio takes a missing key to mean the primary's. Only
+        /// ever asked for explicitly.
         case clear
 
         // Key bytes are never printed.
@@ -235,7 +271,7 @@ enum MeshtasticAdminCodec {
             guard !bytes.isEmpty else { return nil }
             settingsEdits.append(.bytes(ChannelSettingsField.psk, bytes))
         case .clear:
-            settingsEdits.append(.remove(ChannelSettingsField.psk))
+            settingsEdits.append(.bytes(ChannelSettingsField.psk, MeshtasticChannelKey.open))
         }
         guard let stored = ProtoFields.patch(current, [
             .nested(ChannelField.settings, settingsEdits),
@@ -257,10 +293,14 @@ enum MeshtasticAdminCodec {
     ///   - index: 1 to 7. Slot 0 is the primary and is never a new channel.
     ///   - current: the Channel message the radio sent for the slot. It must say
     ///     the slot is disabled and be the slot `index`.
-    ///   - psk: the key, or empty for a channel the sender chose to leave open.
-    /// - Returns: nil when the slot is not one the radio reported as disabled.
+    ///   - psk: the key: 16 or 32 bytes, or the one byte 0 for an open channel
+    ///     (`MeshtasticChannelKey.isUsable`). Never empty: on a secondary channel
+    ///     the radio would take no key to mean the primary's.
+    /// - Returns: nil when the slot is not one the radio reported as disabled, or
+    ///   the key is not one the radio would take.
     static func encodeNewChannel(index: Int, current: Data, name: String, psk: Data) -> Write? {
         guard (1...7).contains(index),
+              MeshtasticChannelKey.isUsable(psk),
               let slot = channelSummary(in: current),
               slot.index == index,
               slot.role == ChannelRole.disabled.rawValue else { return nil }
@@ -336,6 +376,84 @@ enum MeshtasticAdminCodec {
               let response = fields.last(where: { $0.number == AdminField.getChannelResponse }),
               response.wireType == 2 else { return nil }
         return response.value
+    }
+
+    // MARK: - get_config (reading a sub-config)
+
+    /// `AdminMessage{ get_config_request = type }`. The value is written even
+    /// when it is 0: the request is a member of a oneof, and being present is
+    /// what asks. The radio answers only a packet that asks for a response.
+    static func encodeGetConfigRequest(_ type: ConfigType) -> Data {
+        ProtoFields.varintField(AdminField.getConfigRequest, type.rawValue).raw
+    }
+
+    /// The sub-config in an `AdminMessage{ get_config_response }`: the field
+    /// number it has inside `Config` and the bytes of the sub-config message.
+    /// Nil when the message is anything else, is not well formed, or carries no
+    /// sub-config.
+    static func configResponse(in adminPayload: Data) -> (variant: Int, body: Data)? {
+        guard let fields = ProtoFields.parse(adminPayload),
+              let response = fields.last(where: { $0.number == AdminField.getConfigResponse }),
+              response.wireType == 2,
+              let config = ProtoFields.parse(response.value),
+              let member = config.last(where: { $0.wireType == 2 }) else { return nil }
+        return (member.number, member.value)
+    }
+
+    // MARK: - Edit transaction
+
+    /// `AdminMessage{ begin_edit_settings = true }`. Until the matching commit
+    /// the radio applies what it receives and holds off saving it.
+    static func encodeBeginEditSettings() -> Data {
+        ProtoFields.boolField(AdminField.beginEditSettings, true).raw
+    }
+
+    /// `AdminMessage{ commit_edit_settings = true }`: save what was edited. The
+    /// radio restarts to apply it.
+    static func encodeCommitEditSettings() -> Data {
+        ProtoFields.boolField(AdminField.commitEditSettings, true).raw
+    }
+
+    // MARK: - An answer to a get request
+
+    /// A `get_config_response` or `get_channel_response` as it arrived in a
+    /// MeshPacket, with what is needed to decide whether it answers a request
+    /// this app sent (MeshtasticManager decides).
+    struct Answer: Equatable {
+        enum Content: Equatable {
+            case config(variant: Int, body: Data)
+            case channel(index: Int, body: Data)
+        }
+
+        /// MeshPacket.from.
+        let from: UInt32
+        /// Data.request_id, nil when the packet has none.
+        let requestId: UInt32?
+        /// True when the packet carries any receive metadata: a signal
+        /// strength, a signal-to-noise ratio, an MQTT flag or a transport
+        /// mechanism. A packet the radio makes for its own phone carries none.
+        let hasReceiveSignals: Bool
+        let content: Content
+    }
+
+    /// The answer a MeshPacket carries, or nil when it is not an admin
+    /// get_config_response or get_channel_response.
+    static func answer(in frame: MeshtasticProtoDecoder.MeshPacketFrame) -> Answer? {
+        guard frame.portNum == Int(adminPortnum) else { return nil }
+        let signals = (frame.rxRssi ?? 0) != 0
+            || (frame.rxSnr ?? 0) != 0
+            || frame.viaMQTT
+            || frame.transportMechanism != 0
+        if let channel = channelResponse(in: frame.payload) {
+            guard let summary = channelSummary(in: channel) else { return nil }
+            return Answer(from: frame.from, requestId: frame.requestId, hasReceiveSignals: signals,
+                          content: .channel(index: summary.index, body: channel))
+        }
+        if let config = configResponse(in: frame.payload) {
+            return Answer(from: frame.from, requestId: frame.requestId, hasReceiveSignals: signals,
+                          content: .config(variant: config.variant, body: config.body))
+        }
+        return nil
     }
 
     // MARK: - set_config (device role + rebroadcast scope)
@@ -434,8 +552,17 @@ enum MeshtasticAdminCodec {
     /// Nil when the node number is not known (0) or is the broadcast address.
     /// An admin message must never be addressed to everyone: it would go out
     /// over the air, and for `set_channel` it carries the channel key.
-    static func toRadioFrame(adminPayload: Data, myNodeNum: UInt32, wantResponse: Bool = false) -> Data? {
-        guard myNodeNum != 0, myNodeNum != broadcastNodeNum else { return nil }
+    ///
+    /// `packetID` is the MeshPacket id. A request carries one the app made up and
+    /// keeps, so that the answer, which echoes it, can be matched to it. It is
+    /// never 0.
+    static func toRadioFrame(
+        adminPayload: Data,
+        myNodeNum: UInt32,
+        wantResponse: Bool = false,
+        packetID: UInt32 = UInt32.random(in: 1...UInt32.max)
+    ) -> Data? {
+        guard myNodeNum != 0, myNodeNum != broadcastNodeNum, packetID != 0 else { return nil }
         return ATAKPluginSerializer.buildToRadio(
             atakPayload: adminPayload,
             to: myNodeNum,
@@ -443,7 +570,8 @@ enum MeshtasticAdminCodec {
             portnum: adminPortnum,
             hopLimit: 3,
             wantAck: true,
-            wantResponse: wantResponse
+            wantResponse: wantResponse,
+            packetID: packetID
         )
     }
 }

@@ -72,6 +72,18 @@ enum MeshtasticProtoDecoder {
         var rxSnr: Float?
         var hopLimit: Int?
         var rxRssi: Int?
+        /// MeshPacket.id. 0 when absent.
+        var id: UInt32 = 0
+        /// Data.request_id: the id of the packet this one answers. Nil when
+        /// absent.
+        var requestId: UInt32?
+        /// MeshPacket.hop_start. Nil when absent.
+        var hopStart: Int?
+        /// MeshPacket.via_mqtt.
+        var viaMQTT = false
+        /// MeshPacket.transport_mechanism. 0 when absent, which is also what a
+        /// packet that never left the radio carries.
+        var transportMechanism: UInt64 = 0
     }
 
     /// What a FromRadio frame carried. FromRadio holds one payload variant, so
@@ -353,6 +365,10 @@ enum MeshtasticProtoDecoder {
                 let decoded = decodeData(body)
                 packet.portNum = decoded.portNum
                 packet.payload = decoded.payload
+                packet.requestId = decoded.requestId
+            case (6, 5): // id
+                guard let value = reader.readFixed32() else { break fields }
+                packet.id = value
             case (7, 5): // rx_time
                 guard let seconds = reader.readFixed32() else { break fields }
                 packet.rxTime = seconds > 0 ? Date(timeIntervalSince1970: TimeInterval(seconds)) : nil
@@ -365,6 +381,15 @@ enum MeshtasticProtoDecoder {
             case (12, 0): // rx_rssi, int32
                 guard let value = reader.readVarint() else { break fields }
                 packet.rxRssi = Int(Int32(truncatingIfNeeded: value))
+            case (14, 0): // via_mqtt
+                guard let value = reader.readVarint() else { break fields }
+                packet.viaMQTT = value != 0
+            case (15, 0): // hop_start
+                guard let value = reader.readVarint() else { break fields }
+                packet.hopStart = Int(UInt32(truncatingIfNeeded: value))
+            case (21, 0): // transport_mechanism
+                guard let value = reader.readVarint() else { break fields }
+                packet.transportMechanism = value
             default:
                 guard reader.skip(wire: tag.wire) else { break fields }
             }
@@ -374,11 +399,12 @@ enum MeshtasticProtoDecoder {
 
     // MARK: - Data
 
-    /// portnum and payload of a MeshPacket's `decoded` Data.
-    static func decodeData(_ data: Data) -> (portNum: Int, payload: Data) {
+    /// portnum, payload and request_id of a MeshPacket's `decoded` Data.
+    static func decodeData(_ data: Data) -> (portNum: Int, payload: Data, requestId: UInt32?) {
         var reader = Reader(data)
         var portNum = 0
         var payload = Data()
+        var requestId: UInt32?
         fields: while let tag = reader.readTag() {
             switch (tag.field, tag.wire) {
             case (1, 0):
@@ -387,11 +413,14 @@ enum MeshtasticProtoDecoder {
             case (2, 2):
                 guard let body = reader.readBytes() else { break fields }
                 payload = body
+            case (6, 5): // request_id
+                guard let value = reader.readFixed32() else { break fields }
+                requestId = value
             default:
                 guard reader.skip(wire: tag.wire) else { break fields }
             }
         }
-        return (portNum, payload)
+        return (portNum, payload, requestId)
     }
 
     // MARK: - Wire reader

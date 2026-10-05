@@ -5,14 +5,16 @@
 //  A radio inside the test process, for the tests of how the app handles a link
 //  (#148). It listens on a loopback port, speaks the Meshtastic TCP framing
 //  (0x94 0xC3 and a two-byte big-endian length), answers a config request with a
-//  download, and does with an admin write what the firmware does: a set_config
-//  replaces the whole sub-config and a set_channel replaces the whole channel.
-//  It answers get_channel_request when the packet asks for a response.
+//  download, and hands the admin packets it receives to a SimulatedRadioModel,
+//  which does with them what the firmware does: replaces a whole sub-config or
+//  channel, answers get requests with the request's packet id echoed, takes
+//  packets addressed to itself through a queue of four that drops the oldest.
 //
 //  The tests then run the app's real MeshtasticTCPClient, decoder and manager
-//  against it, so the link the app picks, the node number it addresses and the
-//  bytes it sends are the real ones. What the real firmware does with those bytes
-//  is checked against meshtasticd in MeshtasticSimulatedRadioTests.
+//  against it, so the link the app picks, the node number it addresses, the ids
+//  it sends and the pace it sends at are the real ones. What the real firmware
+//  does with those bytes is checked against meshtasticd in
+//  MeshtasticSimulatedRadioTests.
 //
 //  Names, keys and numbers are made up.
 //
@@ -24,15 +26,11 @@ final class LoopbackRadio {
 
     let nodeNum: UInt32
 
-    // What the radio holds, as the bytes it would send in a download.
-    private(set) var deviceConfig: Data
-    private(set) var positionConfig: Data
-    private(set) var channels: [Int: Data]
+    /// What the radio is, and does with a packet.
+    let model: SimulatedRadioModel
 
     /// False: it accepts the connection and never answers a config request.
     var answersConfigRequests = true
-    /// False: it ignores set_channel and keeps what it had.
-    var appliesChannelWrites = true
 
     /// An admin message the radio received.
     struct AdminWrite {
@@ -40,14 +38,14 @@ final class LoopbackRadio {
         let to: UInt32
         let payload: Data
         let wantResponse: Bool
+        let packetID: UInt32
+        let kind: SimulatedRadioModel.Kind
     }
 
     private let lock = NSLock()
-    private var _admin: [AdminWrite] = []
     private var _configRequests = 0
     private var _accepted = 0
     private var _clientConnected = false
-    private var _channelWrites: [Data] = []
 
     private let queue = DispatchQueue(label: "test.loopback.radio")
     private var listener: NWListener?
@@ -61,23 +59,41 @@ final class LoopbackRadio {
         channels: [Int: ProtoFixture] = RadioFixtures.channelSlots()
     ) {
         self.nodeNum = nodeNum
-        self.deviceConfig = device.data
-        self.positionConfig = position.data
-        self.channels = channels.mapValues { $0.data }
+        self.model = SimulatedRadioModel(nodeNum: nodeNum, device: device, position: position, channels: channels)
     }
 
     // MARK: - What the test can see
 
-    /// Admin messages received, in order.
-    var admin: [AdminWrite] { lock.lock(); defer { lock.unlock() }; return _admin }
+    var deviceConfig: Data { model.deviceConfig }
+    var positionConfig: Data { model.positionConfig }
+    var channels: [Int: Data] { model.channels }
+    /// False: it ignores set_channel and keeps what it had.
+    var appliesChannelWrites: Bool {
+        get { model.appliesChannelWrites }
+        set { model.appliesChannelWrites = newValue }
+    }
+
+    /// Admin messages the radio took, in order. A message is listed once its
+    /// effect is in place, and before any answer goes out.
+    var admin: [AdminWrite] {
+        model.processed.map {
+            AdminWrite(to: $0.packet.to, payload: $0.packet.admin, wantResponse: $0.packet.wantResponse,
+                       packetID: $0.packet.packetID, kind: $0.kind)
+        }
+    }
     /// How many config requests arrived.
     var configRequests: Int { lock.lock(); defer { lock.unlock() }; return _configRequests }
     /// How many connections it has accepted.
     var accepted: Int { lock.lock(); defer { lock.unlock() }; return _accepted }
     /// Whether a client is connected right now.
     var isClientConnected: Bool { lock.lock(); defer { lock.unlock() }; return _clientConnected }
-    /// The Channel messages of the set_channel writes it received, in order.
-    var channelWrites: [Data] { lock.lock(); defer { lock.unlock() }; return _channelWrites }
+    /// The Channel messages of the set_channel writes it took, in order.
+    var channelWrites: [Data] {
+        model.processed.compactMap { record in
+            guard case .setChannel = record.kind else { return nil }
+            return FixtureReader.setChannel(in: record.packet.admin)
+        }
+    }
 
     // MARK: - Running
 
@@ -136,7 +152,7 @@ final class LoopbackRadio {
 
     /// The config download a radio sends for a config request.
     func sendDownload(configID: UInt64 = 1) {
-        for frame in downloadFrames(configID: configID) { sendRaw(frame) }
+        for frame in model.downloadFrames(configID: configID) { sendRaw(LoopbackRadio.frame(frame)) }
     }
 
     // MARK: - Connection handling
@@ -197,87 +213,15 @@ final class LoopbackRadio {
                     sendDownload(configID: FixtureReader.varint(3, in: payload) ?? 1)
                 }
             }
-            // packet
-            if field.number == 1 && field.wire == 2 {
-                handlePacket(field.value)
+        }
+        // An admin packet goes to the model, which answers through the socket.
+        if let packet = FixtureReader.adminPacket(in: payload) {
+            model.receive(SimulatedRadioModel.Packet(
+                to: packet.to, admin: packet.admin, wantResponse: packet.wantResponse, packetID: packet.packetID)
+            ) { [weak self] answer in
+                self?.sendRaw(LoopbackRadio.frame(answer))
             }
         }
-    }
-
-    private func handlePacket(_ packet: Data) {
-        guard let fields = FixtureReader.fields(packet),
-              let to = fields.first(where: { $0.number == 2 && $0.wire == 5 }),
-              let decoded = fields.first(where: { $0.number == 4 && $0.wire == 2 }),
-              FixtureReader.varint(1, in: decoded.value) == RadioProto.adminPortnum,
-              let adminPayload = FixtureReader.bytes(2, in: decoded.value) else { return }
-
-        let target = to.value.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
-        let wantsResponse = (FixtureReader.varint(3, in: decoded.value) ?? 0) != 0
-        let record = AdminWrite(to: target, payload: adminPayload, wantResponse: wantsResponse)
-
-        // Admin messages for another node are not this radio's to apply.
-        guard target == nodeNum, let admin = FixtureReader.fields(adminPayload) else {
-            lock.lock(); _admin.append(record); lock.unlock()
-            return
-        }
-
-        var answers: [Data] = []
-        for field in admin {
-            switch (field.number, field.wire) {
-            case (RadioProto.Admin.setConfig, 2):
-                // A set_config replaces the whole sub-config.
-                if let variant = FixtureReader.fields(field.value)?.first(where: { $0.wire == 2 }) {
-                    lock.lock()
-                    if variant.number == RadioProto.Config.device { deviceConfig = variant.value }
-                    if variant.number == RadioProto.Config.position { positionConfig = variant.value }
-                    lock.unlock()
-                }
-            case (RadioProto.Admin.setChannel, 2):
-                lock.lock(); _channelWrites.append(field.value); lock.unlock()
-                if appliesChannelWrites {
-                    let index = Int(FixtureReader.varint(RadioProto.Channel.index, in: field.value) ?? 0)
-                    lock.lock(); channels[index] = field.value; lock.unlock()
-                }
-            case (1, 0):
-                // get_channel_request, the index plus one
-                guard wantsResponse, let raw = FixtureReader.varint(1, in: adminPayload), raw >= 1 else { continue }
-                lock.lock(); let channel = channels[Int(raw) - 1]; lock.unlock()
-                if let channel = channel { answers.append(channel) }
-            default:
-                break
-            }
-        }
-
-        // Recorded once its effect is in place, and before any answer goes out,
-        // so a test that has seen the message can rely on the radio holding what
-        // it asked for.
-        lock.lock(); _admin.append(record); lock.unlock()
-        for channel in answers { sendChannelResponse(channel) }
-    }
-
-    private func sendChannelResponse(_ channel: Data) {
-        let adminMessage = ProtoFixture().bytes(2, channel).data
-        let decoded = ProtoFixture().varint(1, RadioProto.adminPortnum).bytes(2, adminMessage)
-        let packet = ProtoFixture().fixed32(1, nodeNum).fixed32(2, 0).message(4, decoded)
-        send(ProtoFixture().message(RadioProto.FromRadio.packet, packet))
-    }
-
-    // MARK: - The download
-
-    private func downloadFrames(configID: UInt64) -> [Data] {
-        lock.lock()
-        let device = deviceConfig, position = positionConfig, slots = channels
-        lock.unlock()
-
-        var frames: [Data] = []
-        frames.append(LoopbackRadio.frame(RadioFixtures.myInfoFrame(nodeNum: nodeNum)))
-        for index in slots.keys.sorted() {
-            frames.append(LoopbackRadio.frame(RadioFixtures.channelFrame(ProtoFixture(slots[index]!))))
-        }
-        frames.append(LoopbackRadio.frame(RadioFixtures.configFrame(variant: RadioProto.Config.device, body: ProtoFixture(device))))
-        frames.append(LoopbackRadio.frame(RadioFixtures.configFrame(variant: RadioProto.Config.position, body: ProtoFixture(position))))
-        frames.append(LoopbackRadio.frame(ProtoFixture().varint(RadioProto.FromRadio.configCompleteId, configID).data))
-        return frames
     }
 
     static func frame(_ payload: Data) -> Data {

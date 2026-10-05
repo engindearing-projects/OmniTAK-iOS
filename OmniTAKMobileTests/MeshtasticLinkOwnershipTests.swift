@@ -136,13 +136,13 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         XCTAssertEqual(rig.manager.myNodeNum, nodeB, "the node number is the connected radio's")
 
         // And none of it reaches a write: the write is the TCP radio's own
-        // settings, addressed to it, down its socket.
-        XCTAssertEqual(rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil), .sent)
-        let sent = try await eventually { !radioB.admin.isEmpty }
-        XCTAssertTrue(sent)
-        XCTAssertEqual(radioB.admin.count, 1)
-        let write = try XCTUnwrap(radioB.admin.first, "nothing reached the TCP radio")
-        XCTAssertEqual(write.to, nodeB)
+        // settings, read from it, addressed to it, down its socket.
+        let applied = await rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil)
+        XCTAssertEqual(applied, .applied)
+        XCTAssertTrue(radioB.admin.allSatisfy { $0.to == nodeB }, "every frame addressed to the radio that is there")
+        let writes = radioB.admin.filter { $0.kind == .setConfig(variant: RadioProto.Config.device) }
+        XCTAssertEqual(writes.count, 1)
+        let write = try XCTUnwrap(writes.first, "nothing reached the TCP radio")
         let body = try XCTUnwrap(FixtureReader.setConfig(in: write.payload)).body
         XCTAssertEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: body), Data("BRAVOZONE".utf8))
         XCTAssertNotEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: body), Data("XRAYZONE".utf8))
@@ -175,7 +175,8 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         XCTAssertEqual(rig.manager.radioSettings, before, "and its settings are still there")
         XCTAssertEqual(rig.manager.connectionState, "Connected", "the Bluetooth failure is not shown as the TCP radio's")
         XCTAssertNil(rig.manager.lastError)
-        XCTAssertEqual(rig.manager.applyPositionBroadcastInterval(seconds: 900), .sent, "and it can still be written to")
+        let written = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+        XCTAssertEqual(written, .applied, "and it can still be written to")
     }
 
     func testABluetoothRadioComingUpDoesNotChangeTheConnectedDevice() async throws {
@@ -246,8 +247,10 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
 
         // The new radio is silent, so there is nothing to write against, and
         // the old radio's bytes are not sent to it, addressed to the old radio.
-        XCTAssertEqual(rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil), .notLoadedRefusal)
-        XCTAssertEqual(rig.manager.applyPositionBroadcastInterval(seconds: 900), .notLoadedRefusal)
+        let device = await rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil)
+        let position = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+        XCTAssertEqual(device, .notLoadedRefusal)
+        XCTAssertEqual(position, .notLoadedRefusal)
         try await settle()
         XCTAssertTrue(radioB.admin.isEmpty, "nothing reached the silent radio")
         XCTAssertTrue(radioA.admin.isEmpty, "and nothing more went to the first")
@@ -259,11 +262,11 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         }
         XCTAssertTrue(loaded)
         XCTAssertEqual(rig.manager.radioSettings.config(variant: RadioProto.Config.device), deviceConfig(zone: "BRAVOZONE").data)
-        XCTAssertEqual(rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil), .sent)
-        let sent = try await eventually { !radioB.admin.isEmpty }
-        XCTAssertTrue(sent)
-        let write = try XCTUnwrap(radioB.admin.first, "nothing reached the radio that is there")
-        XCTAssertEqual(write.to, nodeB, "addressed to the radio that is there")
+        let applied = await rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil)
+        XCTAssertEqual(applied, .applied)
+        XCTAssertTrue(radioB.admin.allSatisfy { $0.to == nodeB }, "addressed to the radio that is there")
+        let write = try XCTUnwrap(radioB.admin.first(where: { $0.kind == .setConfig(variant: RadioProto.Config.device) }),
+                                  "nothing was written to the radio that is there")
         let body = try XCTUnwrap(FixtureReader.setConfig(in: write.payload)).body
         XCTAssertEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: body), Data("BRAVOZONE".utf8))
         XCTAssertTrue(radioA.admin.isEmpty)
@@ -300,7 +303,8 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         // Once the new link is up there is still nothing to write against.
         let up = try await eventually { rig.manager.isConnected }
         XCTAssertTrue(up)
-        XCTAssertEqual(rig.manager.applyPositionBroadcastInterval(seconds: 900), .notLoadedRefusal)
+        let refused = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+        XCTAssertEqual(refused, .notLoadedRefusal)
     }
 
     func testAHalfReadFrameOfTheOldConnectionIsNotTheStartOfTheNewOnes() async throws {
@@ -383,7 +387,8 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         XCTAssertTrue(down)
         XCTAssertTrue(rig.manager.radioSettings.isEmpty)
         XCTAssertEqual(rig.manager.myNodeNum, 0)
-        XCTAssertEqual(rig.manager.applyPositionBroadcastInterval(seconds: 900), .notConnectedRefusal)
+        let refused = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+        XCTAssertEqual(refused, .notConnectedRefusal)
     }
 
     func testAReconnectToTheSameRadioStartsFromNothingAndDownloadsAgain() async throws {
@@ -393,17 +398,45 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         let rig = makeRig()
         try await connect(rig, to: radioB, port: port)
         defer { rig.manager.disconnect() }
-        XCTAssertEqual(rig.manager.applyPositionBroadcastInterval(seconds: 900), .sent)
-        XCTAssertFalse(rig.manager.radioSettings.hasPositionConfig, "dropped after the write")
-        // The radio has the write before the link is replaced. A write still on
-        // its way when the connection is cancelled is not what this test is about.
-        let taken = try await eventually { !radioB.admin.isEmpty }
-        XCTAssertTrue(taken, "the radio received the write")
+        let applied = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+        XCTAssertEqual(applied, .applied)
+        XCTAssertEqual(rig.manager.radioSettings.positionBroadcastSeconds, 900, "the radio's own answer")
 
         try await connect(rig, to: radioB, port: port)
 
         XCTAssertTrue(rig.manager.radioSettings.hasPositionConfig, "the download brought it back")
-        XCTAssertEqual(rig.manager.radioSettings.positionBroadcastSeconds, 900, "and the radio now holds what was sent")
+        XCTAssertEqual(rig.manager.radioSettings.positionBroadcastSeconds, 900, "and the radio holds what was sent")
         XCTAssertEqual(radioB.accepted, 2)
+    }
+
+    // MARK: - The TCP client's own bookkeeping
+
+    func testTheEndOfAnOldStreamDoesNotCancelTheConnectionThatBeganInBetween() async throws {
+        let radioA = LoopbackRadio(nodeNum: nodeA)
+        let radioB = LoopbackRadio(nodeNum: nodeB)
+        let portA = try await radioA.start()
+        let portB = try await radioB.start()
+        defer { radioA.stop(); radioB.stop() }
+        let rig = makeRig()
+        try await connect(rig, to: radioA, port: portA)
+        defer { rig.manager.disconnect() }
+
+        // The first radio closes its end. Between the client noticing and the
+        // client closing, a connection to the second radio begins.
+        let client = rig.client
+        client.endOfStreamHook = { client.connect(host: "127.0.0.1", port: portB) }
+        radioA.dropClient()
+
+        let up = try await eventually { radioB.isClientConnected && client.isConnected }
+        XCTAssertTrue(up, "the second connection is the one that stands")
+        try await settle()
+        XCTAssertTrue(radioB.isClientConnected, "and it was not closed by the end of the first")
+        XCTAssertEqual(radioB.accepted, 1)
+    }
+
+    func testSendAdminSaysSoWhenNothingWasSent() {
+        let client = MeshtasticTCPClient()
+        XCTAssertFalse(client.sendAdmin(payload: MeshtasticAdminCodec.encodeGetChannelRequest(index: 0),
+                                        to: nodeA, connection: client.connectionSerial, wantResponse: true))
     }
 }
