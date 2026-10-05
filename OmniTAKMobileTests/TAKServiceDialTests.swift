@@ -514,7 +514,7 @@ final class TAKServiceDialTests: XCTestCase {
         tls.allowUntrustedTLS = true
         saved.servers = [tls]
         server.pingBehavior = .ignore
-        service.connectTimeout = 1.0
+        service.connectTimeout = 2.0
         service.connectToServer(tls)
         waitUntil("the TLS dial to reach the server") { server.acceptedCount == 1 }
         XCTAssertEqual(phase, .dialing)

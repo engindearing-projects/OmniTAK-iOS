@@ -73,6 +73,21 @@ final class TAKSenderLivenessTests: XCTestCase {
         }
     }
 
+    /// Wait until the sender has ended its session AND told its owner. `endReason`
+    /// is set a moment before the owner is told (the connection is cancelled in
+    /// between), so a test that asserts what the owner was told has to wait for
+    /// the report itself, not only for the reason.
+    private func waitForEnd(
+        _ what: String = "the session to end and be reported",
+        timeout: TimeInterval = 8,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        waitUntil(timeout, what, file: file, line: line) {
+            sender.endReason != nil && recorder.downCount >= 1
+        }
+    }
+
     private func waitForConnection() {
         waitUntil("the sender to be connected and the server to have accepted it") {
             sender.isConnected && server.acceptedCount >= 1
@@ -94,7 +109,7 @@ final class TAKSenderLivenessTests: XCTestCase {
 
         let silentAt = Date()
         server.pingBehavior = .ignore
-        waitUntil(10, "the sender to give up on the silent server") { sender.endReason != nil }
+        waitForEnd("the sender to give up on the silent server", timeout: 10)
 
         XCTAssertEqual(sender.endReason, "No response from server")
         XCTAssertFalse(sender.isConnected)
@@ -157,7 +172,7 @@ final class TAKSenderLivenessTests: XCTestCase {
         // The owner sets this from the previous sender for the same server.
         server.pingBehavior = .ignore
         connect(serverAnswersPings: true)
-        waitUntil(10, "the sender to give up on a server it knew answers pings") { sender.endReason != nil }
+        waitForEnd("the sender to give up on a server it knew answers pings", timeout: 10)
         XCTAssertEqual(sender.endReason, "No response from server")
         XCTAssertTrue(sender.serverAnswersPings, "still readable after the session ended")
     }
@@ -170,7 +185,7 @@ final class TAKSenderLivenessTests: XCTestCase {
         XCTAssertNil(sender.endReason)
 
         server.close(connection: 0)
-        waitUntil("the session to end") { sender.endReason != nil }
+        waitForEnd("the session to end")
 
         XCTAssertEqual(sender.endReason, "Closed by server")
         XCTAssertFalse(sender.isConnected, "false the moment the stream ended, not when the next send fails")
@@ -183,32 +198,32 @@ final class TAKSenderLivenessTests: XCTestCase {
     }
 
     func testAnEndedSessionCancelsItsConnection() {
-        // The server ignores pings, so it is the SENDER that ends the session
-        // ("No response from server"). The server must then see the client close
-        // its end: the connection is cancelled, not left half open.
+        // The server answers a ping and then ignores them, so it is the SENDER that
+        // ends the session ("No response from server"). The server must then see
+        // the client close its end: the connection is cancelled, not left half open.
         server.pingBehavior = .answerDoubleQuoted
         connect()
         waitUntil("the sender to read an answer") { sender.serverAnswersPings }
         server.pingBehavior = .ignore
-        waitUntil(10, "the sender to give up on the silent server") { sender.endReason != nil }
+        waitForEnd("the sender to give up on the silent server", timeout: 10)
         XCTAssertEqual(sender.endReason, "No response from server")
         waitUntil("the server to see the client close the connection") { server.closedByClient(connection: 0) }
         XCTAssertNil(sender.activeConnection, "and the sender lets go of it")
     }
 
-    func testAFailedSendEndsTheSession() {
-        // The write side of the connection is closed (a final message), while the
-        // server keeps its end open and keeps talking: the receive side is healthy,
-        // so the only thing that can end the session is the write that fails.
+    func testAFailedSendEndsTheSession() throws {
+        // The write side of the connection is closed (a final message) while the
+        // server keeps its end open: the receive side is healthy, so the only thing
+        // that can end the session is the write that fails.
         connect()
         waitForConnection()
-        let live = try! XCTUnwrap(sender.activeConnection)
+        let live = try XCTUnwrap(sender.activeConnection)
         live.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in })
         observe(for: 0.2)
         XCTAssertNil(sender.endReason, "closing the write side alone ends nothing here")
 
         XCTAssertTrue(sender.send(xml: "<event/>"), "the write is accepted, then fails")
-        waitUntil("the failed write to end the session") { sender.endReason != nil }
+        waitForEnd("the failed write to end the session")
         XCTAssertTrue(sender.endReason?.hasPrefix("Send failed") == true, sender.endReason ?? "nil")
         XCTAssertFalse(sender.isConnected)
         XCTAssertEqual(recorder.states, [true, false], "reported down once")
@@ -252,7 +267,7 @@ final class TAKSenderLivenessTests: XCTestCase {
         // pong that was dropped as invalid would have left the server one that
         // never answered, and never given up on.
         server.pingBehavior = .ignore
-        waitUntil(10, "the sender to give up on the silent server") { sender.endReason != nil }
+        waitForEnd("the sender to give up on the silent server", timeout: 10)
         XCTAssertEqual(sender.endReason, "No response from server")
     }
 
@@ -321,7 +336,7 @@ final class TAKSenderLivenessTests: XCTestCase {
         XCTAssertTrue(sender.isConnected)
 
         UserDefaults.standard.set(true, forKey: monitorKey)
-        waitUntil(10, "the silent server to be given up on once monitoring is back") { sender.endReason != nil }
+        waitForEnd("the silent server to be given up on once monitoring is back", timeout: 10)
         XCTAssertEqual(sender.endReason, "No response from server")
     }
 
@@ -395,7 +410,7 @@ final class TAKSenderLivenessTests: XCTestCase {
         // The connect timeout is far away: only the refusal itself can end this dial
         // inside the deadline below.
         connect(port: port, connectTimeout: 30)
-        waitUntil(5, "the refused dial to end, long before the connect timeout") { sender.endReason != nil }
+        waitForEnd("the refused dial to end, long before the connect timeout", timeout: 5)
 
         XCTAssertEqual(sender.endReason, "Connection refused")
         XCTAssertFalse(sender.isConnected)
@@ -418,7 +433,7 @@ final class TAKSenderLivenessTests: XCTestCase {
         XCTAssertEqual(tcp?.keepaliveInterval, 10)
         XCTAssertEqual(tcp?.keepaliveCount, 3)
 
-        waitUntil(10, "the handshake to time out") { sender.endReason != nil }
+        waitForEnd("the handshake to time out", timeout: 10)
         XCTAssertEqual(sender.endReason, "Connect timed out after 0.8s")
         XCTAssertEqual(recorder.dials, [false])
         XCTAssertEqual(recorder.states, [false])
