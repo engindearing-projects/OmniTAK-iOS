@@ -42,6 +42,11 @@ struct KMLOverlaysPanel: View {
                     if let err = store.lastError {
                         Text(err).font(.footnote).foregroundColor(.red)
                     }
+                    // MBTiles / GeoPackage import and registry errors live on
+                    // their own store; without this they were never shown.
+                    if let err = mbtilesStore.lastError {
+                        Text(err).font(.footnote).foregroundColor(.red)
+                    }
                 } footer: {
                     Text("Imported overlays render as a single GPU vector layer — large files (tens of thousands of features) stay smooth. Tap an overlay to rename, recolor, or restyle it. Overlays show on the 2D map engine.")
                 }
@@ -133,6 +138,9 @@ struct KMLOverlaysPanel: View {
                     Button("Done") { dismiss() }
                 }
             }
+            // A tile file can be deleted (or put back) from the Files app
+            // while OmniTAK runs; re-check so the rows tell the truth.
+            .onAppear { mbtilesStore.refreshFileState() }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: allowedTypes, allowsMultipleSelection: false) { result in
                 if case .success(let urls) = result, let url = urls.first { importPicked(url) }
             }
@@ -156,15 +164,27 @@ struct KMLOverlaysPanel: View {
     private func importPicked(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let ext = url.pathExtension.lowercased()
+        let isTileSet = ext == "mbtiles" || ext == "gpkg"
+        // A new import starts with a clean slate; each store only clears its
+        // own error, so an old one from another store would otherwise stay up.
+        store.lastError = nil
+        mbtilesStore.lastError = nil
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
         try? FileManager.default.removeItem(at: tmp)
         do {
             try FileManager.default.copyItem(at: url, to: tmp)
         } catch {
-            store.lastError = "Couldn't read the selected file."
+            // Show the failure on the store the import belongs to. The reason
+            // is included for tile sets: they are large, so "no space left on
+            // device" is a likely one.
+            if isTileSet {
+                mbtilesStore.lastError = "Couldn't read the selected file: \(error.localizedDescription)"
+            } else {
+                store.lastError = "Couldn't read the selected file."
+            }
             return
         }
-        let ext = url.pathExtension.lowercased()
         Task {
             func frame(_ id: String?) {
                 if let id = id {
@@ -222,24 +242,53 @@ struct KMLOverlaysPanel: View {
     @ViewBuilder
     private func mbtilesRow(_ overlay: MBTilesOverlay) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "square.stack.3d.up.fill")
-                .foregroundColor(.orange)
-                .opacity(overlay.visible ? 1 : 0.35)
+            if !overlay.isDrawable {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
+            } else {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .foregroundColor(.orange)
+                    .opacity(overlay.visible ? 1 : 0.35)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(overlay.name).lineLimit(1)
-                Text("Tiles z\(overlay.minZoom)–\(overlay.maxZoom) · \(Int(overlay.opacity * 100))%")
-                    .font(.caption).foregroundColor(.secondary)
+                if overlay.fileMissing {
+                    Text("File missing - delete this entry, then import the file again")
+                        .font(.caption).foregroundColor(.red)
+                } else if !overlay.isDrawable {
+                    // The full reason is in the detail view.
+                    Text("Can't be drawn - open for details, or delete this entry")
+                        .font(.caption).foregroundColor(.red)
+                } else {
+                    Text("Tiles z\(overlay.minZoom)–\(overlay.maxZoom) · \(Int(overlay.opacity * 100))%")
+                        .font(.caption).foregroundColor(.secondary)
+                }
             }
             Spacer()
-            Button {
-                mbtilesStore.setVisible(overlay.id, !overlay.visible)
-            } label: {
-                Image(systemName: overlay.visible ? "eye.fill" : "eye.slash")
-                    .foregroundColor(overlay.visible ? .accentColor : .secondary)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            if !overlay.isDrawable {
+                // The entry has nothing left to show or hide; the one useful
+                // action is getting rid of it. Borderless so it fires on its
+                // own inside the NavigationLink row.
+                Button {
+                    mbtilesStore.remove(overlay.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Delete")
+            } else {
+                Button {
+                    mbtilesStore.setVisible(overlay.id, !overlay.visible)
+                } label: {
+                    Image(systemName: overlay.visible ? "eye.fill" : "eye.slash")
+                        .foregroundColor(overlay.visible ? .accentColor : .secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
         }
     }
 
@@ -458,21 +507,37 @@ struct MBTilesOverlayDetailView: View {
                     TextField("Tile set name", text: $nameField).submitLabel(.done)
                         .onSubmit { store.rename(o.id, to: nameField) }
                 }
-                Section("Appearance") {
-                    Toggle("Visible", isOn: Binding(get: { o.visible }, set: { store.setVisible(o.id, $0) }))
-                    VStack(alignment: .leading) {
-                        Text("Opacity — \(Int(o.opacity * 100))%").font(.subheadline)
-                        Slider(value: Binding(get: { o.opacity }, set: { store.setOpacity(o.id, $0) }), in: 0.05...1.0)
+                if !o.isDrawable {
+                    Section("Status") {
+                        Label(o.fileMissing ? "File missing" : "Can't be drawn",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                        Text(o.fileMissing
+                             ? "The tile file for this entry is no longer on this device, so there is nothing to draw. Delete the entry, then import the file again."
+                             : (o.unsupportedReason ?? "This tile file can't be drawn.") + " Delete the entry to remove it.")
+                            .font(.footnote).foregroundColor(.secondary)
+                    }
+                } else {
+                    Section("Appearance") {
+                        Toggle("Visible", isOn: Binding(get: { o.visible }, set: { store.setVisible(o.id, $0) }))
+                        VStack(alignment: .leading) {
+                            Text("Opacity — \(Int(o.opacity * 100))%").font(.subheadline)
+                            Slider(value: Binding(get: { o.opacity }, set: { store.setOpacity(o.id, $0) }), in: 0.05...1.0)
+                        }
                     }
                 }
                 Section("Info") {
                     infoRow("Zoom", "z\(o.minZoom)–\(o.maxZoom)")
-                    if o.hasBounds {
-                        infoRow("Bounds", String(format: "%.3f, %.3f → %.3f, %.3f", o.south, o.west, o.north, o.east))
+                    if o.isDrawable {
+                        if o.hasBounds {
+                            infoRow("Bounds", String(format: "%.3f, %.3f → %.3f, %.3f", o.south, o.west, o.north, o.east))
+                        }
+                        // Tile sets draw on the 2D engine only; this also
+                        // switches to it, with or without bounds to frame.
                         Button {
                             NotificationCenter.default.post(name: .kmlZoomToOverlay, object: nil, userInfo: ["id": o.id])
                             onRequestClose()
-                        } label: { Label("Zoom to tiles", systemImage: "scope") }
+                        } label: { Label(o.hasBounds ? "Zoom to tiles" : "Show on map", systemImage: "scope") }
                     }
                 }
                 Section {
