@@ -141,8 +141,9 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         let sent = try await eventually { !radioB.admin.isEmpty }
         XCTAssertTrue(sent)
         XCTAssertEqual(radioB.admin.count, 1)
-        XCTAssertEqual(radioB.admin[0].to, nodeB)
-        let body = try XCTUnwrap(FixtureReader.setConfig(in: radioB.admin[0].payload)).body
+        let write = try XCTUnwrap(radioB.admin.first, "nothing reached the TCP radio")
+        XCTAssertEqual(write.to, nodeB)
+        let body = try XCTUnwrap(FixtureReader.setConfig(in: write.payload)).body
         XCTAssertEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: body), Data("BRAVOZONE".utf8))
         XCTAssertNotEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: body), Data("XRAYZONE".utf8))
         XCTAssertEqual(FixtureReader.varint(RadioProto.Device.role, in: body), RadioProto.DeviceRole.tak)
@@ -261,8 +262,9 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         XCTAssertEqual(rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil), .sent)
         let sent = try await eventually { !radioB.admin.isEmpty }
         XCTAssertTrue(sent)
-        XCTAssertEqual(radioB.admin[0].to, nodeB, "addressed to the radio that is there")
-        let body = try XCTUnwrap(FixtureReader.setConfig(in: radioB.admin[0].payload)).body
+        let write = try XCTUnwrap(radioB.admin.first, "nothing reached the radio that is there")
+        XCTAssertEqual(write.to, nodeB, "addressed to the radio that is there")
+        let body = try XCTUnwrap(FixtureReader.setConfig(in: write.payload)).body
         XCTAssertEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: body), Data("BRAVOZONE".utf8))
         XCTAssertTrue(radioA.admin.isEmpty)
     }
@@ -348,7 +350,7 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         XCTAssertTrue(rig.client.sendAdmin(payload: payload, to: nodeA, connection: rig.client.connectionSerial))
         let received = try await eventually { radioA.admin.count == 1 }
         XCTAssertTrue(received)
-        XCTAssertEqual(radioA.admin[0].to, nodeA)
+        XCTAssertEqual(radioA.admin.first?.to, nodeA)
     }
 
     // MARK: - The connected state is the link's
@@ -393,6 +395,10 @@ final class MeshtasticLinkOwnershipTests: XCTestCase {
         defer { rig.manager.disconnect() }
         XCTAssertEqual(rig.manager.applyPositionBroadcastInterval(seconds: 900), .sent)
         XCTAssertFalse(rig.manager.radioSettings.hasPositionConfig, "dropped after the write")
+        // The radio has the write before the link is replaced. A write still on
+        // its way when the connection is cancelled is not what this test is about.
+        let taken = try await eventually { !radioB.admin.isEmpty }
+        XCTAssertTrue(taken, "the radio received the write")
 
         try await connect(rig, to: radioB, port: port)
 

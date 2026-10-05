@@ -479,7 +479,8 @@ final class MeshtasticAdminCodecTests: XCTestCase {
 
         func decoded(_ frame: Data) throws -> Data {
             let toRadio = try XCTUnwrap(FixtureReader.fields(frame))
-            return try XCTUnwrap(FixtureReader.bytes(RadioProto.MeshPacket.decoded, in: toRadio[0].value))
+            let packet = try XCTUnwrap(toRadio.first)
+            return try XCTUnwrap(FixtureReader.bytes(RadioProto.MeshPacket.decoded, in: packet.value))
         }
         // Data.want_response is field 3.
         XCTAssertEqual(FixtureReader.varint(3, in: try decoded(request)), 1)
@@ -551,7 +552,8 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         // ToRadio { packet (1) = MeshPacket }
         let toRadio = try XCTUnwrap(FixtureReader.fields(frame))
         XCTAssertEqual(toRadio.map(\.number), [RadioProto.ToRadio.packet])
-        let packet = try XCTUnwrap(FixtureReader.fields(toRadio[0].value))
+        let toRadioPacket = try XCTUnwrap(toRadio.first)
+        let packet = try XCTUnwrap(FixtureReader.fields(toRadioPacket.value))
 
         // MeshPacket.to (2) is a fixed32 holding the radio's own node number.
         let to = try XCTUnwrap(packet.first { $0.number == RadioProto.MeshPacket.to })
@@ -560,12 +562,12 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         XCTAssertNotEqual(to.value, Data([0xFF, 0xFF, 0xFF, 0xFF]), "never the broadcast address")
 
         // decoded (4): portnum ADMIN_APP and the payload
-        let decoded = try XCTUnwrap(FixtureReader.bytes(RadioProto.MeshPacket.decoded, in: toRadio[0].value))
+        let decoded = try XCTUnwrap(FixtureReader.bytes(RadioProto.MeshPacket.decoded, in: toRadioPacket.value))
         XCTAssertEqual(FixtureReader.varint(RadioProto.DataMessage.portnum, in: decoded), RadioProto.adminPortnum)
         XCTAssertEqual(FixtureReader.bytes(RadioProto.DataMessage.payload, in: decoded), payload)
 
         // want_ack, so the radio applies and saves it
-        XCTAssertEqual(FixtureReader.varint(RadioProto.MeshPacket.wantAck, in: toRadio[0].value), 1)
+        XCTAssertEqual(FixtureReader.varint(RadioProto.MeshPacket.wantAck, in: toRadioPacket.value), 1)
     }
 
     func testNoAdminFrameIsBuiltWithoutTheRadiosNodeNumber() {

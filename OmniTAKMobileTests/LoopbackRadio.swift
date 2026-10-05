@@ -213,11 +213,15 @@ final class LoopbackRadio {
 
         let target = to.value.enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
         let wantsResponse = (FixtureReader.varint(3, in: decoded.value) ?? 0) != 0
-        lock.lock(); _admin.append(AdminWrite(to: target, payload: adminPayload, wantResponse: wantsResponse)); lock.unlock()
+        let record = AdminWrite(to: target, payload: adminPayload, wantResponse: wantsResponse)
 
         // Admin messages for another node are not this radio's to apply.
-        guard target == nodeNum, let admin = FixtureReader.fields(adminPayload) else { return }
+        guard target == nodeNum, let admin = FixtureReader.fields(adminPayload) else {
+            lock.lock(); _admin.append(record); lock.unlock()
+            return
+        }
 
+        var answers: [Data] = []
         for field in admin {
             switch (field.number, field.wire) {
             case (RadioProto.Admin.setConfig, 2):
@@ -238,11 +242,17 @@ final class LoopbackRadio {
                 // get_channel_request, the index plus one
                 guard wantsResponse, let raw = FixtureReader.varint(1, in: adminPayload), raw >= 1 else { continue }
                 lock.lock(); let channel = channels[Int(raw) - 1]; lock.unlock()
-                if let channel = channel { sendChannelResponse(channel) }
+                if let channel = channel { answers.append(channel) }
             default:
                 break
             }
         }
+
+        // Recorded once its effect is in place, and before any answer goes out,
+        // so a test that has seen the message can rely on the radio holding what
+        // it asked for.
+        lock.lock(); _admin.append(record); lock.unlock()
+        for channel in answers { sendChannelResponse(channel) }
     }
 
     private func sendChannelResponse(_ channel: Data) {

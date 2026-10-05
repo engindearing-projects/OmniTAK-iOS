@@ -411,8 +411,8 @@ final class MeshtasticChannelWriteTests: XCTestCase {
 
             XCTAssertEqual(outcome.sent, [1])
             XCTAssertEqual(outcome.skipped.count, 2)
-            XCTAssertTrue(outcome.skipped[0].contains("at most 11 bytes"))
-            XCTAssertTrue(outcome.skipped[1].contains("1, 16 or 32 bytes"))
+            XCTAssertTrue(outcome.skipped.first?.contains("at most 11 bytes") ?? false)
+            XCTAssertTrue(outcome.skipped.dropFirst().first?.contains("1, 16 or 32 bytes") ?? false)
         }
     }
 
@@ -547,7 +547,10 @@ final class MeshtasticChannelWriteTests: XCTestCase {
         _ = rig.manager.createChannel(name: "delta", keyText: WriteRig.hex(RadioFixtures.key),
                                       noEncryption: false, replacePrimary: false)
 
-        try await Task.sleep(nanoseconds: 400_000_000)
+        let end = Date().addingTimeInterval(5)
+        while Date() < end, rig.manager.channelReports.first?.state != .noAnswer {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
 
         XCTAssertEqual(rig.manager.channelReports.first?.state, .noAnswer)
         XCTAssertEqual(rig.manager.channelReports.first?.text,
