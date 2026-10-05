@@ -241,6 +241,7 @@
 		8AFC6EAFB6BB89E5858B8929 /* ADSBModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6D6F7F256C3986447BC5AD /* ADSBModels.swift */; };
 		8B9B513CEDBE816B0A75A7F1 /* MeshtasticModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2464B06E0A6D6ACAFF5AA25D /* MeshtasticModels.swift */; };
 		8C15CAB8ADB1E32F734D28C0 /* ChatXMLGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1603E6586A65EEB4B8F2D3 /* ChatXMLGeneratorTests.swift */; };
+		AC6A89CF8B5AA43CA798750E /* ChatMeshMirrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4896D09E66A3B8875668695 /* ChatMeshMirrorTests.swift */; };
 		8C438F404590B4041797F2A3 /* CertificateEnrollmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A52CF4DD21759290DD7E0B /* CertificateEnrollmentService.swift */; };
 		8C752969A4CF6C6B2654DE0F /* ChatXMLParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14751E8F7455DF58CA15A0A1 /* ChatXMLParser.swift */; };
 		8E3D7906ED5C43E9912DF463 /* IconsetPackParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 859A06578E2346468CECC5F3 /* IconsetPackParser.swift */; };
@@ -771,6 +772,7 @@
 		AA1150DC85BAA1B76738C687 /* RouteStorageManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RouteStorageManager.swift; path = OmniTAKMobile/Storage/RouteStorageManager.swift; sourceTree = "<group>"; };
 		AA65001AB2347C8D9E001234 /* SelfPositionEditSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SelfPositionEditSheet.swift; path = OmniTAKMobile/Features/Map/Views/SelfPositionEditSheet.swift; sourceTree = "<group>"; };
 		AB1603E6586A65EEB4B8F2D3 /* ChatXMLGeneratorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChatXMLGeneratorTests.swift; path = OmniTAKMobileTests/ChatXMLGeneratorTests.swift; sourceTree = "<group>"; };
+		D4896D09E66A3B8875668695 /* ChatMeshMirrorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ChatMeshMirrorTests.swift; path = OmniTAKMobileTests/ChatMeshMirrorTests.swift; sourceTree = "<group>"; };
 		AC543153CFA99C00E8ECFC46 /* SUAPMH-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUAPMH-----.svg"; sourceTree = "<group>"; };
 		AD202A5275CE529F7E53F55B /* CustomToolbar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Core/App/CustomToolbar.swift; sourceTree = "<group>"; };
 		AD3B3966EEC56487F6A0C2FB /* SNAPMH-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNAPMH-----.svg"; sourceTree = "<group>"; };
@@ -1223,6 +1225,7 @@
 				A99C500AFB1B09E55ABEDBBF /* Info.plist */,
 				7D3CD1D7596BC0DB0E80F7BB /* TAKTLSTrustModeTests.swift */,
 				AB1603E6586A65EEB4B8F2D3 /* ChatXMLGeneratorTests.swift */,
+				D4896D09E66A3B8875668695 /* ChatMeshMirrorTests.swift */,
 				8A1C8BE0D1AB61B76CD11A65 /* DeepLinkAPIPortTests.swift */,
 				C54003C6B604F6DFB40F5E3B /* MarkerLabelRenderTests.swift */,
 				8EF3CAEC3CBCB1B12CA0FDEC /* MeshtasticSettingsMessagesTests.swift */,
@@ -2939,6 +2942,7 @@
 				9C2486130A64424C8DA9EE7B /* MarkerLifecycleTests.swift in Sources */,
 				B427AD319A738E8DEB688F55 /* TAKTLSTrustModeTests.swift in Sources */,
 				8C15CAB8ADB1E32F734D28C0 /* ChatXMLGeneratorTests.swift in Sources */,
+				AC6A89CF8B5AA43CA798750E /* ChatMeshMirrorTests.swift in Sources */,
 				EF0CC48BDD0F4677A29BE8CA /* DeepLinkAPIPortTests.swift in Sources */,
 				189AC7BB7CDBC52621F181A3 /* MarkerLabelRenderTests.swift in Sources */,
 				8A3B43C540640529190590A2 /* MeshtasticSettingsMessagesTests.swift in Sources */,

@@ -210,6 +210,12 @@ struct Conversation: Identifiable, Codable, Equatable {
     func otherParticipant(excludingId: String) -> ChatParticipant? {
         return participants.first { $0.id != excludingId }
     }
+
+    /// Whether a message sent in this conversation is also sent over the mesh
+    /// radio. Only the broadcast room is. The mesh copy goes to everyone on the
+    /// radio channel (Meshtastic) or to every known contact (MeshCore), so a
+    /// direct message must never get one: it would be read by all of them.
+    var mirrorsToMesh: Bool { id == ChatRoom.allUsersId }
 }
 
 // MARK: - Chat Room Type
