@@ -650,6 +650,33 @@ final class MeshtasticChannelWriteTests: XCTestCase {
         }
     }
 
+    func testTheRowSaysSentWhileTheRadioHasNotAnswered() async throws {
+        try await withRig { rig in
+            rig.download()
+            rig.manager.answerTimeout = 30
+            rig.radio.holdsAnswersAfterAWrite = true
+            let manager = rig.manager
+            let task = Task { await manager.createChannel(name: "delta", keyText: WriteRig.hex(RadioFixtures.key),
+                                                          noEncryption: false, replacePrimary: false) }
+            // The write has gone and its read-back has been asked for.
+            while rig.link.kinds.last != .getChannel(index: 2) || !rig.link.kinds.contains(.setChannel(index: 2)) {
+                try await Task.sleep(nanoseconds: 5_000_000)
+            }
+
+            XCTAssertEqual(manager.channelReports, [MeshtasticChannelReport(slot: 2, name: "delta", state: .sent)])
+            XCTAssertEqual(manager.channelReports.first?.text, "Slot 2 \"delta\": sent, waiting for the radio to confirm.")
+            XCTAssertEqual(manager.appChannels.first(where: { $0.name == "delta" })?.effectiveState, .sent)
+            XCTAssertNil(manager.radioSettings.channel(index: 2), "what was sent is not taken for what the radio holds")
+            XCTAssertTrue(manager.radioSettings.isAwaitingReadBack(index: 2))
+            XCTAssertFalse(manager.radioSettings.freeChannelSlots.contains(2), "and the slot is not free")
+
+            rig.radio.releaseAnswers()
+            let outcome = await task.value
+            XCTAssertEqual(outcome.result, .applied)
+            XCTAssertEqual(manager.channelReports.first?.state, .applied)
+        }
+    }
+
     func testALateAnswerUpdatesTheRow() async throws {
         try await withRig { rig in
             rig.download()
