@@ -337,14 +337,30 @@ final class MeshtasticSettingsWriteTests: XCTestCase {
     }
 
     func testARefusalIsNotAConnectionError() async {
+        // The link refuses what it is given.
         await withRig { rig in
             rig.download()
             rig.link.accepts = false
-
             _ = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
             _ = await rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil)
-
             XCTAssertNil(rig.manager.lastError, "the connection screens show lastError as a banner")
+        }
+
+        // The radio's settings are not known.
+        await withRig { rig in
+            rig.download(started: false)
+            let result = await rig.manager.applyPositionBroadcastInterval(seconds: 900)
+            XCTAssertEqual(result, .notLoadedRefusal)
+            XCTAssertNil(rig.manager.lastError)
+        }
+
+        // There is no radio to write to.
+        await withRig { rig in
+            rig.download()
+            rig.manager.disconnect()
+            let result = await rig.manager.applyDeviceConfig(role: .tak, rebroadcastMode: nil)
+            XCTAssertEqual(result, .notConnectedRefusal)
+            XCTAssertNil(rig.manager.lastError)
         }
     }
 

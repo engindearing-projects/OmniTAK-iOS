@@ -208,6 +208,8 @@ final class MeshtasticAdminRequestTests: XCTestCase {
             // The same id again, with something else in it.
             rig.manager.handleSettingsEvent(.answer(positionAnswer(
                 to: request, body: ProtoFixture().varint(RadioProto.Position.broadcastSecs, 7))))
+            // What the app holds is the first answer. The second changed nothing.
+            XCTAssertEqual(rig.manager.radioSettings.positionBroadcastSeconds, 3600)
             for _ in 0..<200 where rig.link.sets.isEmpty { try? await Task.sleep(nanoseconds: 5_000_000) }
             _ = await task.value
             // What was written back is the first answer, not the second.
