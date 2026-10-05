@@ -149,6 +149,53 @@
 				</array>
 			</dict>
 		</dict>
+		<!-- MBTiles and GeoPackage are SQLite files with no system-declared
+		     type. Without these, ".mbtiles" / ".gpkg" resolve to dynamic types,
+		     which the document picker can grey out and "Open in" can't target.
+		     public.data is listed next to public.database on purpose: on iOS
+		     public.database does not conform to public.data, and
+		     UTType(filenameExtension:) only matches types that do, so without it
+		     the extension would still resolve to a dynamic type. -->
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.mapbox.mbtiles</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.database</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>MBTiles Tile Set</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mbtiles</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.opengeospatial.geopackage</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.database</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>GeoPackage</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>gpkg</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/geopackage+sqlite3</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>CFBundleDocumentTypes</key>
 	<array>
@@ -161,6 +208,17 @@
 			<array>
 				<string>com.google.earth.kml</string>
 				<string>com.google.earth.kmz</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>MBTiles / GeoPackage Tile Set</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.mapbox.mbtiles</string>
+				<string>org.opengeospatial.geopackage</string>
 			</array>
 		</dict>
 	</array>

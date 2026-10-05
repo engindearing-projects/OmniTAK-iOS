@@ -944,7 +944,9 @@ struct TacticalMapView: UIViewRepresentable {
             guard let mapView = mapView else { return }
             let map: MapboxMap = mapView.mapboxMap
             guard map.isStyleLoaded else { return }
-            let overlays = parent.mbtilesStore.overlays
+            // An entry whose file is missing has nothing to draw (and stays in
+            // the list so it can be deleted), so it never gets a source here.
+            let overlays = parent.mbtilesStore.overlays.filter { !$0.fileMissing }
             let wanted = Set(overlays.map { $0.id })
 
             for id in installedMBTilesIDs where !wanted.contains(id) {
