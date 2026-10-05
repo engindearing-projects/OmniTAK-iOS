@@ -723,7 +723,10 @@ class DirectTCPSender {
         )
         let interval = max(livenessTiming.tick, 0.01)
         let nanos = Int(interval * 1_000_000_000)
-        let leeway = DispatchTimeInterval.nanoseconds(nanos / 10)
+        // Each look is scheduled after the previous one, so the leeway adds up: at
+        // 10% of a 5 s tick the looks were 5.4 s apart and the first ping came after
+        // 16 s, not 15. 100 ms at most keeps three ticks close to the rules' 15 s.
+        let leeway = DispatchTimeInterval.nanoseconds(min(nanos / 10, 100_000_000))
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + interval, leeway: leeway)
         timer.setEventHandler { [weak self, weak conn] in
