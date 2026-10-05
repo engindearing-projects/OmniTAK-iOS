@@ -1040,6 +1040,33 @@ final class MeshtasticChannelWriteTests: XCTestCase {
         }
     }
 
+    func testALinkLostRightAfterAChannelWasReadBackStopsTheImportAsALostLinkAndNotAsSlotsNotKnown() async {
+        await withRig { rig in
+            rig.download(channels: slots(used: []))
+            // The link is heard to drop right after the answer to the read-back is
+            // taken, and before the import goes on to the next channel.
+            var readBacks = 0
+            rig.link.onSent = { kind in
+                guard kind == .getChannel(index: 1) else { return }
+                readBacks += 1
+                if readBacks == 2 {
+                    DispatchQueue.main.async { rig.manager.handleLinkDown(.tcp) }
+                }
+            }
+            let channels = (0..<3).map { MeshChannel(name: "imp\($0)", psk: RadioFixtures.key) }
+
+            let outcome = await rig.manager.importChannels(channels)
+            await rig.settle()
+
+            XCTAssertEqual(outcome.confirmed, [1])
+            XCTAssertEqual(outcome.refusal, MeshtasticWriteResult.linkChanged,
+                           "the cache went with the link, which is not a reason to say the slots are not known")
+            XCTAssertEqual(outcome.notTried, 2)
+            XCTAssertEqual(outcome.noRoom, 0)
+            XCTAssertEqual(rig.link.sets.count, 1)
+        }
+    }
+
     func testAnImportWithNothingToWriteSendsNothingThatRestartsTheRadio() async {
         // Every slot is known to be in use.
         await withRig { rig in
@@ -1389,6 +1416,35 @@ final class MeshtasticChannelWriteTests: XCTestCase {
             XCTAssertEqual(rig.manager.appChannels.first?.nodeNum, nil)
             XCTAssertEqual(rig.manager.appChannels.first?.effectiveState, .savedOnly)
             XCTAssertEqual(rig.manager.standing(of: rig.manager.appChannels[0]).label, "saved only, not on a radio")
+        }
+    }
+
+    func testTwoEntriesWithNoRadioAreTheSameOnlyWhenBothWereSavedForSharingByNameOrBothCameFromTheSameSlot() async {
+        await withRig { rig in
+            typealias Stored = MeshtasticManager.StoredChannel
+            let manager = rig.manager
+            let sharedA = Stored(index: -1, name: "bravo", pskHex: "00", isPrimary: false)
+            let sharedB = Stored(index: -1, name: "bravo", pskHex: "01", isPrimary: false)
+            let slot1 = Stored(index: 1, name: "bravo", pskHex: "00", isPrimary: false)
+            let slot1Renamed = Stored(index: 1, name: "other", pskHex: "00", isPrimary: false)
+            let slot2 = Stored(index: 2, name: "bravo", pskHex: "00", isPrimary: false)
+
+            XCTAssertTrue(manager.sameEntry(sharedA, sharedB), "saved for sharing: by name")
+            XCTAssertTrue(manager.sameEntry(slot1, slot1Renamed), "from a slot: by slot")
+            XCTAssertFalse(manager.sameEntry(slot1, slot2))
+            // One saved for sharing is never an earlier version's entry, in either order:
+            // replacing one by the other would lose a key.
+            XCTAssertFalse(manager.sameEntry(sharedA, slot1))
+            XCTAssertFalse(manager.sameEntry(slot1, sharedA))
+
+            // A radio's entries are by radio and slot, and never another radio's.
+            let onRadio = Stored(index: 1, name: "bravo", pskHex: "00", isPrimary: false, nodeNum: 7, state: .onRadio)
+            XCTAssertFalse(manager.sameEntry(onRadio, slot1))
+            XCTAssertFalse(manager.sameEntry(slot1, onRadio))
+            XCTAssertTrue(manager.sameEntry(
+                onRadio, Stored(index: 1, name: "renamed", pskHex: "00", isPrimary: false, nodeNum: 7, state: .sent)))
+            XCTAssertFalse(manager.sameEntry(
+                onRadio, Stored(index: 1, name: "bravo", pskHex: "00", isPrimary: false, nodeNum: 8, state: .sent)))
         }
     }
 
