@@ -476,9 +476,12 @@ final class TAKSenderLivenessTests: XCTestCase {
     }
 
     func testAUDPPortThatIsNotListeningDoesNotEndTheConnection() throws {
-        // A datagram to a closed UDP port comes back as an ICMP error, which the
-        // connection reports as an error on the next read or write. On main that
-        // was only printed. A UDP link must not blink once per cycle because of it.
+        // A datagram to a closed UDP port comes back as an ICMP error. On main
+        // an error on a UDP connection was only printed, and a UDP link must not
+        // blink once per cycle because of it. Whether the platform reports that
+        // error to the connection at all is up to it (it does not appear to on
+        // loopback here), so this pins that nothing ends the session, and the
+        // receive-error branch itself is not reached by a test.
         let udp = LoopbackUDPServer(repliesAfterFirstDatagram: [])
         try udp.start()
         let closedPort = udp.port
@@ -495,6 +498,23 @@ final class TAKSenderLivenessTests: XCTestCase {
         XCTAssertNil(sender.endReason, "an error on a UDP connection is logged, not a session end: \(sender.endReason ?? "")")
         XCTAssertTrue(sender.isConnected)
         XCTAssertEqual(recorder.states, [true])
+    }
+
+    func testAUDPConnectionThatIsCancelledFromOutsideEndsAndSaysSo() throws {
+        // Only .failed and .cancelled end a UDP session. A cancel that did not come
+        // from the sender is reported as the end of the session, once.
+        let udp = LoopbackUDPServer(repliesAfterFirstDatagram: [])
+        try udp.start()
+        defer { udp.stop() }
+
+        connect(port: udp.port, protocolType: "udp")
+        waitUntil("the UDP connection to be up") { sender.isConnected }
+        let live = try XCTUnwrap(sender.activeConnection)
+
+        live.cancel()
+        waitForEnd("the cancelled connection to be reported")
+        XCTAssertEqual(sender.endReason, "Connection cancelled")
+        XCTAssertEqual(recorder.states, [true, false])
     }
 
     func testAUDPSendErrorEndsNothing() throws {
