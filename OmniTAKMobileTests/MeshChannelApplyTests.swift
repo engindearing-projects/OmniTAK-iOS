@@ -10,6 +10,13 @@
 //  (admin.proto, channel.proto, config.proto; MeshCore companion_protocol.md).
 //  These tests assert the hand-rolled bytes match that wire layout.
 //
+//  The Meshtastic encoders no longer build a message from nothing (#148): they
+//  change fields of what the radio last sent and write the rest back. The
+//  layout tests below start from the smallest thing a radio sends, a channel
+//  that is only its index or a sub-config with every field at its default, so
+//  what they see is the layout of the fields the encoder writes. What happens to
+//  the fields it does not write is in MeshtasticAdminCodecTests.
+//
 
 import XCTest
 @testable import OmniTAK
@@ -46,8 +53,12 @@ final class MeshChannelApplyTests: XCTestCase {
 
     func testEncodeSetChannelLayout() {
         let psk = Data([0x01, 0x02, 0x03, 0x04]) // arbitrary short psk
-        let admin = MeshtasticAdminCodec.encodeSetChannel(
-            index: 1, name: "OmniTAK", psk: psk, role: .secondary)
+        // Slot 1 as the radio sends it while it is disabled: its index only.
+        guard let write = MeshtasticAdminCodec.encodeSetChannel(
+            current: Data([0x08, 0x01]), name: "OmniTAK", psk: psk, role: .secondary) else {
+            return XCTFail("encodeSetChannel returned nil")
+        }
+        let admin = write.payload
 
         // AdminMessage { set_channel = 33 } -> tag (33<<3)|2 = 266 -> varint [0x8A,0x02]
         var idx = 0
@@ -102,9 +113,13 @@ final class MeshChannelApplyTests: XCTestCase {
     }
 
     func testEncodeSetChannelPrimaryOmitsRoleZeroIsDisabled() {
-        // role PRIMARY = 1 must be emitted (non-zero).
-        let admin = MeshtasticAdminCodec.encodeSetChannel(
-            index: 0, name: "Primary", psk: Data(), role: .primary)
+        // role PRIMARY = 1 must be emitted (non-zero). Slot 0 is index 0, a
+        // default, so a radio sends it with no index at all.
+        guard let write = MeshtasticAdminCodec.encodeSetChannel(
+            current: Data(), name: "Primary", psk: Data(), role: .primary) else {
+            return XCTFail("encodeSetChannel returned nil")
+        }
+        let admin = write.payload
         var idx = 0
         _ = readTag(admin, &idx)             // set_channel tag
         guard let channel = readLen(admin, &idx) else { return XCTFail("no channel") }
@@ -123,8 +138,11 @@ final class MeshChannelApplyTests: XCTestCase {
 
     func testEncodeSetDeviceConfigLayout() {
         // KNOWN_ONLY is the PatoG1899 "rebroadcast known channels only" ask.
-        let admin = MeshtasticAdminCodec.encodeSetDeviceConfig(
-            role: .tak, rebroadcastMode: .knownOnly)
+        guard let write = MeshtasticAdminCodec.encodeSetDeviceConfig(
+            current: Data(), role: .tak, rebroadcastMode: .knownOnly) else {
+            return XCTFail("encodeSetDeviceConfig returned nil")
+        }
+        let admin = write.payload
 
         // AdminMessage { set_config = 34 }
         var idx = 0
@@ -160,7 +178,7 @@ final class MeshChannelApplyTests: XCTestCase {
         XCTAssertEqual(MeshtasticAdminCodec.RebroadcastMode.all.rawValue, 0)
         XCTAssertEqual(MeshtasticAdminCodec.RebroadcastMode.localOnly.rawValue, 2)
         XCTAssertEqual(MeshtasticAdminCodec.RebroadcastMode.knownOnly.rawValue, 3)
-        XCTAssertEqual(MeshtasticAdminCodec.RebroadcastMode.none.rawValue, 4)
+        XCTAssertEqual(MeshtasticAdminCodec.RebroadcastMode.noRebroadcast.rawValue, 4)
     }
 
     func testDeviceRoleEnumValues() {
@@ -174,7 +192,11 @@ final class MeshChannelApplyTests: XCTestCase {
     // MARK: - Meshtastic set_config (position interval)
 
     func testEncodeSetPositionIntervalLayout() {
-        let admin = MeshtasticAdminCodec.encodeSetPositionBroadcastInterval(seconds: 900)
+        guard let write = MeshtasticAdminCodec.encodeSetPositionBroadcastInterval(
+            current: Data(), seconds: 900) else {
+            return XCTFail("encodeSetPositionBroadcastInterval returned nil")
+        }
+        let admin = write.payload
         var idx = 0
         guard let tag = readTag(admin, &idx), tag.field == 34, tag.wire == 2 else {
             return XCTFail("set_config tag")

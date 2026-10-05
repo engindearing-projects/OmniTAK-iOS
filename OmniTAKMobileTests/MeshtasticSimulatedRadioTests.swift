@@ -1,0 +1,304 @@
+//
+//  MeshtasticSimulatedRadioTests.swift
+//  OmniTAKMobileTests
+//
+//  #148 against a simulated radio: meshtasticd, the Linux build of the Meshtastic
+//  firmware, listening on a TCP port. The other tests in this bundle check the
+//  bytes the app builds; this one checks what the firmware does with them, which
+//  is where the bug was (the firmware replaces a whole sub-config with the one
+//  it receives).
+//
+//  Skipped unless MESHSIM_HOST is set. MESHSIM_PORT is the port, 4403 if unset.
+//
+//      TEST_RUNNER_MESHSIM_HOST=127.0.0.1 TEST_RUNNER_MESHSIM_PORT=4404 \
+//        xcodebuild test -project OmniTAK.xcodeproj -scheme OmniTAKMobile \
+//          -destination 'platform=iOS Simulator,name=iPhone 17e' \
+//          -only-testing:OmniTAKTests/MeshtasticSimulatedRadioTests
+//
+//  The tests write settings to that radio and put them back. Point them at a
+//  simulated radio, not at one anyone is using. The simulated radio should hold
+//  some non-default settings, because a write that resets a field to its default
+//  proves nothing on a radio that already had the default: the device config
+//  with a time zone or the LED heartbeat off, the position config with the GPS
+//  on, and a primary channel with a key and a location precision. A test that
+//  finds nothing to preserve fails.
+//
+//  The app's own path runs end to end: MeshtasticTCPClient reads the config
+//  download, MeshtasticProtoDecoder decodes it, MeshtasticManager keeps it and
+//  builds the write from it. A config write makes the radio save and restart
+//  about 7 seconds later, so each test waits, reconnects, downloads again and
+//  compares what the radio now holds with what it held. Key bytes are never
+//  printed or put in an assertion message; they are compared and only the
+//  result is reported.
+//
+
+import XCTest
+@testable import OmniTAK
+
+@MainActor
+final class MeshtasticSimulatedRadioTests: XCTestCase {
+
+    // MARK: - Setup
+
+    private var host = ""
+    private var port: UInt16 = 4403
+
+    private let savedHostsKey = "meshtastic_saved_hosts"
+    private let appChannelsKey = "meshtastic_app_channels"
+    private var savedDefaults: [String: Any?] = [:]
+
+    override func setUpWithError() throws {
+        let environment = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(environment["MESHSIM_HOST"] != nil,
+                          "Set MESHSIM_HOST (and MESHSIM_PORT) to run against a simulated radio.")
+        host = environment["MESHSIM_HOST"] ?? ""
+        port = environment["MESHSIM_PORT"].flatMap { UInt16($0) } ?? 4403
+
+        // Connecting remembers the host, and applying a channel remembers the
+        // channel, in the app's defaults. Put both back afterwards.
+        for key in [savedHostsKey, appChannelsKey] {
+            savedDefaults[key] = UserDefaults.standard.object(forKey: key)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        for (key, value) in savedDefaults {
+            if let value { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+    }
+
+    // MARK: - The radio
+
+    private func pause(_ seconds: Double) async throws {
+        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    }
+
+    /// Poll until `condition` holds or `seconds` pass. True if it held.
+    private func wait(upTo seconds: Double, until condition: () -> Bool) async throws -> Bool {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            if condition() { return true }
+            try await pause(0.2)
+        }
+        return condition()
+    }
+
+    private struct RadioDidNotReturn: Error {}
+
+    /// Connect with a manager of its own and wait for the config download. A
+    /// radio that is restarting refuses the connection, so this keeps trying.
+    ///
+    /// `firstContact` is the connection a test opens with. If the radio does not
+    /// answer then, the test is skipped: there is no simulated radio. Any later
+    /// connection follows a write, and a radio that does not come back from that
+    /// is a failure.
+    private func connect(firstContact: Bool = false, within seconds: Double = 90) async throws -> MeshtasticManager {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            let manager = MeshtasticManager()
+            manager.connectTCP(host: host, port: port)
+            let loaded = try await wait(upTo: 12) {
+                manager.myNodeNum != 0
+                    && manager.radioSettings.hasDeviceConfig
+                    && manager.radioSettings.hasPositionConfig
+                    && manager.radioSettings.channel(index: 0) != nil
+            }
+            if loaded { return manager }
+            manager.disconnect()
+            try await pause(1)
+        }
+        let problem = "The simulated radio at \(host):\(port) did not finish a config download in \(Int(seconds)) s."
+        if firstContact { throw XCTSkip(problem) }
+        XCTFail(problem)
+        throw RadioDidNotReturn()
+    }
+
+    /// After a write: give the radio time to take it, note whether it closed
+    /// the link the way a restarting radio does, then leave and wait for the
+    /// restart to be over.
+    private func letTheRadioRestart(_ manager: MeshtasticManager) async throws {
+        let wrote = Date()
+        try await pause(3)
+        // A radio that restarts closes the link. The app must then have
+        // dropped what the radio had reported.
+        let dropped = try await wait(upTo: 20) { !manager.isConnected }
+        if dropped {
+            XCTAssertTrue(manager.radioSettings.isEmpty, "the settings of a radio whose link dropped are forgotten")
+            print("simulated radio: link closed \(Int(Date().timeIntervalSince(wrote))) s after the write, settings forgotten")
+        } else {
+            print("simulated radio: link still open 23 s after the write")
+        }
+        manager.disconnect()
+        try await pause(dropped ? 8 : 12)
+    }
+
+    // MARK: - Comparing what the radio holds
+
+    /// The numbers of the top-level fields that differ between two messages:
+    /// present in one and not the other, or written differently. Only numbers,
+    /// so that a failure never prints the bytes of a key.
+    private func differingFields(_ a: Data, _ b: Data) -> [Int] {
+        guard let left = FixtureReader.fields(a), let right = FixtureReader.fields(b) else { return [-1] }
+        var numbers = Set<Int>()
+        for field in left where !right.contains(where: { $0.raw == field.raw }) { numbers.insert(field.number) }
+        for field in right where !left.contains(where: { $0.raw == field.raw }) { numbers.insert(field.number) }
+        return numbers.sorted()
+    }
+
+    /// The numbers of the fields a message holds besides `number`. A radio at
+    /// its defaults sends none of them.
+    private func fieldNumbers(in message: Data, besides number: Int) -> [Int] {
+        (FixtureReader.fields(message) ?? []).map(\.number).filter { $0 != number }
+    }
+
+    private func config(_ variant: Int, of manager: MeshtasticManager) throws -> Data {
+        try XCTUnwrap(manager.radioSettings.config(variant: variant), "the radio did not send config \(variant)")
+    }
+
+    // MARK: - 1. Position broadcast interval
+
+    func testChangingThePositionIntervalChangesOnlyTheInterval() async throws {
+        let first = try await connect(firstContact: true)
+        let before = try config(RadioProto.Config.position, of: first)
+        let oldSeconds = FixtureReader.varint(RadioProto.Position.broadcastSecs, in: before) ?? 0
+        XCTAssertFalse(fieldNumbers(in: before, besides: RadioProto.Position.broadcastSecs).isEmpty,
+                       "the radio must hold non-default position settings besides the interval, or this proves nothing")
+        let newSeconds: UInt32 = oldSeconds == 900 ? 1200 : 900
+
+        // Applying the interval the radio already has sends nothing, so the
+        // radio does not restart for it.
+        XCTAssertEqual(first.applyPositionBroadcastInterval(seconds: UInt32(oldSeconds)), .unchanged)
+
+        XCTAssertEqual(first.applyPositionBroadcastInterval(seconds: newSeconds), .sent)
+        try await letTheRadioRestart(first)
+
+        let second = try await connect()
+        let after = try config(RadioProto.Config.position, of: second)
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Position.broadcastSecs, in: after), UInt64(newSeconds))
+        XCTAssertEqual(differingFields(before, after), [RadioProto.Position.broadcastSecs],
+                       "only position_broadcast_secs may differ")
+        for field in [RadioProto.Position.gpsMode, RadioProto.Position.flags, RadioProto.Position.smartEnabled,
+                      RadioProto.Position.gpsUpdateInterval, RadioProto.Position.smartMinimumDistance,
+                      RadioProto.Position.smartMinimumIntervalSecs] {
+            XCTAssertEqual(FixtureReader.varint(field, in: after), FixtureReader.varint(field, in: before),
+                           "position field \(field) is what it was")
+        }
+        print("simulated radio: position_broadcast_secs \(oldSeconds) -> \(newSeconds) -> restore")
+
+        // Put it back.
+        XCTAssertEqual(second.applyPositionBroadcastInterval(seconds: UInt32(oldSeconds)), .sent)
+        try await letTheRadioRestart(second)
+        let third = try await connect()
+        XCTAssertEqual(differingFields(before, try config(RadioProto.Config.position, of: third)), [],
+                       "restored")
+        third.disconnect()
+    }
+
+    // MARK: - 2. Device config
+
+    func testChangingTheRebroadcastModeKeepsTheTimeZoneAndTheRestOfTheDeviceConfig() async throws {
+        let first = try await connect(firstContact: true)
+        let before = try config(RadioProto.Config.device, of: first)
+        let rebroadcast = RadioProto.Device.rebroadcastMode
+        let oldMode = FixtureReader.varint(rebroadcast, in: before) ?? 0
+        XCTAssertFalse(fieldNumbers(in: before, besides: rebroadcast).isEmpty,
+                       "the radio must hold non-default device settings besides the rebroadcast mode")
+
+        // The role is CLIENT, a default the radio leaves out of its message. The
+        // screen starts its role control at the radio's role, so a radio like
+        // this one reads as CLIENT and not as "unknown", and nothing else is
+        // written for it.
+        let controls = first.radioSettings
+        XCTAssertEqual(controls.namedDeviceRole, .client, "this test starts from role CLIENT")
+        XCTAssertEqual(controls.namedRebroadcastMode.map { $0.rawValue }, oldMode)
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Device.role, in: before) ?? 0, RadioProto.DeviceRole.client,
+                       "the radio's role is CLIENT")
+
+        // Applying the controls as they stand sends nothing.
+        XCTAssertEqual(first.applyDeviceConfig(role: controls.namedDeviceRole, rebroadcastMode: controls.namedRebroadcastMode),
+                       .unchanged)
+
+        // The rebroadcast mode only. A role change makes the firmware install
+        // that role's defaults, so the role is left as the radio has it: the
+        // role control still stands at CLIENT when the operator moves the other.
+        let newMode: MeshtasticAdminCodec.RebroadcastMode = oldMode == 2 ? .knownOnly : .localOnly
+        XCTAssertEqual(first.applyDeviceConfig(role: controls.namedDeviceRole, rebroadcastMode: newMode), .sent)
+        try await letTheRadioRestart(first)
+
+        let second = try await connect()
+        let after = try config(RadioProto.Config.device, of: second)
+        XCTAssertEqual(FixtureReader.varint(rebroadcast, in: after), newMode.rawValue)
+        XCTAssertEqual(differingFields(before, after), [rebroadcast], "only rebroadcast_mode may differ")
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.Device.tzdef, in: after),
+                       FixtureReader.bytes(RadioProto.Device.tzdef, in: before), "the time zone is what it was")
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Device.ledHeartbeatDisabled, in: after),
+                       FixtureReader.varint(RadioProto.Device.ledHeartbeatDisabled, in: before))
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Device.role, in: after),
+                       FixtureReader.varint(RadioProto.Device.role, in: before), "the role is what it was")
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Device.role, in: after) ?? 0, RadioProto.DeviceRole.client,
+                       "the role is still CLIENT")
+        XCTAssertEqual(second.radioSettings.namedDeviceRole, .client)
+        print("simulated radio: rebroadcast_mode \(oldMode) -> \(newMode.rawValue) -> restore, role still CLIENT")
+
+        // Put it back.
+        let restoreMode = MeshtasticAdminCodec.RebroadcastMode(rawValue: oldMode) ?? .all
+        XCTAssertEqual(second.applyDeviceConfig(role: second.radioSettings.namedDeviceRole, rebroadcastMode: restoreMode), .sent)
+        try await letTheRadioRestart(second)
+        let third = try await connect()
+        XCTAssertEqual(differingFields(before, try config(RadioProto.Config.device, of: third)), [], "restored")
+        third.disconnect()
+    }
+
+    // MARK: - 3. Channel
+
+    func testRenamingChannelZeroKeepsTheKeyAndTheLocationPrecision() async throws {
+        let first = try await connect(firstContact: true)
+        let before = try XCTUnwrap(first.radioSettings.channel(index: 0))
+        let beforeSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: before))
+        let key = try XCTUnwrap(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: beforeSettings))
+        let oldName = String(data: FixtureReader.bytes(RadioProto.ChannelSettings.name, in: beforeSettings) ?? Data(),
+                             encoding: .utf8) ?? ""
+        let module = try XCTUnwrap(FixtureReader.bytes(RadioProto.ChannelSettings.moduleSettings, in: beforeSettings),
+                                   "the radio's channel 0 must carry module settings (a location precision)")
+        let oldPrecision = FixtureReader.varint(RadioProto.ModuleSettings.positionPrecision, in: module) ?? 0
+        XCTAssertGreaterThan(oldPrecision, 0, "the radio's channel 0 must have a location precision to preserve")
+        XCTAssertGreaterThan(key.count, 1, "the radio's channel 0 must have a key to preserve")
+        let primary = FixtureReader.varint(RadioProto.Channel.role, in: before) == RadioProto.ChannelRole.primary
+
+        // A new name, the same key. The key goes in as hex, as the app takes it.
+        let newName = oldName == "simtest2" ? "simtest3" : "simtest2"
+        let stored = MeshtasticManager.StoredChannel(
+            index: 0, name: newName, pskHex: MeshCoreChannelCodec.hex(key), isPrimary: primary)
+        XCTAssertEqual(first.applyChannel(stored), .sent)
+        try await letTheRadioRestart(first)
+
+        let second = try await connect()
+        let after = try XCTUnwrap(second.radioSettings.channel(index: 0))
+        let afterSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: after))
+        let afterName = String(data: FixtureReader.bytes(RadioProto.ChannelSettings.name, in: afterSettings) ?? Data(),
+                               encoding: .utf8)
+        XCTAssertEqual(afterName, newName)
+
+        // Only the name differs; the key and the location precision are what they were.
+        XCTAssertEqual(differingFields(before, after), [RadioProto.Channel.settings], "only the settings may differ")
+        XCTAssertEqual(differingFields(beforeSettings, afterSettings), [RadioProto.ChannelSettings.name],
+                       "only the name may differ inside the settings")
+        let afterKey = FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: afterSettings)
+        XCTAssertEqual(afterKey?.count, key.count, "the key keeps its length")
+        XCTAssertTrue(afterKey == key, "the key is unchanged")
+        let afterModule = FixtureReader.bytes(RadioProto.ChannelSettings.moduleSettings, in: afterSettings)
+        XCTAssertEqual(afterModule.flatMap { FixtureReader.varint(RadioProto.ModuleSettings.positionPrecision, in: $0) },
+                       oldPrecision, "the location precision is what it was")
+        print("simulated radio: channel 0 renamed \(oldName.count) -> \(newName.count) characters, key length \(key.count), precision \(oldPrecision)")
+
+        // Put the name back.
+        let restore = MeshtasticManager.StoredChannel(
+            index: 0, name: oldName, pskHex: MeshCoreChannelCodec.hex(key), isPrimary: primary)
+        XCTAssertEqual(second.applyChannel(restore), .sent)
+        try await letTheRadioRestart(second)
+        let third = try await connect()
+        XCTAssertTrue(third.radioSettings.channel(index: 0) == before, "restored, byte for byte")
+        third.disconnect()
+    }
+}

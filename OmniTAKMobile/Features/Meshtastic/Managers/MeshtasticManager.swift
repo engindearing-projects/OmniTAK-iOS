@@ -27,6 +27,16 @@ public class MeshtasticManager: ObservableObject {
     @Published public var myNodeNum: UInt32 = 0
     @Published public var firmwareVersion: String = ""
 
+    /// The radio's own sub-configs and channels, as it sent them in the last
+    /// config download. A settings write changes one field of these and sends
+    /// the rest back, so nothing is written until they are known (#148).
+    /// Emptied when the link drops and when a new download starts.
+    @Published private(set) var radioSettings = MeshtasticRadioSettings()
+
+    /// Where a settings write goes instead of the connected client. For tests,
+    /// to see what would be sent without a radio. Nil in the app.
+    var adminLinkOverride: MeshtasticAdminLink?
+
     // BLE-specific properties
     @Published public var isScanning: Bool = false
     @Published public var discoveredBLEDevices: [DiscoveredBLEDevice] = []
@@ -60,6 +70,14 @@ public class MeshtasticManager: ObservableObject {
         return _bleClient as! MeshtasticBLEClient
     }
 
+    /// Use `client` as the TCP client, wired the way `connectTCP` wires the one
+    /// it creates. For tests, which feed a client with no radio behind it.
+    @available(iOS 13.0, *)
+    func useTCPClient(_ client: MeshtasticTCPClient) {
+        _tcpClient = client
+        setupTCPClientObservers()
+    }
+
     private var tcpClientCancellables = Set<AnyCancellable>()
     private var bleClientCancellables = Set<AnyCancellable>()
 
@@ -91,10 +109,19 @@ public class MeshtasticManager: ObservableObject {
     private func setupTCPClientObservers() {
         guard let client = _tcpClient as? MeshtasticTCPClient else { return }
 
+        // Mirror the link in both directions, as the BLE client does below.
+        // connectTCP marks the device connected at once, and the first value
+        // this publisher sends is the client's initial "not connected". Marking
+        // only the drop left the device not connected for good on the first
+        // connection of a session, even with the link up, which refused every
+        // settings write ("Not connected") and hid the Meshtastic sections of
+        // the settings screen.
         client.$isConnected
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (connected: Bool) in
-                if !connected {
+                if connected {
+                    self?.handleTCPConnection()
+                } else {
                     self?.handleDisconnection()
                 }
             }
@@ -134,12 +161,44 @@ public class MeshtasticManager: ObservableObject {
                 self?.lastError = error
             }
             .store(in: &tcpClientCancellables)
+
+        client.settingsEvents
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in
+                self?.handleSettingsEvent(event)
+            }
+            .store(in: &tcpClientCancellables)
     }
 
-    private func handleDisconnection() {
+    /// The TCP link came up.
+    private func handleTCPConnection() {
+        if var device = connectedDevice, device.connectionType == .tcp {
+            device.isConnected = true
+            connectedDevice = device
+        }
+    }
+
+    /// The radio link went down, from either client.
+    func handleDisconnection() {
         if var device = connectedDevice {
             device.isConnected = false
             connectedDevice = device
+        }
+        // What the radio reported is no longer what it holds: it may be reset
+        // or swapped before the link comes back.
+        forgetRadioSettings()
+    }
+
+    /// A settings frame from the radio, or the start of a config download.
+    /// The clients send these on the main queue, in the order the frames came.
+    func handleSettingsEvent(_ event: MeshtasticRadioSettings.Event) {
+        radioSettings.apply(event)
+    }
+
+    private func forgetRadioSettings() {
+        // Not published when there is nothing to forget.
+        if !radioSettings.isEmpty {
+            radioSettings.removeAll()
         }
     }
 
@@ -234,6 +293,13 @@ public class MeshtasticManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (state: CBManagerState) in
                 self?.bluetoothState = state
+            }
+            .store(in: &bleClientCancellables)
+
+        client.settingsEvents
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] event in
+                self?.handleSettingsEvent(event)
             }
             .store(in: &bleClientCancellables)
     }
@@ -411,6 +477,7 @@ public class MeshtasticManager: ObservableObject {
         myNodeNum = 0
         firmwareVersion = ""
         connectionState = "Disconnected"
+        forgetRadioSettings()
 
         print("Disconnected from Meshtastic")
     }
@@ -495,33 +562,50 @@ public class MeshtasticManager: ObservableObject {
         return MeshChannelShare.shareURL(transport: .meshtastic, meshtastic: channels)
     }
 
+    // MARK: - Writing radio settings (OmniTAK-iOS #148)
+    //
+    // The radio replaces a whole sub-config (or channel) with the set_config
+    // (or set_channel) it receives. Every write below therefore starts from the
+    // bytes the radio reported for that sub-config or channel, changes the
+    // fields the operator edited, and sends the whole thing. When those bytes
+    // are not known, or the radio's node number is not, nothing is sent and the
+    // result says why. There is no write built from scratch.
+
     /// Apply (write) a channel to the connected radio via AdminMessage.set_channel.
-    /// Also records it in the operator's working set. Returns true if dispatched.
+    /// Also records it in the operator's working set, whether or not the radio
+    /// takes it.
+    ///
+    /// The write is the radio's own copy of that slot with the name, key and
+    /// role replaced. The rest of the slot stays as the radio has it. When the
+    /// slot already has this name, key and role, nothing is sent (`.unchanged`).
     @discardableResult
-    public func applyChannel(_ ch: StoredChannel) -> Bool {
+    public func applyChannel(_ ch: StoredChannel) -> MeshtasticWriteResult {
         upsertAppChannel(ch)
-        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else {
-            lastError = "Not connected"
-            return false
-        }
-        let payload = MeshtasticAdminCodec.encodeSetChannel(
-            index: Int32(ch.index),
-            name: ch.name,
-            psk: Self.pskData(fromHex: ch.pskHex),
-            role: ch.isPrimary ? .primary : .secondary
+        let psk = Self.pskData(fromHex: ch.pskHex)
+        let role: MeshtasticAdminCodec.ChannelRole = ch.isPrimary ? .primary : .secondary
+        return writeToRadio(
+            build: { settings in
+                settings.channel(index: ch.index).flatMap {
+                    MeshtasticAdminCodec.encodeSetChannel(current: $0, name: ch.name, psk: psk, role: role)
+                }
+            },
+            remember: { $0.storeChannel(index: ch.index, body: $1) }
         )
-        switch device.connectionType {
-        case .bluetooth: return bleClient.sendAdmin(payload: payload)
-        case .tcp:       return tcpClient.sendAdmin(payload: payload)
-        }
     }
 
     /// Apply an imported Meshtastic channel-set (from a scanned QR / pasted
     /// link) to the radio. Channels land at indices 1…N as SECONDARY (the
-    /// primary index 0 is left untouched). Returns the number applied.
+    /// primary index 0 is left untouched). Returns the number sent, the number
+    /// the radio already had as they are, and, when any was not sent, why the
+    /// first one was not.
     @discardableResult
-    func applyImportedChannels(_ channels: [MeshChannel], startIndex: Int = 1) -> Int {
+    func applyImportedChannels(
+        _ channels: [MeshChannel],
+        startIndex: Int = 1
+    ) -> (applied: Int, unchanged: Int, refusal: String?) {
         var applied = 0
+        var unchanged = 0
+        var refusal: String?
         for (offset, ch) in channels.enumerated() {
             let idx = startIndex + offset
             guard idx <= 7 else { break }
@@ -531,41 +615,95 @@ public class MeshtasticManager: ObservableObject {
                 pskHex: MeshCoreChannelCodec.hex(ch.psk),
                 isPrimary: false
             )
-            if applyChannel(stored) { applied += 1 }
+            switch applyChannel(stored) {
+            case .sent: applied += 1
+            case .unchanged: unchanged += 1
+            case .refused(let reason): refusal = refusal ?? reason
+            }
         }
-        return applied
+        return (applied, unchanged, refusal)
     }
 
     /// Apply device role + rebroadcast scope via AdminMessage.set_config.
+    /// A nil argument leaves that field as the radio has it, and so does a value
+    /// the radio already has: only a field that differs is written. The rest of
+    /// the device config (time zone, LED, button, buzzer) stays as the radio has
+    /// it. When nothing differs, nothing is sent (`.unchanged`).
     @discardableResult
     func applyDeviceConfig(
-        role: MeshtasticAdminCodec.DeviceRole,
-        rebroadcastMode: MeshtasticAdminCodec.RebroadcastMode
-    ) -> Bool {
-        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else {
-            lastError = "Not connected"
-            return false
-        }
-        let payload = MeshtasticAdminCodec.encodeSetDeviceConfig(
-            role: role, rebroadcastMode: rebroadcastMode
+        role: MeshtasticAdminCodec.DeviceRole?,
+        rebroadcastMode: MeshtasticAdminCodec.RebroadcastMode?
+    ) -> MeshtasticWriteResult {
+        let variant = MeshtasticAdminCodec.ConfigVariant.device
+        return writeToRadio(
+            build: { settings in
+                settings.config(variant: variant).flatMap {
+                    MeshtasticAdminCodec.encodeSetDeviceConfig(
+                        current: $0, role: role, rebroadcastMode: rebroadcastMode
+                    )
+                }
+            },
+            remember: { $0.storeConfig(variant: variant, body: $1) }
         )
-        switch device.connectionType {
-        case .bluetooth: return bleClient.sendAdmin(payload: payload)
-        case .tcp:       return tcpClient.sendAdmin(payload: payload)
-        }
     }
 
-    /// Apply the position broadcast interval via AdminMessage.set_config.
+    /// Apply the position broadcast interval via AdminMessage.set_config. The
+    /// rest of the position config (GPS mode, position flags, smart broadcast)
+    /// stays as the radio has it. When the radio already has this interval,
+    /// nothing is sent (`.unchanged`).
     @discardableResult
-    public func applyPositionBroadcastInterval(seconds: UInt32) -> Bool {
-        guard #available(iOS 13.0, *), isConnected, let device = connectedDevice else {
-            lastError = "Not connected"
-            return false
+    public func applyPositionBroadcastInterval(seconds: UInt32) -> MeshtasticWriteResult {
+        let variant = MeshtasticAdminCodec.ConfigVariant.position
+        return writeToRadio(
+            build: { settings in
+                settings.config(variant: variant).flatMap {
+                    MeshtasticAdminCodec.encodeSetPositionBroadcastInterval(current: $0, seconds: seconds)
+                }
+            },
+            remember: { $0.storeConfig(variant: variant, body: $1) }
+        )
+    }
+
+    /// Build a write from what the radio reported, send it, and keep what was
+    /// sent so the next edit starts from it.
+    ///
+    /// Nothing is sent when there is no link, when the radio's node number is
+    /// not known, when `build` has no bytes to start from, when the write would
+    /// change nothing, or when the link refuses.
+    private func writeToRadio(
+        build: (MeshtasticRadioSettings) -> MeshtasticAdminCodec.Write?,
+        remember: (inout MeshtasticRadioSettings, Data) -> Void
+    ) -> MeshtasticWriteResult {
+        guard let link = activeAdminLink() else {
+            return refuseWrite(MeshtasticWriteResult.notConnected)
         }
-        let payload = MeshtasticAdminCodec.encodeSetPositionBroadcastInterval(seconds: seconds)
+        guard myNodeNum != 0, let write = build(radioSettings) else {
+            return refuseWrite(MeshtasticWriteResult.notLoaded)
+        }
+        guard !write.changesNothing else {
+            return .unchanged
+        }
+        guard link.sendAdmin(payload: write.payload) else {
+            return refuseWrite(MeshtasticWriteResult.notConnected)
+        }
+        remember(&radioSettings, write.stored)
+        return .sent
+    }
+
+    private func refuseWrite(_ reason: String) -> MeshtasticWriteResult {
+        lastError = reason
+        return .refused(reason)
+    }
+
+    /// The link a settings write goes out on: the client of the connected
+    /// device, or the test stand-in.
+    private func activeAdminLink() -> MeshtasticAdminLink? {
+        guard isConnected else { return nil }
+        if let adminLinkOverride { return adminLinkOverride }
+        guard #available(iOS 13.0, *), let device = connectedDevice else { return nil }
         switch device.connectionType {
-        case .bluetooth: return bleClient.sendAdmin(payload: payload)
-        case .tcp:       return tcpClient.sendAdmin(payload: payload)
+        case .bluetooth: return bleClient
+        case .tcp:       return tcpClient
         }
     }
 

@@ -42,9 +42,15 @@ struct MeshtasticSettingsView: View {
     @State private var joinText: String = ""
     @State private var joinResult: String?
 
-    // Settings state
-    @State private var selectedRole: MeshtasticAdminCodec.DeviceRole = .tak
-    @State private var selectedRebroadcast: MeshtasticAdminCodec.RebroadcastMode = .all
+    // Settings state. These start at what the radio reports (#148), so Apply
+    // only changes what the operator changed. A value the radio leaves out of
+    // its message is its default (no role is CLIENT, no rebroadcast mode is
+    // ALL), so a radio at factory settings starts at CLIENT and ALL. The two
+    // pickers are nil until the radio's device config is known, and when it
+    // holds a value this screen has no entry for (the picker then shows that
+    // number, and Apply leaves it alone unless the operator picks another).
+    @State private var selectedRole: MeshtasticAdminCodec.DeviceRole?
+    @State private var selectedRebroadcast: MeshtasticAdminCodec.RebroadcastMode?
     @State private var positionIntervalSecs: Double = 900
 
     // Share sheet
@@ -81,6 +87,14 @@ struct MeshtasticSettingsView: View {
                     MeshChannelShareSheet(channel: ch, transport: shareTransportLabel)
                 }
             }
+            .onAppear {
+                loadRoleFromRadio()
+                loadRebroadcastFromRadio()
+                loadIntervalFromRadio()
+            }
+            .onChange(of: meshtastic.radioSettings.deviceRole) { _ in loadRoleFromRadio() }
+            .onChange(of: meshtastic.radioSettings.rebroadcastMode) { _ in loadRebroadcastFromRadio() }
+            .onChange(of: meshtastic.radioSettings.positionBroadcastSeconds) { _ in loadIntervalFromRadio() }
         }
     }
 
@@ -157,19 +171,41 @@ struct MeshtasticSettingsView: View {
     }
 
     private var deviceConfigSection: some View {
-        Section("Device") {
+        Section {
             Picker("Role", selection: $selectedRole) {
+                // The radio's own role when this screen has no name for it, or a
+                // placeholder until the radio has said. Neither is ever written.
+                if !deviceLoaded {
+                    Text("Not loaded").tag(MeshtasticAdminCodec.DeviceRole?.none)
+                } else if let raw = meshtastic.radioSettings.unlistedDeviceRole {
+                    Text("Role \(raw)").tag(MeshtasticAdminCodec.DeviceRole?.none)
+                }
                 ForEach(MeshtasticAdminCodec.DeviceRole.allCases, id: \.rawValue) { role in
-                    Text(role.displayName).tag(role)
+                    Text(role.displayName).tag(Optional(role))
                 }
             }
+            .disabled(!deviceLoaded)
             Picker("Rebroadcast Scope", selection: $selectedRebroadcast) {
+                if !deviceLoaded {
+                    Text("Not loaded").tag(MeshtasticAdminCodec.RebroadcastMode?.none)
+                } else if let raw = meshtastic.radioSettings.unlistedRebroadcastMode {
+                    Text("Mode \(raw)").tag(MeshtasticAdminCodec.RebroadcastMode?.none)
+                }
                 ForEach(MeshtasticAdminCodec.RebroadcastMode.allCases, id: \.rawValue) { mode in
-                    Text(mode.displayName).tag(mode)
+                    Text(mode.displayName).tag(Optional(mode))
                 }
             }
+            .disabled(!deviceLoaded)
             Button("Apply Device Config") { applyDeviceConfig() }
-                .disabled(activeTransport != .meshtastic)
+                .disabled(activeTransport != .meshtastic || !deviceLoaded)
+        } header: {
+            Text("Device")
+        } footer: {
+            if !deviceLoaded {
+                Text(MeshtasticWriteResult.notLoaded)
+            } else if let note = unlistedDeviceValuesNote {
+                Text(note)
+            }
         }
     }
 
@@ -189,19 +225,32 @@ struct MeshtasticSettingsView: View {
     }
 
     private var positionSection: some View {
-        Section("Position Broadcast") {
+        Section {
             HStack {
                 Text("Interval")
                 Spacer()
-                Text("\(Int(positionIntervalSecs))s")
+                Text(intervalLabel)
                     .foregroundColor(.secondary)
             }
             Slider(value: $positionIntervalSecs, in: 30...3600, step: 30)
+                .disabled(!positionLoaded)
             Button("Apply Interval") {
-                let ok = meshtastic.applyPositionBroadcastInterval(seconds: UInt32(positionIntervalSecs))
-                statusMessage = ok ? "Position interval sent." : "Apply failed: \(meshtastic.lastError ?? "not connected")"
+                switch meshtastic.applyPositionBroadcastInterval(seconds: UInt32(positionIntervalSecs)) {
+                case .sent:
+                    statusMessage = "Position interval sent."
+                case .unchanged:
+                    statusMessage = MeshtasticWriteResult.nothingToChange
+                case .refused(let reason):
+                    statusMessage = "Apply failed: \(reason)"
+                }
             }
-            .disabled(activeTransport != .meshtastic)
+            .disabled(activeTransport != .meshtastic || !positionLoaded)
+        } header: {
+            Text("Position Broadcast")
+        } footer: {
+            if !positionLoaded {
+                Text(MeshtasticWriteResult.notLoaded)
+            }
         }
     }
 
@@ -217,10 +266,14 @@ struct MeshtasticSettingsView: View {
                 index: index, name: name, pskHex: newPSKHex.trimmingCharacters(in: .whitespaces),
                 isPrimary: newIsPrimary
             )
-            let ok = meshtastic.applyChannel(ch)
-            statusMessage = ok
-                ? "Channel \"\(name)\" applied at index \(index)."
-                : "Saved \"\(name)\" (apply needs a connected radio)."
+            switch meshtastic.applyChannel(ch) {
+            case .sent:
+                statusMessage = "Channel \"\(name)\" applied at index \(index)."
+            case .unchanged:
+                statusMessage = "Channel \"\(name)\" at index \(index): \(MeshtasticWriteResult.nothingToChange)"
+            case .refused(let reason):
+                statusMessage = "Saved \"\(name)\". Not applied to the radio: \(reason)"
+            }
         case .meshcore:
             if #available(iOS 13.0, *) {
                 let ok = meshcore.applyChannel(index: 1, name: name, secretHex: newPSKHex)
@@ -238,10 +291,19 @@ struct MeshtasticSettingsView: View {
         }
         switch parsed {
         case .meshtastic(let chans):
-            let applied = meshtastic.applyImportedChannels(chans)
-            joinResult = applied > 0
-                ? "Applied \(applied) Meshtastic channel(s)."
-                : "Imported \(chans.count) channel(s) (connect a radio to apply)."
+            let outcome = meshtastic.applyImportedChannels(chans)
+            let already = outcome.unchanged > 0 ? " \(outcome.unchanged) already on the radio." : ""
+            if let refusal = outcome.refusal {
+                joinResult = outcome.applied > 0
+                    ? "Applied \(outcome.applied) of \(chans.count) Meshtastic channel(s).\(already) Not applied: \(refusal)"
+                    : "Imported \(chans.count) channel(s).\(already) Not applied to the radio: \(refusal)"
+            } else if outcome.applied > 0 {
+                joinResult = "Applied \(outcome.applied) Meshtastic channel(s).\(already)"
+            } else if outcome.unchanged > 0 {
+                joinResult = "Imported \(chans.count) channel(s). \(MeshtasticWriteResult.nothingToChange)"
+            } else {
+                joinResult = "Imported \(chans.count) channel(s)."
+            }
         case .meshcore(let ch):
             if #available(iOS 13.0, *) {
                 let ok = meshcore.applyImportedChannel(ch)
@@ -254,10 +316,63 @@ struct MeshtasticSettingsView: View {
     }
 
     private func applyDeviceConfig() {
-        let ok = meshtastic.applyDeviceConfig(role: selectedRole, rebroadcastMode: selectedRebroadcast)
-        statusMessage = ok
-            ? "Device config sent (\(selectedRole.displayName), \(selectedRebroadcast.displayName))."
-            : "Apply failed: \(meshtastic.lastError ?? "not connected")"
+        // Only what the operator changed from the radio's value is written. The
+        // radio's role is not touched by changing the rebroadcast scope, and the
+        // other way round.
+        let radio = meshtastic.radioSettings
+        let role = selectedRole.flatMap { $0 != radio.namedDeviceRole ? $0 : nil }
+        let mode = selectedRebroadcast.flatMap { $0 != radio.namedRebroadcastMode ? $0 : nil }
+        switch meshtastic.applyDeviceConfig(role: role, rebroadcastMode: mode) {
+        case .sent:
+            let changed = [role?.displayName, mode?.displayName].compactMap { $0 }
+            statusMessage = "Device config sent (\(changed.joined(separator: ", ")))."
+        case .unchanged:
+            statusMessage = MeshtasticWriteResult.nothingToChange
+        case .refused(let reason):
+            statusMessage = "Apply failed: \(reason)"
+        }
+    }
+
+    // MARK: - What the radio reports
+
+    private var deviceLoaded: Bool { meshtastic.radioSettings.hasDeviceConfig }
+    private var positionLoaded: Bool { meshtastic.radioSettings.hasPositionConfig }
+
+    private func loadRoleFromRadio() {
+        selectedRole = meshtastic.radioSettings.namedDeviceRole
+    }
+
+    private func loadRebroadcastFromRadio() {
+        selectedRebroadcast = meshtastic.radioSettings.namedRebroadcastMode
+    }
+
+    /// "Not loaded" until the position config is known. 0 is how the radio says
+    /// "use my default".
+    private var intervalLabel: String {
+        guard positionLoaded else { return "Not loaded" }
+        return positionIntervalSecs == 0 ? "radio default" : "\(Int(positionIntervalSecs))s"
+    }
+
+    private func loadIntervalFromRadio() {
+        if let seconds = meshtastic.radioSettings.positionBroadcastSeconds {
+            positionIntervalSecs = Double(seconds)
+        }
+    }
+
+    /// Set when the radio holds a role or rebroadcast mode this screen has no
+    /// entry for. The picker is then empty, and Apply leaves that setting alone
+    /// unless the operator picks another.
+    private var unlistedDeviceValuesNote: String? {
+        var unlisted: [String] = []
+        if let raw = meshtastic.radioSettings.unlistedDeviceRole {
+            unlisted.append("role \(raw)")
+        }
+        if let raw = meshtastic.radioSettings.unlistedRebroadcastMode {
+            unlisted.append("rebroadcast mode \(raw)")
+        }
+        guard !unlisted.isEmpty else { return nil }
+        return "This radio uses \(unlisted.joined(separator: " and ")), which is not in the list. "
+            + "Apply leaves it as it is unless you pick another."
     }
 
     // MARK: - Helpers

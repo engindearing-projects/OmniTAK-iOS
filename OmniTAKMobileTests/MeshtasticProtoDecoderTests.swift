@@ -684,11 +684,11 @@ final class MeshtasticFromRadioDecodingTests: XCTestCase {
     }
 
     func testVariantsTheAppDoesNotUseAreReportedAsOther() {
+        // A config whose variant is not a message is not a config. A config or
+        // channel that is well formed is reported with its bytes (#148, see
+        // MeshtasticSettingsFrameDecodingTests).
         let config = WireMessage().message(FromRadioField.config, WireMessage().varint(1, 1)).data
         XCTAssertEqual(MeshtasticProtoDecoder.decodeFromRadio(config), .other(field: FromRadioField.config))
-
-        let channel = WireMessage().message(FromRadioField.channel, WireMessage().varint(1, 0)).data
-        XCTAssertEqual(MeshtasticProtoDecoder.decodeFromRadio(channel), .other(field: FromRadioField.channel))
 
         let metadata = WireMessage().message(FromRadioField.metadata, WireMessage().string(1, "2.7.0")).data
         XCTAssertEqual(MeshtasticProtoDecoder.decodeFromRadio(metadata), .other(field: FromRadioField.metadata))
