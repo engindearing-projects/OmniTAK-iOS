@@ -78,15 +78,42 @@ final class TAKLinkLivenessTests: XCTestCase {
 
     // MARK: - When to give up
 
-    func testAServerThatAnsweredIsGivenUpOnWhenAPingHasHadNoReplyForTwentyFiveSecondsOnTwoTicksInARow() {
+    func testAServerThatAnsweredIsGivenUpOnWhenAPingHasHadNoReplyForTwentyFiveSecondsAtTwoLooksATickApart() {
         var link = TAKLinkLiveness(now: ns(start), serverAnswersPings: true)
+        // A look every second, so the spacing of the two looks is visible. The
+        // default tick is 5 s.
         let said = driveTicks(&link, from: 1, through: 60)
-        // The ping goes out at 15 (and again at 30, 45 while it waits). The wait
-        // began at 15, so 25 s later is 40: suspected, nothing yet. 41 is the
-        // second look.
+        // The ping goes out at 15 (and again at 30 while it waits). The wait
+        // began at 15, so 25 s later is 40: suspected, nothing yet. A look
+        // less than a tick later (41 to 44) does not count as the second one.
+        // 45 is a full tick after the first look.
         XCTAssertEqual(said.first { $0.action == .sendPing }?.second, 15)
-        XCTAssertEqual(said.first { $0.action == .giveUp }?.second, 41)
         XCTAssertEqual(said.first { $0.second == 40 }?.action, .nothing, "the first look only suspects")
+        XCTAssertTrue(said.filter { (41...44).contains($0.second) }.allSatisfy { $0.action == .nothing },
+                      "a look less than a tick after the first is not the second look")
+        XCTAssertEqual(said.first { $0.action == .giveUp }?.second, 45)
+    }
+
+    func testTwoLooksMillisecondsApartAfterAStallDoNotGiveUpButOneATickLaterDoes() {
+        var link = TAKLinkLiveness(now: ns(start), serverAnswersPings: true)
+        XCTAssertEqual(link.tick(now: ns(start + 15)), .sendPing)
+        // The process stalls for ten minutes. A timer that catches up fires
+        // the look that finds the silence, and the next one right behind it.
+        let after = start + 15 + 600
+        XCTAssertEqual(link.tick(now: ns(after)), .nothing, "the first look only suspects")
+        XCTAssertEqual(link.tick(now: ns(after + 0.001)), .nothing, "1 ms later is not a second chance for the answer to be read")
+        XCTAssertEqual(link.tick(now: ns(after + 4.999)), .nothing, "still less than a tick after the first look")
+        XCTAssertEqual(link.tick(now: ns(after + 5)), .giveUp, "a full tick after the first look")
+    }
+
+    func testBytesAfterTheCatchUpLookStillClearTheSuspicion() {
+        var link = TAKLinkLiveness(now: ns(start), serverAnswersPings: true)
+        XCTAssertEqual(link.tick(now: ns(start + 15)), .sendPing)
+        let after = start + 15 + 600
+        XCTAssertEqual(link.tick(now: ns(after)), .nothing)
+        XCTAssertEqual(link.tick(now: ns(after + 0.001)), .nothing)
+        link.received(now: ns(after + 0.002))      // the answer, read at last
+        XCTAssertEqual(link.tick(now: ns(after + 5)), .nothing, "not given up: the answer arrived")
     }
 
     func testTheWaitIsTwentyFiveSecondsNotLessAndExactlyTwentyFiveCounts() {
@@ -96,7 +123,8 @@ final class TAKLinkLivenessTests: XCTestCase {
         XCTAssertEqual(link.tick(now: ns(start + 100)), .sendPing)
         XCTAssertEqual(link.tick(now: ns(start + 100 + 24.999)), .nothing, "24.999 s: not suspected yet")
         XCTAssertEqual(link.tick(now: ns(start + 100 + 25)), .nothing, "25 s: the first look only suspects")
-        XCTAssertEqual(link.tick(now: ns(start + 100 + 26)), .giveUp)
+        XCTAssertEqual(link.tick(now: ns(start + 100 + 26)), .nothing, "1 s later is less than a tick")
+        XCTAssertEqual(link.tick(now: ns(start + 100 + 30)), .giveUp, "a tick after the first look")
     }
 
     func testBytesBetweenTheTwoLooksClearTheSuspicion() {
@@ -106,10 +134,12 @@ final class TAKLinkLivenessTests: XCTestCase {
         link.received(now: ns(start + 40.5))
         XCTAssertEqual(link.tick(now: ns(start + 41)), .nothing, "the answer arrived: not given up")
         // And the suspicion is gone: a later silent ping needs two fresh looks.
+        // The last byte arrived at 40.5, so the next ping goes out at 56 and begins
+        // a new wait: suspected at 81, given up on a tick later at 86.
         let later = driveTicks(&link, from: 42, through: 120)
-        let gaveUp = later.first { $0.action == .giveUp }
-        XCTAssertNotNil(gaveUp, "a server that goes silent for good is still given up on")
-        XCTAssertGreaterThan(gaveUp?.second ?? 0, 41 + 15 + 25, "the new wait starts at the new ping, not the old one")
+        XCTAssertEqual(later.first { $0.action == .sendPing }?.second, 56)
+        XCTAssertEqual(later.first { $0.action == .giveUp }?.second, 86,
+                       "the new wait starts at the new ping, not the old one")
     }
 
     func testAWaitStartsAtThePingThatBeganItNotAtAnEarlierOne() {
@@ -119,9 +149,9 @@ final class TAKLinkLivenessTests: XCTestCase {
         let said = driveTicks(&link, from: 17, through: 80)
         // Silence again from 16: the next ping is due at 31 and begins a new wait.
         XCTAssertEqual(said.first { $0.action == .sendPing }?.second, 31)
-        // That wait began at 31, so it is suspected at 56 and given up on at 57.
-        // Had the wait stayed at 15 it would have ended at 41.
-        XCTAssertEqual(said.first { $0.action == .giveUp }?.second, 57)
+        // That wait began at 31, so it is suspected at 56 and given up on a tick
+        // later, at 61. Had the wait stayed at 15 it would have ended at 45.
+        XCTAssertEqual(said.first { $0.action == .giveUp }?.second, 61)
     }
 
     func testASecondPingWhileWaitingDoesNotMoveTheStartOfTheWait() {
@@ -129,8 +159,9 @@ final class TAKLinkLivenessTests: XCTestCase {
         let said = driveTicks(&link, from: 1, through: 60)
         let pings = said.filter { $0.action == .sendPing }.map { $0.second }
         XCTAssertEqual(pings, [15, 30], "a ping every 15 s while the wait lasts")
-        // Given up on 26 s after the first ping, not 26 s after the second.
-        XCTAssertEqual(said.first { $0.action == .giveUp }?.second, 41)
+        // Suspected 25 s after the first ping (at 40), given up on a tick later,
+        // at 45. Not counted from the second ping, which went out at 30.
+        XCTAssertEqual(said.first { $0.action == .giveUp }?.second, 45)
     }
 
     func testAServerThatNeverAnsweredIsNeverGivenUpOnForBeingQuiet() {

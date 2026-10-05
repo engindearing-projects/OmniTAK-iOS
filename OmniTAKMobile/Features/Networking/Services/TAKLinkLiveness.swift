@@ -169,9 +169,12 @@ enum TAKPing {
 ///   seconds, busy stream or not, to learn whether it answers at all.
 /// - After that, a ping goes out only when nothing has arrived for `pingIdle`.
 /// - A server that has answered is given up on when a ping has had no reply of
-///   any kind for `pongWait` seconds on two ticks in a row. The second look is
-///   there because a process that was stalled finds a long silence on its
-///   clock while the answer may already sit in the socket buffer, unread.
+///   any kind for `pongWait` seconds at two looks that are at least one tick
+///   apart. The second look is there because a process that was stalled finds
+///   a long silence on its clock while the answer may already sit in the
+///   socket buffer, unread. It has to be a full tick after the first: a timer
+///   that catches up after a stall can fire two looks milliseconds apart, and
+///   that is not a second chance for the answer to be read.
 /// - A server that has never answered a ping is never given up on for being
 ///   quiet: a plain CoT listener that ignores pings would otherwise be dialed
 ///   again in a loop.
@@ -199,17 +202,21 @@ struct TAKLinkLiveness {
 
     private let pingIdleNanos: UInt64
     private let pongWaitNanos: UInt64
+    private let tickNanos: UInt64
     private var lastRx: UInt64
     private var lastPing: UInt64
     /// When the first ping since the last received byte went out, or nil when
     /// no ping is waiting for an answer.
     private var asked: UInt64?
-    private var suspected = false
+    /// When the first look that found a ping unanswered for too long was made,
+    /// or nil when the last look found nothing wrong.
+    private var suspectedAt: UInt64?
 
     init(now: UInt64, serverAnswersPings: Bool, timing: Timing = Timing()) {
         self.serverAnswersPings = serverAnswersPings
         self.pingIdleNanos = Self.nanos(timing.pingIdle)
         self.pongWaitNanos = Self.nanos(timing.pongWait)
+        self.tickNanos = Self.nanos(timing.tick)
         // The first ping waits its turn behind the app's own first event.
         self.lastRx = now
         self.lastPing = now
@@ -232,12 +239,15 @@ struct TAKLinkLiveness {
         let waiting = asked.map { lastRx < $0 } ?? false
 
         if serverAnswersPings, waiting, let asked = asked, Self.elapsed(now, since: asked) >= pongWaitNanos {
-            // Look once more on the next tick before giving up.
-            if suspected { return .giveUp }
-            suspected = true
-            return .nothing
+            // Look once more before giving up, at least a tick after the first
+            // look. Bytes that arrive in between end the wait and clear this.
+            guard let first = suspectedAt else {
+                suspectedAt = now
+                return .nothing
+            }
+            return Self.elapsed(now, since: first) >= tickNanos ? .giveUp : .nothing
         }
-        suspected = false
+        suspectedAt = nil
 
         let due = Self.elapsed(now, since: lastPing) >= pingIdleNanos
             && (!serverAnswersPings || Self.elapsed(now, since: lastRx) >= pingIdleNanos)
