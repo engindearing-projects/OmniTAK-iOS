@@ -230,15 +230,19 @@ class ServerConnectionStateTests: XCTestCase {
 
     func testServerConnectionStateCreation() {
         let sender = DirectTCPSender()
+        let server = TAKServer(name: "Test Server", host: "127.0.0.1", port: 8087)
         let state = ServerConnectionState(
-            serverId: UUID(),
+            serverId: server.id,
             serverName: "Test Server",
             isConnected: false,
-            sender: sender
+            sender: sender,
+            server: server
         )
 
         XCTAssertEqual(state.serverName, "Test Server")
         XCTAssertFalse(state.isConnected)
+        XCTAssertEqual(state.phase, .dialing)
+        XCTAssertFalse(state.answersPings)
     }
 }
 

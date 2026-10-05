@@ -197,10 +197,35 @@ func resolveCSREnrolledSecIdentity(label name: String) -> SecIdentity? {
 
 /// Direct network sender for CoT messages
 /// Supports TCP, UDP, and TLS protocols
+///
+/// One sender is one dial and at most one connection. TAKService makes a new
+/// sender for every dial of a server and never reuses one (the legacy single
+/// connection reuses its sender, and a second `connect` ends the first session
+/// quietly).
+///
+/// The session ends once. Whatever ends it (the connection failing, the server
+/// closing the stream, a failed send, no answer to a ping, a connect that
+/// timed out) goes through `end(reason:)`, which cancels the connection and
+/// calls `onConnectionStateChanged(false)` exactly once. `disconnect()` is the
+/// operator's own: it cancels quietly and calls nothing. Every callback from
+/// the connection first checks that it belongs to the connection this sender
+/// still holds and that the session has not ended, so a late callback does
+/// nothing.
+///
+/// Session state lives on `queue`. The few fields that other threads read
+/// (`send`, `isConnected`, `endReason`, `serverAnswersPings`) sit behind
+/// `stateLock`.
 class DirectTCPSender {
-    private var connection: NWConnection?
     private let queue = DispatchQueue(label: "com.omnitak.network")
+    private let queueKey = DispatchSpecificKey<Void>()
     private var currentProtocol: ConnectionProtocol = .tcp
+
+    // Guarded by stateLock. Written on `queue`.
+    private let stateLock = NSLock()
+    private var connection: NWConnection?
+    private var ended = false
+    private var storedEndReason: String?
+    private var storedServerAnswersPings = false
 
     // Receive buffer for handling fragmented XML
     private var receiveBuffer: String = ""
@@ -214,18 +239,85 @@ class DirectTCPSender {
     private(set) var bytesReceived: Int = 0
     private(set) var messagesReceived: Int = 0
 
-    var isConnected: Bool {
-        return connection?.state == .ready
+    init() {
+        queue.setSpecific(key: queueKey, value: ())
     }
+
+    /// True while the session is up. False from the moment it ended.
+    var isConnected: Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !ended, let connection = connection else { return false }
+        return connection.state == .ready
+    }
+
+    /// Why the session ended on its own, for example "Closed by server" or
+    /// "No response from server". Nil while it is up, and after `disconnect()`.
+    var endReason: String? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return storedEndReason
+    }
+
+    /// True once this server has answered a ping. A fact about the server, not
+    /// about one connection: set it before `connect` to carry it over from the
+    /// previous sender for the same server, read it after the session ended.
+    var serverAnswersPings: Bool {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return storedServerAnswersPings
+        }
+        set {
+            stateLock.lock()
+            storedServerAnswersPings = newValue
+            stateLock.unlock()
+        }
+    }
+
+    /// The uid of the ping this sender sends. TAKService sets it to the device
+    /// uid plus "-ping", read on the main thread when it makes the sender.
+    var pingUID: () -> String = { "OmniTAK-ping" }
+
+    /// Liveness timings (TCP and TLS). Set before `connect`; tests shorten them.
+    var livenessTiming = TAKLinkLiveness.Timing()
+
+    /// The switch in Network Preferences. Read on every tick, so flipping it
+    /// takes effect without reconnecting.
+    static let monitorServerConnectionsKey = "monitorServerConnections"
 
     // Connection-establishment timeout. NWConnection's `.waiting` state can
     // persist indefinitely (unreachable host, stalled TLS handshake), which
     // left the UI stuck on "Connecting..." until the app was restarted (#40).
     // If no `.ready` or `.failed` arrives in this window, we fail the attempt
-    // and tear down the connection so the user can retry.
-    private let connectTimeoutSeconds: TimeInterval = 15
+    // and tear down the connection so the user can retry. Set before `connect`.
+    var connectTimeoutSeconds: TimeInterval = 15
     private var connectTimeoutTask: DispatchWorkItem?
-    private var connectCompleted = false
+    private var dialCompletion: ((Bool) -> Void)?
+
+    // Liveness state, on `queue` only.
+    private var liveness: TAKLinkLiveness?
+    private var livenessTimer: DispatchSourceTimer?
+    private var lastPingUID: String?
+
+    /// TCP keepalive for TCP and TLS: the first probe after 30 s idle, then
+    /// every 10 s, and the connection is dropped after 3 unanswered probes.
+    /// Not applicable to UDP.
+    static func makeTCPOptions() -> NWProtocolTCP.Options {
+        let options = NWProtocolTCP.Options()
+        options.enableKeepalive = true
+        options.keepaliveIdle = 30
+        options.keepaliveInterval = 10
+        options.keepaliveCount = 3
+        return options
+    }
+
+    /// The parameters of the live connection, for tests.
+    var connectionParameters: NWParameters? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return connection?.parameters
+    }
 
     func connect(host: String, port: UInt16, protocolType: String = "tcp", useTLS: Bool = false, certificateName: String? = nil, certificatePassword: String? = nil, caCertificateName: String? = nil, caCertificatePassword: String? = nil, allowLegacyTLS: Bool = false, allowUntrustedTLS: Bool = false, completion: @escaping (Bool) -> Void) {
         // Create endpoint with explicit IPv4 if possible
@@ -428,8 +520,7 @@ class DirectTCPSender {
                 #endif
             }
 
-            let tcpOptions = NWProtocolTCP.Options()
-            parameters = NWParameters(tls: tlsOptions, tcp: tcpOptions)
+            parameters = NWParameters(tls: tlsOptions, tcp: Self.makeTCPOptions())
 
             // Force IPv4 for localhost/127.0.0.1 connections
             if host.contains("127.0.0.1") || host.contains("localhost") {
@@ -454,7 +545,7 @@ class DirectTCPSender {
         } else {
             // TCP (default)
             currentProtocol = .tcp
-            parameters = NWParameters.tcp
+            parameters = NWParameters(tls: nil, tcp: Self.makeTCPOptions())
 
             // Force IPv4 for localhost/127.0.0.1 connections
             if host.contains("127.0.0.1") || host.contains("localhost") {
@@ -467,97 +558,221 @@ class DirectTCPSender {
             #endif
         }
 
-        connection = NWConnection(to: endpoint, using: parameters)
+        startSession(endpoint: endpoint, parameters: parameters, completion: completion)
+    }
 
+    // MARK: - Session
+
+    /// Run `body` on `queue`, or straight away when already there.
+    private func onQueue<T>(_ body: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil { return body() }
+        return queue.sync(execute: body)
+    }
+
+    private func startSession(endpoint: NWEndpoint, parameters: NWParameters, completion: @escaping (Bool) -> Void) {
+        onQueue {
+            // A second connect on the same sender (the legacy single connection
+            // is reused) ends the first session quietly.
+            releaseSession()
+
+            let conn = NWConnection(to: endpoint, using: parameters)
+            stateLock.lock()
+            connection = conn
+            ended = false
+            storedEndReason = nil
+            stateLock.unlock()
+            dialCompletion = completion
+            lastPingUID = nil
+
+            conn.stateUpdateHandler = { [weak self, weak conn] state in
+                guard let self = self, let conn = conn else { return }
+                self.handleState(state, of: conn)
+            }
+
+            let timeout = DispatchWorkItem { [weak self, weak conn] in
+                guard let self = self, let conn = conn, self.owns(conn) else { return }
+                let seconds = self.connectTimeoutSeconds.rounded() == self.connectTimeoutSeconds
+                    ? "\(Int(self.connectTimeoutSeconds))" : "\(self.connectTimeoutSeconds)"
+                Logger.takNetwork.error("Connect timed out after \(seconds, privacy: .public)s")
+                self.end(reason: "Connect timed out after \(seconds)s")
+            }
+            connectTimeoutTask = timeout
+            queue.asyncAfter(deadline: .now() + connectTimeoutSeconds, execute: timeout)
+
+            conn.start(queue: queue)
+        }
+    }
+
+    /// True while `conn` is the connection this sender holds and the session
+    /// has not ended. Every callback from a connection starts with this.
+    private func owns(_ conn: NWConnection) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return !ended && connection === conn
+    }
+
+    private func handleState(_ state: NWConnection.State, of conn: NWConnection) {
+        guard owns(conn) else { return }
+        switch state {
+        case .ready:
+            connectTimeoutTask?.cancel()
+            connectTimeoutTask = nil
+            let proto = "\(currentProtocol)"
+            Logger.takNetwork.info("Connected via \(proto, privacy: .public)")
+            startLiveness(for: conn)
+            onConnectionStateChanged?(true)
+            // Start the receive loop
+            startReceiveLoop(on: conn)
+            completeDial(success: true)
+        case .failed(let error):
+            let errStr = "\(error)"
+            Logger.takNetwork.error("Connection failed: \(errStr, privacy: .public)")
+            end(reason: "Connection failed: \(errStr)")
+        case .waiting(let error):
+            let errStr = "\(error)"
+            Logger.takNetwork.debug("Waiting to connect: \(errStr, privacy: .public)")
+            // Don't end here: NWConnection can sit in .waiting forever
+            // (unreachable host, stalled handshake). The connect timeout
+            // ends the session if we never reach .ready.
+        case .cancelled:
+            // A cancel this sender asked for is ignored by owns(): end() and
+            // disconnect() drop the connection first. This one came from outside.
+            Logger.takNetwork.info("Connection cancelled")
+            end(reason: "Connection cancelled")
+        default:
+            break
+        }
+    }
+
+    private func completeDial(success: Bool) {
+        guard let completion = dialCompletion else { return }
+        dialCompletion = nil
+        completion(success)
+    }
+
+    /// Stop the timers, drop the liveness state and cancel the connection.
+    /// Quiet: no callback. On `queue`.
+    private func releaseSession() {
         connectTimeoutTask?.cancel()
-        connectCompleted = false
+        connectTimeoutTask = nil
+        livenessTimer?.cancel()
+        livenessTimer = nil
+        liveness = nil
+        stateLock.lock()
+        let old = connection
+        connection = nil
+        stateLock.unlock()
+        old?.cancel()
+        clearReceiveBuffer()
+    }
 
-        // Single-shot completion guarded against races between the state
-        // handler and the timeout task.
-        let finishOnce: (Bool) -> Void = { [weak self] success in
-            guard let self = self else { return }
-            self.queue.async {
-                guard !self.connectCompleted else { return }
-                self.connectCompleted = true
-                self.connectTimeoutTask?.cancel()
-                self.connectTimeoutTask = nil
-                if !success {
-                    self.connection?.cancel()
-                }
-                completion(success)
+    /// The session is over. Happens once: the first reason wins, later calls do
+    /// nothing. Cancels the connection, then reports it down to the owner.
+    /// On `queue`.
+    private func end(reason: String) {
+        stateLock.lock()
+        if ended {
+            stateLock.unlock()
+            return
+        }
+        ended = true
+        storedEndReason = reason
+        stateLock.unlock()
+
+        Logger.takNetwork.info("Connection ended: \(reason, privacy: .public)")
+        let completion = dialCompletion
+        dialCompletion = nil
+        releaseSession()
+        completion?(false)
+        onConnectionStateChanged?(false)
+    }
+
+    // MARK: - Liveness (TCP and TLS)
+
+    private func startLiveness(for conn: NWConnection) {
+        // A UDP "connection" has nothing to ping.
+        guard currentProtocol != .udp else { return }
+        liveness = TAKLinkLiveness(
+            now: DispatchTime.now().uptimeNanoseconds,
+            serverAnswersPings: serverAnswersPings,
+            timing: livenessTiming
+        )
+        let interval = max(livenessTiming.tick, 0.01)
+        let nanos = Int(interval * 1_000_000_000)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + interval, repeating: .nanoseconds(nanos), leeway: .nanoseconds(nanos / 10))
+        timer.setEventHandler { [weak self, weak conn] in
+            guard let self = self, let conn = conn else { return }
+            self.livenessTick(for: conn)
+        }
+        livenessTimer = timer
+        timer.resume()
+    }
+
+    private func livenessTick(for conn: NWConnection) {
+        guard owns(conn), liveness != nil else { return }
+        // The switch in Network Preferences, read every tick so it works without
+        // reconnecting. Off: no ping and no give-up.
+        let monitored = UserDefaults.standard.object(forKey: Self.monitorServerConnectionsKey) as? Bool ?? true
+        guard monitored else { return }
+
+        switch liveness?.tick(now: DispatchTime.now().uptimeNanoseconds) {
+        case .sendPing:
+            sendPing(on: conn)
+        case .giveUp:
+            end(reason: "No response from server")
+        case .nothing, .none:
+            break
+        }
+    }
+
+    /// Send the ping. Never waits for it: a write that blocks on a dead path
+    /// must not stop the check that would catch it.
+    private func sendPing(on conn: NWConnection) {
+        let uid = pingUID()
+        lastPingUID = uid
+        guard let data = (TAKPing.xml(uid: uid, now: Date()) + "\n").data(using: .utf8) else { return }
+        conn.send(content: data, completion: .contentProcessed { [weak self, weak conn] error in
+            guard let error = error else { return }
+            self?.queue.async {
+                guard let self = self, let conn = conn, self.owns(conn) else { return }
+                Logger.takNetwork.error("Ping send failed: \(String(describing: error), privacy: .public)")
+                self.end(reason: "Send failed: \(error)")
             }
-        }
-
-        connection?.stateUpdateHandler = { [weak self] state in
-            guard let self = self else { return }
-            switch state {
-            case .ready:
-                let proto = "\(self.currentProtocol)"
-                Logger.takNetwork.info("Connected via \(proto, privacy: .public)")
-                self.onConnectionStateChanged?(true)
-                // Start the receive loop
-                self.startReceiveLoop()
-                finishOnce(true)
-            case .failed(let error):
-                let errStr = "\(error)"
-                Logger.takNetwork.error("Connection failed: \(errStr, privacy: .public)")
-                self.onConnectionStateChanged?(false)
-                finishOnce(false)
-            case .waiting(let error):
-                let errStr = "\(error)"
-                Logger.takNetwork.debug("Waiting to connect: \(errStr, privacy: .public)")
-                // Don't complete here — NWConnection can sit in .waiting
-                // forever (unreachable host, stalled handshake). The timeout
-                // task below will force a failure if we never reach .ready.
-            case .cancelled:
-                Logger.takNetwork.info("Connection cancelled")
-                self.onConnectionStateChanged?(false)
-                finishOnce(false)
-            default:
-                break
-            }
-        }
-
-        let timeoutTask = DispatchWorkItem { [weak self] in
-            guard let self = self, !self.connectCompleted else { return }
-            Logger.takNetwork.error("Connect timed out after \(Int(self.connectTimeoutSeconds), privacy: .public)s")
-            self.onConnectionStateChanged?(false)
-            finishOnce(false)
-        }
-        connectTimeoutTask = timeoutTask
-        queue.asyncAfter(deadline: .now() + connectTimeoutSeconds, execute: timeoutTask)
-
-        connection?.start(queue: queue)
+        })
     }
 
     // MARK: - Continuous Receive Loop
 
-    private func startReceiveLoop() {
-        guard let connection = connection else { return }
-
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            guard let self = self else { return }
+    private func startReceiveLoop(on conn: NWConnection) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self, weak conn] data, _, isComplete, error in
+            guard let self = self, let conn = conn, self.owns(conn) else { return }
 
             if let error = error {
-                print("❌ DirectNetwork: Receive error: \(error)")
+                Logger.takNetwork.error("Receive error: \(String(describing: error), privacy: .public)")
+                self.end(reason: "Receive error: \(error)")
                 return
             }
 
             if let data = data, !data.isEmpty {
                 self.bytesReceived += data.count
+                self.liveness?.received(now: DispatchTime.now().uptimeNanoseconds)
                 self.processReceivedData(data)
             }
 
-            if isComplete {
+            // On a stream the end of the data is the server closing it. On UDP
+            // every datagram is a complete message, so it says nothing about
+            // the connection.
+            if isComplete && self.currentProtocol != .udp {
                 #if DEBUG
                 print("🔌 DirectNetwork: Connection closed by server")
                 #endif
-                self.onConnectionStateChanged?(false)
+                self.end(reason: "Closed by server")
                 return
             }
 
             // Continue receiving
-            self.startReceiveLoop()
+            self.startReceiveLoop(on: conn)
         }
     }
 
@@ -599,6 +814,22 @@ class DirectTCPSender {
 
         // Process each complete message
         for message in messages {
+            // The ping exchange is not CoT data: look at it before the validity
+            // check, which only accepts double-quoted attributes (a TAK Server
+            // writes its pong with single quotes). A pong, or our own ping sent
+            // back, shows the server answers pings. Another client's ping,
+            // relayed by a server that answers none, proves nothing. All of it
+            // is consumed: not counted, not passed on. Runs on `queue`, like
+            // the rest of the liveness state.
+            let frame = TAKPing.classify(message, lastPingUID: lastPingUID)
+            if frame.isPingTraffic {
+                if frame.answersOurPing {
+                    liveness?.answered()
+                    serverAnswersPings = true
+                }
+                continue
+            }
+
             if CoTMessageParser.isValidCoTMessage(message) {
                 messagesReceived += 1
                 #if DEBUG
@@ -661,9 +892,15 @@ class DirectTCPSender {
         return size
     }
 
+    /// May be called from any thread. False when there is no live session.
     func send(xml: String) -> Bool {
+        stateLock.lock()
+        let live = !ended
+        let held = connection
+        stateLock.unlock()
+
         // Enhanced diagnostic logging for connection state issues
-        guard let connection = connection else {
+        guard live, let connection = held else {
             print("❌ DirectNetwork: Connection is nil")
             return false
         }
@@ -698,9 +935,14 @@ class DirectTCPSender {
             return false
         }
 
-        connection.send(content: data, completion: .contentProcessed { error in
+        connection.send(content: data, completion: .contentProcessed { [weak self, weak connection] error in
             if let error = error {
                 print("❌ DirectNetwork: Send failed: \(error)")
+                // A failed write ends the session instead of leaving it "connected".
+                self?.queue.async {
+                    guard let self = self, let conn = connection, self.owns(conn) else { return }
+                    self.end(reason: "Send failed: \(error)")
+                }
             } else {
                 #if DEBUG
                 print("📤 DirectNetwork: Sent \(data.count) bytes")
@@ -711,12 +953,16 @@ class DirectTCPSender {
         return true
     }
 
+    /// The operator's own disconnect. Cancels the connection and calls nothing:
+    /// not the state callback, not the completion of a dial still in flight.
     func disconnect() {
-        connectTimeoutTask?.cancel()
-        connectTimeoutTask = nil
-        connection?.cancel()
-        connection = nil
-        clearReceiveBuffer()
+        onQueue {
+            stateLock.lock()
+            ended = true
+            stateLock.unlock()
+            dialCompletion = nil
+            releaseSession()
+        }
         #if DEBUG
         print("🔌 DirectNetwork: Disconnected")
         #endif
@@ -1005,11 +1251,89 @@ struct CoTDetail {
 
 // MARK: - Server Connection State
 
+/// One server the operator has switched on, and where its link stands. TAKService
+/// keeps one per server in `serverConnections`; its presence means the operator
+/// wants the server connected, so a dropped or failed link is dialed again until
+/// the entry is removed. The rules below are plain state changes with no sockets
+/// and no timers, so they can be tested without the TAKService singleton. The
+/// caller holds `connectionsLock` and does the dialing and the scheduling.
 struct ServerConnectionState {
+    enum Phase: Equatable {
+        /// A dial is in flight.
+        case dialing
+        /// Up since this uptime (DispatchTime.now().uptimeNanoseconds).
+        case connected(since: UInt64)
+        /// The link ended or the dial failed; a dial is scheduled.
+        case waiting
+    }
+
     let serverId: UUID
     let serverName: String
     var isConnected: Bool
+    /// The sender of the current dial. Callbacks from any other sender are late
+    /// and change nothing.
     var sender: DirectTCPSender
+    /// What to dial again.
+    var server: TAKServer
+    var phase: Phase = .dialing
+    var backoff = TAKRedialBackoff()
+    /// The scheduled dial while `phase` is `.waiting`.
+    var pendingDial: DispatchWorkItem?
+    /// Whether this server has answered a ping. Carried to the next sender.
+    var answersPings = false
+
+    /// The operator asked for this server again. Returns true when the caller
+    /// should dial now: only a link waiting for its scheduled dial is dialed
+    /// early. A dial in flight is left alone, and so is a link that is up.
+    mutating func wantedAgain(_ latest: TAKServer) -> Bool {
+        guard phase == .waiting else { return false }
+        pendingDial?.cancel()
+        pendingDial = nil
+        server = latest
+        phase = .dialing
+        isConnected = false
+        return true
+    }
+
+    /// The sender reports its connection is up. False when that is not news:
+    /// the sender is not the current one, or the dial already finished.
+    mutating func senderUp(_ reporting: DirectTCPSender, now: UInt64) -> Bool {
+        guard reporting === sender, phase == .dialing else { return false }
+        phase = .connected(since: now)
+        isConnected = true
+        return true
+    }
+
+    /// The sender reports its connection ended, or its dial failed. Returns how
+    /// many seconds to wait before dialing again, or nil when this is not news:
+    /// a late callback from a sender that was replaced, or a second report from
+    /// one that already ended.
+    mutating func senderEnded(_ reporting: DirectTCPSender, now: UInt64) -> TimeInterval? {
+        guard reporting === sender else { return nil }
+        let held: TimeInterval
+        switch phase {
+        case .waiting:
+            return nil
+        case .dialing:
+            held = 0
+        case .connected(let since):
+            held = now > since ? TimeInterval(now - since) / 1_000_000_000 : 0
+        }
+        answersPings = answersPings || reporting.serverAnswersPings
+        backoff.connectionEnded(after: held)
+        phase = .waiting
+        isConnected = false
+        return backoff.nextDelay()
+    }
+
+    /// The scheduled dial is about to run. False when the entry is no longer
+    /// waiting, in which case nothing is dialed.
+    mutating func redialDue() -> Bool {
+        guard phase == .waiting else { return false }
+        pendingDial = nil
+        phase = .dialing
+        return true
+    }
 }
 
 class TAKService: ObservableObject {
@@ -1173,6 +1497,14 @@ class TAKService: ObservableObject {
         return serverConnections[serverId]?.isConnected ?? false
     }
 
+    /// Where the link to a server stands, or nil when the operator has not
+    /// switched it on. For tests and diagnostics.
+    func connectionPhase(of serverId: UUID) -> ServerConnectionState.Phase? {
+        connectionsLock.lock()
+        defer { connectionsLock.unlock() }
+        return serverConnections[serverId]?.phase
+    }
+
     /// #180 — human-readable name for a connected server, used to tag inbound
     /// CoT with its source ("TAK: <name>") at the ingest point. Falls back to the
     /// single-connection `currentServerName` (host:port) when the id is unknown
@@ -1187,7 +1519,14 @@ class TAKService: ObservableObject {
         return currentServerName.isEmpty ? nil : currentServerName
     }
 
-    /// Connect to a specific server
+    /// Connect to a specific server. This marks it as one the operator wants
+    /// connected: from here on a link that drops, or a dial that fails, is dialed
+    /// again on a backoff until `disconnectFromServer` or `disconnect` removes it.
+    ///
+    /// - A link that is up, or a dial in flight: nothing happens.
+    /// - A link waiting for its scheduled dial: the wait is cancelled and it is
+    ///   dialed now.
+    /// - A server not known yet: a new entry, dialed now.
     func connectToServer(_ server: TAKServer) {
         #if DEBUG
         print("🔌 TAKService.connectToServer() - \(server.name) (\(server.host):\(server.port))")
@@ -1195,52 +1534,77 @@ class TAKService: ObservableObject {
 
         connectionsLock.lock()
 
-        // Check if already connected
-        if let existing = serverConnections[server.id], existing.isConnected {
+        if var existing = serverConnections[server.id] {
+            let dialNow = existing.wantedAgain(server)
+            serverConnections[server.id] = existing
             connectionsLock.unlock()
-            #if DEBUG
-            print("ℹ️ Already connected to \(server.name)")
-            #endif
+            if dialNow {
+                dial(server)
+            } else {
+                #if DEBUG
+                print("ℹ️ Already connected or dialing \(server.name)")
+                #endif
+            }
             return
         }
 
-        // Create new sender for this server
         let sender = DirectTCPSender()
-        var connectionState = ServerConnectionState(
+        serverConnections[server.id] = ServerConnectionState(
             serverId: server.id,
             serverName: server.name,
             isConnected: false,
-            sender: sender
+            sender: sender,
+            server: server
         )
-        serverConnections[server.id] = connectionState
         connectionsLock.unlock()
 
-        // Setup handlers for this server's connection. Capture the server id so
-        // received messages can be attributed to their source server (multi-server).
-        sender.onMessageReceived = { [weak self] xml in
-            self?.handleReceivedMessage(xml, fromServerId: server.id)
+        startDial(server, with: sender)
+    }
+
+    /// Dial an entry again with a new sender. The old sender is disconnected
+    /// (it has already ended, but nothing is left behind if it has not) and the
+    /// new one carries over what is known about the server.
+    private func dial(_ server: TAKServer) {
+        let sender = DirectTCPSender()
+
+        connectionsLock.lock()
+        guard var entry = serverConnections[server.id], entry.phase == .dialing else {
+            connectionsLock.unlock()
+            return
+        }
+        let old = entry.sender
+        sender.serverAnswersPings = entry.answersPings
+        entry.sender = sender
+        serverConnections[server.id] = entry
+        connectionsLock.unlock()
+
+        old.disconnect()
+        startDial(server, with: sender)
+    }
+
+    /// Wire up a new sender for `server` and connect it.
+    private func startDial(_ server: TAKServer, with sender: DirectTCPSender) {
+        let serverId = server.id
+
+        // The ping's uid is the device uid plus "-ping". Read here on the main
+        // thread, not from the sender's queue.
+        let pingUID = PositionBroadcastService.shared.userUID + "-ping"
+        sender.pingUID = { pingUID }
+
+        // The handlers hold the sender weakly and do nothing unless the entry
+        // for this server still holds this very sender, so a callback that
+        // arrives after the sender was replaced or the server switched off
+        // changes nothing.
+        // Received messages are attributed to their source server (multi-server).
+        sender.onMessageReceived = { [weak self, weak sender] xml in
+            guard let self = self, let sender = sender, self.entryHolds(sender, serverId: serverId) else { return }
+            self.handleReceivedMessage(xml, fromServerId: serverId)
         }
 
-        sender.onConnectionStateChanged = { [weak self] connected in
+        sender.onConnectionStateChanged = { [weak self, weak sender] connected in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.connectionsLock.lock()
-                if var state = self.serverConnections[server.id] {
-                    state.isConnected = connected
-                    self.serverConnections[server.id] = state
-                }
-                self.connectionsLock.unlock()
-                self.updateOverallConnectionState()
-
-                if connected {
-                    #if DEBUG
-                    print("✅ Connected to \(server.name)")
-                    #endif
-                } else {
-                    #if DEBUG
-                    print("🔌 Disconnected from \(server.name)")
-                    #endif
-                }
+                guard let self = self, let sender = sender else { return }
+                self.senderReported(connected: connected, sender: sender, serverId: serverId)
             }
         }
 
@@ -1256,37 +1620,121 @@ class TAKService: ObservableObject {
             caCertificatePassword: server.caCertificatePassword,
             allowLegacyTLS: server.allowLegacyTLS,
             allowUntrustedTLS: server.allowUntrustedTLS
-        ) { [weak self] success in
+        ) { [weak self, weak sender] success in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.connectionsLock.lock()
-                if var state = self.serverConnections[server.id] {
-                    state.isConnected = success
-                    self.serverConnections[server.id] = state
-                }
-                self.connectionsLock.unlock()
-                self.updateOverallConnectionState()
-
-                if success {
-                    // Configure ChatManager and PositionBroadcastService if this is the first connection
-                    if self.connectedServerIds.count == 1 {
-                        ChatManager.shared.setTAKService(self)
-                        PositionBroadcastService.shared.configure(takService: self, locationManager: LocationManager.shared)
-                    }
-                    #if DEBUG
-                    print("✅ Successfully connected to \(server.name)")
-                    #endif
-                } else {
-                    self.lastError = "Failed to connect to \(server.name)"
-                    #if DEBUG
-                    print("❌ Failed to connect to \(server.name)")
-                    #endif
-                }
+                guard let self = self, let sender = sender else { return }
+                self.dialFinished(success: success, sender: sender, server: server)
             }
         }
     }
 
-    /// Disconnect from a specific server
+    private func entryHolds(_ sender: DirectTCPSender, serverId: UUID) -> Bool {
+        connectionsLock.lock()
+        defer { connectionsLock.unlock() }
+        return serverConnections[serverId]?.sender === sender
+    }
+
+    /// A sender says its connection came up or went down. On the main thread.
+    /// A sender goes down once, and a down report from one that is no longer the
+    /// entry's sender is ignored. When the entry's own sender goes down, the
+    /// next dial is scheduled on the backoff.
+    private func senderReported(connected: Bool, sender: DirectTCPSender, serverId: UUID) {
+        let now = DispatchTime.now().uptimeNanoseconds
+
+        connectionsLock.lock()
+        guard var entry = serverConnections[serverId] else {
+            connectionsLock.unlock()
+            return
+        }
+        var wasUp = false
+        if case .connected = entry.phase { wasUp = true }
+
+        var delay: TimeInterval?
+        var scheduled: DispatchWorkItem?
+        let news: Bool
+        if connected {
+            news = entry.senderUp(sender, now: now)
+        } else {
+            delay = entry.senderEnded(sender, now: now)
+            news = delay != nil
+            if delay != nil {
+                let item = DispatchWorkItem { [weak self] in self?.redialDue(serverId: serverId) }
+                entry.pendingDial = item
+                scheduled = item
+            }
+        }
+        if news { serverConnections[serverId] = entry }
+        let name = entry.serverName
+        connectionsLock.unlock()
+
+        guard news else { return }
+        updateOverallConnectionState()
+
+        if connected {
+            #if DEBUG
+            print("✅ Connected to \(name)")
+            #endif
+            return
+        }
+        #if DEBUG
+        print("🔌 Disconnected from \(name)")
+        #endif
+
+        if let delay = delay, let item = scheduled {
+            let reason = sender.endReason ?? "unknown"
+            let seconds = Int(delay)
+            if wasUp {
+                Logger.takNetwork.info("Connection to \(name, privacy: .public) dropped: \(reason, privacy: .public). Dialing again in \(seconds, privacy: .public) s")
+            } else {
+                Logger.takNetwork.info("Dial to \(name, privacy: .public) failed: \(reason, privacy: .public). Dialing again in \(seconds, privacy: .public) s")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+        }
+    }
+
+    /// A scheduled dial is due. On the main thread. Checks that the operator has
+    /// not switched the server off since it was scheduled: the entry must still
+    /// be there and still waiting.
+    private func redialDue(serverId: UUID) {
+        connectionsLock.lock()
+        guard var entry = serverConnections[serverId], entry.redialDue() else {
+            connectionsLock.unlock()
+            return
+        }
+        serverConnections[serverId] = entry
+        let server = entry.server
+        connectionsLock.unlock()
+
+        dial(server)
+    }
+
+    /// The dial of `sender` finished, with success or not. On the main thread.
+    private func dialFinished(success: Bool, sender: DirectTCPSender, server: TAKServer) {
+        guard entryHolds(sender, serverId: server.id) else { return }
+        updateOverallConnectionState()
+
+        if success {
+            // Configure ChatManager and PositionBroadcastService if this is the first connection
+            if connectedServerIds.count == 1 {
+                ChatManager.shared.setTAKService(self)
+                PositionBroadcastService.shared.configure(takService: self, locationManager: LocationManager.shared)
+            }
+            #if DEBUG
+            print("✅ Successfully connected to \(server.name)")
+            #endif
+        } else {
+            // A server that stays down is dialed again and again: don't publish
+            // the same text on every retry.
+            let message = "Failed to connect to \(server.name)"
+            if lastError != message { lastError = message }
+            #if DEBUG
+            print("❌ Failed to connect to \(server.name)")
+            #endif
+        }
+    }
+
+    /// Disconnect from a specific server, and stop dialing it. Cancels a dial
+    /// that is scheduled, so nothing dials a server the operator switched off.
     func disconnectFromServer(serverId: UUID) {
         connectionsLock.lock()
         guard let state = serverConnections[serverId] else {
@@ -1298,6 +1746,7 @@ class TAKService: ObservableObject {
         print("🔌 Disconnecting from \(state.serverName)")
         #endif
 
+        state.pendingDial?.cancel()
         state.sender.disconnect()
         serverConnections.removeValue(forKey: serverId)
         connectionsLock.unlock()
@@ -1524,6 +1973,7 @@ class TAKService: ObservableObject {
         // Disconnect all multi-server connections
         connectionsLock.lock()
         for state in serverConnections.values {
+            state.pendingDial?.cancel()
             state.sender.disconnect()
         }
         serverConnections.removeAll()
