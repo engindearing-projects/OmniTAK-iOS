@@ -55,7 +55,7 @@ final class MeshChannelApplyTests: XCTestCase {
         let psk = Data([0x01, 0x02, 0x03, 0x04]) // arbitrary short psk
         // Slot 1 as the radio sends it while it is disabled: its index only.
         guard let write = MeshtasticAdminCodec.encodeSetChannel(
-            current: Data([0x08, 0x01]), name: "OmniTAK", psk: psk, role: .secondary) else {
+            current: Data([0x08, 0x01]), name: "OmniTAK", key: .set(psk), role: .secondary) else {
             return XCTFail("encodeSetChannel returned nil")
         }
         let admin = write.payload
@@ -116,7 +116,7 @@ final class MeshChannelApplyTests: XCTestCase {
         // role PRIMARY = 1 must be emitted (non-zero). Slot 0 is index 0, a
         // default, so a radio sends it with no index at all.
         guard let write = MeshtasticAdminCodec.encodeSetChannel(
-            current: Data(), name: "Primary", psk: Data(), role: .primary) else {
+            current: Data(), name: "Primary", key: .keep, role: .primary) else {
             return XCTFail("encodeSetChannel returned nil")
         }
         let admin = write.payload

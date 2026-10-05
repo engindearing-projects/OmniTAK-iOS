@@ -115,10 +115,15 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     weak var delegate: MeshtasticBLEClientDelegate?
 
     /// The radio's own settings as they come in during the config download, and
-    /// the start of each download. MeshtasticManager keeps them so a settings
-    /// write can change one field and send the rest back (#148). Events are
-    /// sent in the order the frames arrive.
-    let settingsEvents = PassthroughSubject<MeshtasticRadioSettings.Event, Never>()
+    /// the start of each download, each with the connection that delivered it.
+    /// MeshtasticManager keeps them so a settings write can change one field and
+    /// send the rest back (#148). Events are sent in the order the frames arrive.
+    let settingsEvents = PassthroughSubject<MeshtasticLinkEvent, Never>()
+
+    /// This client does not number its connections. The manager treats the
+    /// Bluetooth link as one connection and starts from nothing whenever the
+    /// operator connects or the link drops.
+    var connectionSerial: Int { 0 }
 
     private var centralManager: CBCentralManager!
     private var toRadioCharacteristic: CBCharacteristic?
@@ -476,15 +481,19 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     /// the broadcast address: that would put the admin message, and for
     /// set_channel the channel key, on the air.
     @discardableResult
-    func sendAdmin(payload: Data) -> Bool {
+    func sendAdmin(payload: Data, to nodeNum: UInt32, connection expected: Int, wantResponse: Bool = false) -> Bool {
         guard let peripheral = connectedPeripheral,
               let characteristic = toRadioCharacteristic,
               peripheral.state == .connected else {
             DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notConnected }
             return false
         }
-        guard let toRadio = MeshtasticAdminCodec.toRadioFrame(adminPayload: payload, myNodeNum: myNodeNum) else {
-            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.notLoaded }
+        // The write is for one radio. Without that radio's node number here,
+        // or with another one, nothing goes out.
+        guard myNodeNum == nodeNum,
+              let toRadio = MeshtasticAdminCodec.toRadioFrame(
+                  adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse) else {
+            DispatchQueue.main.async { self.lastError = MeshtasticWriteResult.linkChanged }
             return false
         }
         sendToRadio(toRadio, peripheral: peripheral, characteristic: characteristic)
@@ -581,7 +590,7 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
         guard let payload = MeshtasticProtoDecoder.decodeFromRadio(data) else { return }
 
         if let event = MeshtasticRadioSettings.Event(payload) {
-            settingsEvents.send(event)
+            settingsEvents.send(MeshtasticLinkEvent(transport: .bluetooth, connection: 0, event: event))
         }
 
         switch payload {

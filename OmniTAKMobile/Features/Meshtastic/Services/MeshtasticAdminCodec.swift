@@ -33,7 +33,17 @@
 //  caller sends the payload and keeps `Write.stored`, so a second edit builds on
 //  the first.
 //
+//  A key is only changed when asked (#148): `KeyChange.keep` leaves the radio's
+//  key as it is, `.set` replaces it, and removing it is its own case, `.clear`.
+//  A new channel goes into a slot the radio reports as disabled and is built
+//  from that slot's index alone (`encodeNewChannel`), so it inherits nothing from
+//  whatever used the slot before. That is the one message here that does not
+//  start from the old bytes, and it only exists for a slot the radio says is
+//  empty.
+//
 //  Wire layout (field numbers / enum values are facts):
+//      AdminMessage.get_channel_request  = 1  (uint32: channel index + 1)
+//      AdminMessage.get_channel_response = 2  (Channel submessage)
 //      AdminMessage.set_channel = 33  (Channel submessage)
 //      AdminMessage.set_config  = 34  (Config submessage)
 //      Channel{ index=1 (int32), settings=2 (ChannelSettings), role=3 (Role enum) }
@@ -60,9 +70,15 @@ enum MeshtasticAdminCodec {
     // MARK: - Field numbers
 
     enum AdminField {
+        static let getChannelRequest = 1
+        static let getChannelResponse = 2
         static let setChannel = 33
         static let setConfig = 34
     }
+
+    /// The longest a channel name may be. The firmware's string field holds 11
+    /// bytes and a terminator, and a longer name makes it drop the whole message.
+    static let maxChannelNameBytes = 11
 
     /// The oneof inside `Config`: which sub-config a Config message carries.
     enum ConfigVariant {
@@ -169,36 +185,157 @@ enum MeshtasticAdminCodec {
 
     // MARK: - set_channel
 
-    /// `AdminMessage{ set_channel = Channel{...} }` for one channel slot: the
-    /// channel as the radio reported it with its name, key and role changed.
+    /// What to do with a channel's key.
+    enum KeyChange: Equatable, CustomStringConvertible {
+        /// Leave the key as the radio has it.
+        case keep
+        /// Replace it. The bytes are a key of a valid length, never empty.
+        case set(Data)
+        /// Remove it, which makes the channel unencrypted. Only ever asked for
+        /// explicitly.
+        case clear
+
+        // Key bytes are never printed.
+        var description: String {
+            switch self {
+            case .keep: return "keep"
+            case .set(let key): return "set(\(key.count) bytes)"
+            case .clear: return "clear"
+            }
+        }
+    }
+
+    /// `AdminMessage{ set_channel = Channel{...} }` for a channel slot that is in
+    /// use: the channel as the radio reported it with its name, role and, when
+    /// asked, its key changed.
     ///
     /// Every other field of the channel and of its settings stays as it was:
     /// the id, uplink and downlink flags, the location precision and mute
     /// setting in `module_settings`, and anything this app does not know about.
-    /// An empty `name` or `psk` clears that field, which is what the operator
-    /// asked for when they left it blank: a channel with no name stays without
-    /// one, and nothing is put in its place. A `psk` of another length than 0,
-    /// 1, 16 or 32 bytes is passed through and the radio validates it. When the
-    /// channel already has this name, key and role, the result `changesNothing`.
+    /// An empty `name` removes the name field, which is what the operator asked
+    /// for when they gave none: a channel with no name stays without one, and
+    /// nothing is put in its place. The key is only touched for `.set` and
+    /// `.clear`. When the channel already has this name, key and role, the
+    /// result `changesNothing`.
     ///
     /// - Parameter current: the Channel message the radio sent for this slot.
-    /// - Returns: nil when `current` is not a well-formed message.
+    /// - Returns: nil when `current` is not a well-formed message, or `.set` has
+    ///   no bytes.
     static func encodeSetChannel(
         current: Data,
         name: String,
-        psk: Data,
+        key: KeyChange,
         role: ChannelRole
     ) -> Write? {
+        var settingsEdits: [ProtoFields.Edit] = [.string(ChannelSettingsField.name, name)]
+        switch key {
+        case .keep:
+            break
+        case .set(let bytes):
+            guard !bytes.isEmpty else { return nil }
+            settingsEdits.append(.bytes(ChannelSettingsField.psk, bytes))
+        case .clear:
+            settingsEdits.append(.remove(ChannelSettingsField.psk))
+        }
         guard let stored = ProtoFields.patch(current, [
-            .nested(ChannelField.settings, [
-                .bytes(ChannelSettingsField.psk, psk),
-                .string(ChannelSettingsField.name, name),
-            ]),
+            .nested(ChannelField.settings, settingsEdits),
             .varint(ChannelField.role, role.rawValue),
         ]) else { return nil }
 
         let admin = ProtoFields.messageField(AdminField.setChannel, stored).raw
         return Write(payload: admin, stored: stored, current: current)
+    }
+
+    /// `AdminMessage{ set_channel = Channel{...} }` for a new SECONDARY channel in
+    /// a slot the radio reports as disabled.
+    ///
+    /// Built from the slot's index alone: the old occupant's uplink and downlink
+    /// flags, location precision, mute setting and id are not carried over,
+    /// because they belong to a channel that is gone.
+    ///
+    /// - Parameters:
+    ///   - index: 1 to 7. Slot 0 is the primary and is never a new channel.
+    ///   - current: the Channel message the radio sent for the slot. It must say
+    ///     the slot is disabled and be the slot `index`.
+    ///   - psk: the key, or empty for a channel the sender chose to leave open.
+    /// - Returns: nil when the slot is not one the radio reported as disabled.
+    static func encodeNewChannel(index: Int, current: Data, name: String, psk: Data) -> Write? {
+        guard (1...7).contains(index),
+              let slot = channelSummary(in: current),
+              slot.index == index,
+              slot.role == ChannelRole.disabled.rawValue else { return nil }
+
+        let base = ProtoFields.serialize([ProtoFields.varintField(ChannelField.index, UInt64(index))])
+        guard let stored = ProtoFields.patch(base, [
+            .nested(ChannelField.settings, [
+                .bytes(ChannelSettingsField.psk, psk),
+                .string(ChannelSettingsField.name, name),
+            ]),
+            .varint(ChannelField.role, ChannelRole.secondary.rawValue),
+        ]) else { return nil }
+
+        let admin = ProtoFields.messageField(AdminField.setChannel, stored).raw
+        return Write(payload: admin, stored: stored, current: current)
+    }
+
+    // MARK: - Reading a channel
+
+    /// The parts of a channel the app reads back to check a write. The key is
+    /// kept for comparing and is never printed.
+    struct ChannelSummary: Equatable, CustomStringConvertible {
+        let index: Int
+        let name: String
+        let psk: Data
+        let role: UInt64
+
+        var isDisabled: Bool { role == ChannelRole.disabled.rawValue }
+
+        var description: String {
+            "slot \(index) \"\(name)\" role \(role) key \(psk.count) bytes"
+        }
+    }
+
+    /// The index, name, key and role of a Channel message. Nil when it is not
+    /// well formed, including when its settings are not.
+    static func channelSummary(in channel: Data) -> ChannelSummary? {
+        guard let fields = ProtoFields.parse(channel) else { return nil }
+        var index = 0
+        if let raw = ProtoFields.varint(ChannelField.index, in: fields) {
+            guard raw <= UInt64(Int32.max) else { return nil }
+            index = Int(raw)
+        }
+        let role = ProtoFields.varint(ChannelField.role, in: fields) ?? 0
+
+        var name = ""
+        var psk = Data()
+        if let settings = fields.last(where: { $0.number == ChannelField.settings }) {
+            guard settings.wireType == 2, let inner = ProtoFields.parse(settings.value) else { return nil }
+            if let field = inner.last(where: { $0.number == ChannelSettingsField.name && $0.wireType == 2 }) {
+                name = String(decoding: field.value, as: UTF8.self)
+            }
+            if let field = inner.last(where: { $0.number == ChannelSettingsField.psk && $0.wireType == 2 }) {
+                psk = field.value
+            }
+        }
+        return ChannelSummary(index: index, name: name, psk: psk, role: role)
+    }
+
+    // MARK: - get_channel (reading a channel back)
+
+    /// `AdminMessage{ get_channel_request = index + 1 }`. The radio answers with
+    /// `get_channel_response` only when the packet that carries this asks for a
+    /// response (`toRadioFrame(wantResponse: true)`).
+    static func encodeGetChannelRequest(index: Int) -> Data {
+        ProtoFields.varintField(AdminField.getChannelRequest, UInt64(index + 1)).raw
+    }
+
+    /// The Channel message in an `AdminMessage{ get_channel_response }`, or nil
+    /// when the message is anything else or is not well formed.
+    static func channelResponse(in adminPayload: Data) -> Data? {
+        guard let fields = ProtoFields.parse(adminPayload),
+              let response = fields.last(where: { $0.number == AdminField.getChannelResponse }),
+              response.wireType == 2 else { return nil }
+        return response.value
     }
 
     // MARK: - set_config (device role + rebroadcast scope)
@@ -291,10 +428,13 @@ enum MeshtasticAdminCodec {
     /// is connected to: a unicast to the radio's own node number, with
     /// want_ack so it applies and saves the change.
     ///
+    /// `wantResponse` is for a request (get_channel_request): the radio only
+    /// answers a request that asks for an answer.
+    ///
     /// Nil when the node number is not known (0) or is the broadcast address.
     /// An admin message must never be addressed to everyone: it would go out
     /// over the air, and for `set_channel` it carries the channel key.
-    static func toRadioFrame(adminPayload: Data, myNodeNum: UInt32) -> Data? {
+    static func toRadioFrame(adminPayload: Data, myNodeNum: UInt32, wantResponse: Bool = false) -> Data? {
         guard myNodeNum != 0, myNodeNum != broadcastNodeNum else { return nil }
         return ATAKPluginSerializer.buildToRadio(
             atakPayload: adminPayload,
@@ -302,7 +442,8 @@ enum MeshtasticAdminCodec {
             channel: 0,
             portnum: adminPortnum,
             hopLimit: 3,
-            wantAck: true
+            wantAck: true,
+            wantResponse: wantResponse
         )
     }
 }

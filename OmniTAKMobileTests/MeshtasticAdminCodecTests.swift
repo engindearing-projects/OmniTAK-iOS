@@ -162,7 +162,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
     func testChannelApplyChangesNameKeyAndRoleAndKeepsEverythingElse() throws {
         let current = RadioFixtures.channel(index: 2, name: "alpha", psk: RadioFixtures.key).data
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "bravo2", psk: RadioFixtures.otherKey, role: .primary))
+            current: current, name: "bravo2", key: .set(RadioFixtures.otherKey), role: .primary))
 
         let sentChannel = try XCTUnwrap(FixtureReader.setChannel(in: write.payload), "an AdminMessage with only set_channel")
         XCTAssertEqual(write.stored, sentChannel)
@@ -188,7 +188,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         // The issue: position_precision 13 -> 0 on a rename.
         let current = RadioFixtures.channel(index: 0, name: "simtest", role: RadioProto.ChannelRole.primary).data
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "renamed", psk: RadioFixtures.key, role: .primary))
+            current: current, name: "renamed", key: .set(RadioFixtures.key), role: .primary))
 
         let settings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
         let module = try XCTUnwrap(FixtureReader.bytes(RadioProto.ChannelSettings.moduleSettings, in: settings))
@@ -204,7 +204,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
     func testChannelApplyOnlyRenamingChangesOnlyTheName() throws {
         let current = RadioFixtures.channel(index: 3, name: "alpha", psk: RadioFixtures.key).data
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "alpha2", psk: RadioFixtures.key, role: .secondary))
+            current: current, name: "alpha2", key: .keep, role: .secondary))
 
         let oldSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: current))
         let newSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
@@ -220,7 +220,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         XCTAssertEqual(current, Data([0x08, 0x05]), "a disabled slot is its index and nothing else")
 
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "charlie", psk: RadioFixtures.key, role: .secondary))
+            current: current, name: "charlie", key: .set(RadioFixtures.key), role: .secondary))
 
         let fields = try XCTUnwrap(FixtureReader.fields(write.stored))
         XCTAssertEqual(fields.map(\.number), [1, 2, 3], "index, settings, role and nothing else")
@@ -234,7 +234,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
     func testChannelApplyToSlotZeroDoesNotInventAnIndex() throws {
         // Slot 0 is index 0, a default, so the radio leaves it out.
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: Data(), name: "ops", psk: Data([0x01]), role: .primary))
+            current: Data(), name: "ops", key: .set(Data([0x01])), role: .primary))
         XCTAssertNil(FixtureReader.varint(RadioProto.Channel.index, in: write.stored))
         XCTAssertEqual(FixtureReader.varint(RadioProto.Channel.role, in: write.stored), RadioProto.ChannelRole.primary)
         let settings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
@@ -244,7 +244,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
 
     func testABlankNameAndKeyClearThemAndNothingElse() throws {
         let current = RadioFixtures.channel(index: 4).data
-        let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "", psk: Data(), role: .secondary))
+        let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "", key: .clear, role: .secondary))
 
         let oldSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: current))
         let newSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
@@ -259,21 +259,21 @@ final class MeshtasticAdminCodecTests: XCTestCase {
             .varint(RadioProto.Channel.index, 6)
             .message(RadioProto.Channel.settings, ProtoFixture())
             .varint(RadioProto.Channel.role, RadioProto.ChannelRole.secondary).data
-        let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "", psk: Data(), role: .secondary))
+        let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "", key: .keep, role: .secondary))
         XCTAssertEqual(write.stored, current)
     }
 
     func testAChannelEncodedWithTheSameValuesAsTheRadioHasSendsItAsItWas() throws {
         let current = RadioFixtures.channel(index: 2, name: "alpha", psk: RadioFixtures.key).data
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "alpha", psk: RadioFixtures.key, role: .secondary))
+            current: current, name: "alpha", key: .set(RadioFixtures.key), role: .secondary))
         XCTAssertEqual(write.stored, current)
         XCTAssertTrue(write.changesNothing, "so there is nothing to send")
     }
 
     func testTheSetChannelEnvelopeIsFieldThirtyThree() throws {
         let write = try XCTUnwrap(Codec.encodeSetChannel(
-            current: Data([0x08, 0x01]), name: "x", psk: Data(), role: .secondary))
+            current: Data([0x08, 0x01]), name: "x", key: .keep, role: .secondary))
         // tag (33 << 3) | 2 = 266 = 8A 02, then the length of the Channel.
         XCTAssertEqual(write.payload.prefix(2), Data([0x8A, 0x02]))
         XCTAssertEqual(Array(write.payload.dropFirst(2)).first, UInt8(write.stored.count))
@@ -333,18 +333,163 @@ final class MeshtasticAdminCodecTests: XCTestCase {
 
         // The same blank name, the same key, the same role: nothing to send.
         let same = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "", psk: Data([0x01]), role: .primary))
+            current: current, name: "", key: .set(Data([0x01])), role: .primary))
         XCTAssertTrue(same.changesNothing)
         XCTAssertEqual(same.stored, current)
 
         // Another key and no name: the name stays out of the message.
         let rekeyed = try XCTUnwrap(Codec.encodeSetChannel(
-            current: current, name: "", psk: RadioFixtures.key, role: .primary))
+            current: current, name: "", key: .set(RadioFixtures.key), role: .primary))
         XCTAssertFalse(rekeyed.changesNothing)
         let settings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: rekeyed.stored))
         XCTAssertEqual(FixtureReader.fields(settings)?.map(\.number), [RadioProto.ChannelSettings.psk],
                        "a key and nothing else: no name field")
         XCTAssertEqual(FixtureReader.varint(RadioProto.Channel.role, in: rekeyed.stored), RadioProto.ChannelRole.primary)
+    }
+
+    // MARK: - A key is only changed when asked
+
+    func testKeepingTheKeyLeavesTheRadiosKeyBytesAlone() throws {
+        let current = RadioFixtures.channel(index: 2, name: "alpha", psk: RadioFixtures.key).data
+        let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "renamed", key: .keep, role: .secondary))
+
+        let oldSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: current))
+        let newSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.ChannelSettings.name, in: newSettings), Data("renamed".utf8))
+        XCTAssertEqual(try rest(newSettings, except: [RadioProto.ChannelSettings.name]),
+                       try rest(oldSettings, except: [RadioProto.ChannelSettings.name]),
+                       "the key and every other setting are byte for byte what the radio sent")
+    }
+
+    func testRemovingTheKeyIsItsOwnCaseAndTouchesNothingElse() throws {
+        let current = RadioFixtures.channel(index: 2, name: "alpha", psk: RadioFixtures.key).data
+        let write = try XCTUnwrap(Codec.encodeSetChannel(current: current, name: "alpha", key: .clear, role: .secondary))
+
+        let oldSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: current))
+        let newSettings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: write.stored))
+        XCTAssertNil(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: newSettings))
+        XCTAssertEqual(try rest(newSettings, except: []), try rest(oldSettings, except: [RadioProto.ChannelSettings.psk]))
+    }
+
+    func testASetKeyWithNoBytesIsRefusedNotTakenForARemoval() {
+        let current = RadioFixtures.channel(index: 2).data
+        XCTAssertNil(Codec.encodeSetChannel(current: current, name: "x", key: .set(Data()), role: .secondary))
+    }
+
+    func testKeyChangesDescribeThemselvesWithoutTheBytes() {
+        XCTAssertEqual(Codec.KeyChange.set(RadioFixtures.key).description, "set(32 bytes)")
+        XCTAssertEqual(Codec.KeyChange.keep.description, "keep")
+        XCTAssertEqual(Codec.KeyChange.clear.description, "clear")
+    }
+
+    // MARK: - A new channel in a free slot
+
+    func testANewChannelIsBuiltFromTheSlotsIndexAlone() throws {
+        // The slot is disabled and carries leftovers from its last channel.
+        let leftovers = ProtoFixture()
+            .varint(RadioProto.Channel.index, 4)
+            .message(RadioProto.Channel.settings, ProtoFixture()
+                .bytes(RadioProto.ChannelSettings.psk, RadioFixtures.otherKey)
+                .string(RadioProto.ChannelSettings.name, "old")
+                .fixed32(RadioProto.ChannelSettings.id, 0x0A0B_0C0D)
+                .bool(RadioProto.ChannelSettings.uplinkEnabled, true)
+                .message(RadioProto.ChannelSettings.moduleSettings, ProtoFixture().varint(RadioProto.ModuleSettings.positionPrecision, 13)))
+            .varint(99, 7)
+        let write = try XCTUnwrap(Codec.encodeNewChannel(index: 4, current: leftovers.data, name: "fresh", psk: RadioFixtures.key))
+
+        let channel = try XCTUnwrap(FixtureReader.setChannel(in: write.payload))
+        XCTAssertEqual(write.stored, channel)
+        XCTAssertEqual(FixtureReader.fields(channel)?.map(\.number), [1, 2, 3], "no field of the old channel, known or not")
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Channel.index, in: channel), 4)
+        XCTAssertEqual(FixtureReader.varint(RadioProto.Channel.role, in: channel), RadioProto.ChannelRole.secondary)
+        let settings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: channel))
+        XCTAssertEqual(FixtureReader.fields(settings)?.map(\.number), [RadioProto.ChannelSettings.psk, RadioProto.ChannelSettings.name])
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.ChannelSettings.name, in: settings), Data("fresh".utf8))
+        XCTAssertTrue(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: settings) == RadioFixtures.key)
+    }
+
+    func testANewChannelWithNoKeyIsAnOpenChannelOnlyBecauseTheCallerAskedForOne() throws {
+        let write = try XCTUnwrap(Codec.encodeNewChannel(
+            index: 2, current: RadioFixtures.disabledChannel(index: 2).data, name: "open", psk: Data()))
+        let channel = try XCTUnwrap(FixtureReader.setChannel(in: write.payload))
+        let settings = try XCTUnwrap(FixtureReader.bytes(RadioProto.Channel.settings, in: channel))
+        XCTAssertNil(FixtureReader.bytes(RadioProto.ChannelSettings.psk, in: settings))
+    }
+
+    func testANewChannelIsOnlyBuiltForASlotTheRadioReportsAsDisabled() {
+        let inUse = RadioFixtures.channel(index: 3, name: "busy").data
+        XCTAssertNil(Codec.encodeNewChannel(index: 3, current: inUse, name: "x", psk: RadioFixtures.key), "in use")
+        XCTAssertNil(Codec.encodeNewChannel(index: 3, current: Data([0x08, 0x04]), name: "x", psk: RadioFixtures.key), "another slot's bytes")
+        XCTAssertNil(Codec.encodeNewChannel(index: 0, current: Data(), name: "x", psk: RadioFixtures.key), "slot 0 is the primary")
+        XCTAssertNil(Codec.encodeNewChannel(index: 8, current: Data([0x08, 0x08]), name: "x", psk: RadioFixtures.key), "no such slot")
+        XCTAssertNil(Codec.encodeNewChannel(index: 3, current: Data([0x08, 0x80]), name: "x", psk: RadioFixtures.key), "not well formed")
+        XCTAssertNotNil(Codec.encodeNewChannel(index: 3, current: Data([0x08, 0x03]), name: "x", psk: RadioFixtures.key))
+    }
+
+    // MARK: - Reading a channel
+
+    func testAChannelSummaryHasTheIndexNameKeyAndRole() throws {
+        let summary = try XCTUnwrap(Codec.channelSummary(in: RadioFixtures.channel(index: 5, name: "echo", psk: RadioFixtures.otherKey).data))
+        XCTAssertEqual(summary.index, 5)
+        XCTAssertEqual(summary.name, "echo")
+        XCTAssertTrue(summary.psk == RadioFixtures.otherKey)
+        XCTAssertEqual(summary.role, RadioProto.ChannelRole.secondary)
+        XCTAssertFalse(summary.isDisabled)
+        XCTAssertEqual(summary.description, "slot 5 \"echo\" role 2 key 32 bytes", "the key is never printed")
+    }
+
+    func testASlotThatIsOnlyItsIndexIsDisabledAndEmptyIsSlotZero() throws {
+        let disabled = try XCTUnwrap(Codec.channelSummary(in: RadioFixtures.disabledChannel(index: 6).data))
+        XCTAssertTrue(disabled.isDisabled)
+        XCTAssertEqual(disabled.index, 6)
+        XCTAssertEqual(disabled.name, "")
+        XCTAssertEqual(disabled.psk, Data())
+        XCTAssertEqual(try XCTUnwrap(Codec.channelSummary(in: Data())).index, 0)
+    }
+
+    func testAChannelSummaryIsNilForAChannelThatIsNotWellFormed() {
+        XCTAssertNil(Codec.channelSummary(in: Data([0x08, 0x80])))
+        // settings written as a varint, and settings cut short
+        XCTAssertNil(Codec.channelSummary(in: ProtoFixture().varint(RadioProto.Channel.settings, 5).data))
+        XCTAssertNil(Codec.channelSummary(in: ProtoFixture().message(RadioProto.Channel.settings, ProtoFixture().raw([0x1A, 0x09, 0x01])).data))
+        // a negative index
+        XCTAssertNil(Codec.channelSummary(in: ProtoFixture().varint(RadioProto.Channel.index, UInt64(bitPattern: -1)).data))
+    }
+
+    // MARK: - Asking the radio for a channel
+
+    func testAGetChannelRequestIsFieldOneWithTheIndexPlusOne() {
+        XCTAssertEqual(Codec.encodeGetChannelRequest(index: 0), Data([0x08, 0x01]))
+        XCTAssertEqual(Codec.encodeGetChannelRequest(index: 7), Data([0x08, 0x08]))
+    }
+
+    func testTheChannelInAGetChannelResponseIsFieldTwo() {
+        let channel = RadioFixtures.channel(index: 2, name: "echo")
+        let admin = ProtoFixture().bytes(2, channel.data).data
+        XCTAssertEqual(Codec.channelResponse(in: admin), channel.data)
+        XCTAssertNil(Codec.channelResponse(in: ProtoFixture().bytes(34, channel.data).data), "a set_config is not an answer")
+        XCTAssertNil(Codec.channelResponse(in: Data([0x12, 0x09, 0x01])), "not well formed")
+        XCTAssertNil(Codec.channelResponse(in: ProtoFixture().varint(2, 5).data), "field 2 as a varint")
+    }
+
+    func testARequestFrameAsksForAResponseAndAWriteFrameDoesNot() throws {
+        let payload = Codec.encodeGetChannelRequest(index: 2)
+        let request = try XCTUnwrap(Codec.toRadioFrame(adminPayload: payload, myNodeNum: 0x1234, wantResponse: true))
+        let write = try XCTUnwrap(Codec.toRadioFrame(adminPayload: payload, myNodeNum: 0x1234))
+
+        func decoded(_ frame: Data) throws -> Data {
+            let toRadio = try XCTUnwrap(FixtureReader.fields(frame))
+            return try XCTUnwrap(FixtureReader.bytes(RadioProto.MeshPacket.decoded, in: toRadio[0].value))
+        }
+        // Data.want_response is field 3.
+        XCTAssertEqual(FixtureReader.varint(3, in: try decoded(request)), 1)
+        XCTAssertNil(FixtureReader.varint(3, in: try decoded(write)))
+        XCTAssertEqual(FixtureReader.varint(RadioProto.DataMessage.portnum, in: try decoded(request)), RadioProto.adminPortnum)
+        XCTAssertEqual(FixtureReader.bytes(RadioProto.DataMessage.payload, in: try decoded(request)), payload)
+    }
+
+    func testAChannelNameMayBeElevenBytes() {
+        XCTAssertEqual(Codec.maxChannelNameBytes, 11)
     }
 
     // MARK: - Malformed bytes from the radio
@@ -353,13 +498,13 @@ final class MeshtasticAdminCodecTests: XCTestCase {
         let cut = Data([0x08, 0x80])       // a varint that never ends
         XCTAssertNil(Codec.encodeSetPositionBroadcastInterval(current: cut, seconds: 900))
         XCTAssertNil(Codec.encodeSetDeviceConfig(current: cut, role: .tak, rebroadcastMode: .all))
-        XCTAssertNil(Codec.encodeSetChannel(current: cut, name: "x", psk: Data(), role: .secondary))
+        XCTAssertNil(Codec.encodeSetChannel(current: cut, name: "x", key: .keep, role: .secondary))
     }
 
     func testNothingIsBuiltFromAChannelWhoseSettingsAreNotAMessage() {
         // settings (2) written as a varint.
         let current = ProtoFixture().varint(RadioProto.Channel.index, 1).varint(RadioProto.Channel.settings, 5).data
-        XCTAssertNil(Codec.encodeSetChannel(current: current, name: "x", psk: Data(), role: .secondary))
+        XCTAssertNil(Codec.encodeSetChannel(current: current, name: "x", key: .keep, role: .secondary))
     }
 
     func testNothingIsBuiltFromAChannelWhoseSettingsAreCutShort() {
@@ -367,7 +512,7 @@ final class MeshtasticAdminCodecTests: XCTestCase {
             .varint(RadioProto.Channel.index, 1)
             .message(RadioProto.Channel.settings, ProtoFixture().raw([0x1A, 0x09, 0x01]))
             .data
-        XCTAssertNil(Codec.encodeSetChannel(current: current, name: "x", psk: Data(), role: .secondary))
+        XCTAssertNil(Codec.encodeSetChannel(current: current, name: "x", key: .keep, role: .secondary))
     }
 
     // MARK: - Reading the radio's values

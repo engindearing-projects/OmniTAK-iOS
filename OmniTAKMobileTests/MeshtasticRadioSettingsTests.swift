@@ -184,6 +184,13 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
 
     private typealias Settings = MeshtasticRadioSettings
 
+    /// Settings of a radio that has said who it is, as every download begins.
+    private func started(node: UInt32 = 0x0A0B_0C0D) -> Settings {
+        var settings = Settings()
+        settings.apply(.downloadStarted(nodeNum: node))
+        return settings
+    }
+
     /// The frames of a config download in the order a 2.7 radio sends them: my
     /// info, the channels, the configs (all of them, with a made-up key and
     /// password in the two that carry secrets), then config_complete.
@@ -221,7 +228,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     // MARK: Events
 
     func testTheFramesThatChangeWhatIsKnownBecomeEvents() {
-        XCTAssertEqual(Settings.Event(.myInfo(nodeNum: 5)), .downloadStarted)
+        XCTAssertEqual(Settings.Event(.myInfo(nodeNum: 5)), .downloadStarted(nodeNum: 5))
         XCTAssertEqual(Settings.Event(.config(variant: 2, body: Data([1]))), .config(variant: 2, body: Data([1])))
         XCTAssertEqual(Settings.Event(.channel(index: 3, body: Data([2]))), .channel(index: 3, body: Data([2])))
     }
@@ -262,7 +269,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testChannelSlotsThatTheRadioDoesNotHaveAreNotKept() {
-        var settings = Settings()
+        var settings = started()
         for index in [-1, 8, 9, 255] {
             settings.apply(.channel(index: index, body: Data([0x08, 0x01])))
         }
@@ -272,7 +279,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testAnEmptyConfigIsARealEntryNotAMissingOne() {
-        var settings = Settings()
+        var settings = started()
         XCTAssertFalse(settings.hasDeviceConfig)
         settings.apply(.config(variant: RadioProto.Config.device, body: Data()))
         XCTAssertTrue(settings.hasDeviceConfig)
@@ -281,7 +288,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testAConfigSentAgainReplacesTheOldOne() {
-        var settings = Settings()
+        var settings = started()
         settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig(broadcastSecs: 3600).data))
         settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig(broadcastSecs: 600).data))
         XCTAssertEqual(settings.positionBroadcastSeconds, 600)
@@ -293,9 +300,11 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         var settings = settings(afterDownloading: downloadFrames())
         XCTAssertFalse(settings.isEmpty)
 
-        settings.apply(.downloadStarted)
+        settings.apply(.downloadStarted(nodeNum: 0x0A0B_0C0D))
 
-        XCTAssertTrue(settings.isEmpty)
+        XCTAssertTrue(settings.configs.isEmpty)
+        XCTAssertTrue(settings.channels.isEmpty)
+        XCTAssertEqual(settings.nodeNum, 0x0A0B_0C0D, "it is the radio's, and nothing of it is known yet")
         XCTAssertFalse(settings.hasDeviceConfig)
         XCTAssertFalse(settings.hasPositionConfig)
         XCTAssertNil(settings.channel(index: 0))
@@ -328,10 +337,146 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         XCTAssertEqual(settings, Settings())
     }
 
+    // MARK: Whose settings these are
+
+    func testNothingIsKeptBeforeARadioHasSaidWhoItIs() {
+        var settings = Settings()
+        settings.apply(.config(variant: RadioProto.Config.device, body: RadioFixtures.deviceConfig().data))
+        settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
+        settings.apply(.channel(index: 0, body: RadioFixtures.channelSlots()[0]!.data))
+        settings.apply(.channelReadBack(from: 5, body: RadioFixtures.channelSlots()[0]!.data))
+
+        XCTAssertNil(settings.nodeNum)
+        XCTAssertTrue(settings.isEmpty, "frames that belong to nobody are not kept")
+        XCTAssertFalse(settings.hasDeviceConfig)
+    }
+
+    func testTheSettingsAreTheRadiosThatReportedThem() {
+        var settings = started(node: 0x1111)
+        XCTAssertEqual(settings.nodeNum, 0x1111)
+        settings.apply(.downloadStarted(nodeNum: 0x2222))
+        XCTAssertEqual(settings.nodeNum, 0x2222, "another radio's download starts over")
+    }
+
+    func testAMyInfoWithNoNodeNumberNamesNobody() {
+        XCTAssertNil(Settings.Event(.myInfo(nodeNum: 0)))
+    }
+
+    func testRemovingEverythingForgetsWhoTheRadioWas() {
+        var settings = started()
+        settings.apply(.config(variant: RadioProto.Config.device, body: Data()))
+        settings.removeAll()
+        XCTAssertNil(settings.nodeNum)
+        XCTAssertEqual(settings, Settings())
+    }
+
+    // MARK: What a write drops
+
+    func testAWriteDropsTheConfigItTouchedAndRemembersTheRadioIsRestarting() {
+        var settings = started()
+        settings.apply(.config(variant: RadioProto.Config.device, body: RadioFixtures.deviceConfig().data))
+        settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.positionConfig().data))
+
+        settings.invalidateConfig(variant: RadioProto.Config.position)
+
+        XCTAssertNil(settings.config(variant: RadioProto.Config.position))
+        XCTAssertNotNil(settings.config(variant: RadioProto.Config.device))
+        XCTAssertTrue(settings.isAwaitingRestart(variant: RadioProto.Config.position))
+        XCTAssertFalse(settings.isAwaitingRestart(variant: RadioProto.Config.device))
+        XCTAssertTrue(settings.isAwaitingAnyRestart)
+
+        // A new download is the radio's word again.
+        settings.apply(.downloadStarted(nodeNum: 0x0A0B_0C0D))
+        XCTAssertFalse(settings.isAwaitingAnyRestart)
+    }
+
+    func testAWriteDropsTheChannelUntilTheRadioAnswers() {
+        var settings = started()
+        settings.apply(.channel(index: 2, body: RadioFixtures.channel(index: 2, name: "old").data))
+
+        settings.invalidateChannel(index: 2)
+        XCTAssertNil(settings.channel(index: 2))
+        XCTAssertTrue(settings.isAwaitingReadBack(index: 2))
+
+        let answer = RadioFixtures.channel(index: 2, name: "new")
+        settings.apply(.channelReadBack(from: 0x0A0B_0C0D, body: answer.data))
+        XCTAssertEqual(settings.channel(index: 2), answer.data)
+        XCTAssertFalse(settings.isAwaitingReadBack(index: 2))
+    }
+
+    func testAnAnswerFromAnotherNodeIsNotTheRadiosWord() {
+        var settings = started(node: 0x0A0B_0C0D)
+        settings.invalidateChannel(index: 2)
+        settings.apply(.channelReadBack(from: 0x9999, body: RadioFixtures.channel(index: 2, name: "other").data))
+        XCTAssertNil(settings.channel(index: 2))
+        XCTAssertTrue(settings.isAwaitingReadBack(index: 2))
+    }
+
+    func testAnAnswerThatIsNotAChannelIsNotKept() {
+        var settings = started()
+        settings.apply(.channelReadBack(from: 0x0A0B_0C0D, body: Data([0x08, 0x80])))
+        XCTAssertTrue(settings.channels.isEmpty)
+    }
+
+    func testAnAdminAnswerInAMeshPacketBecomesAReadBack() {
+        var frame = MeshtasticProtoDecoder.MeshPacketFrame()
+        frame.from = 0x0A0B_0C0D
+        frame.portNum = 6
+        let channel = RadioFixtures.channel(index: 3, name: "echo")
+        frame.payload = ProtoFixture().bytes(2, channel.data).data
+        XCTAssertEqual(Settings.Event(.packet(frame)), .channelReadBack(from: 0x0A0B_0C0D, body: channel.data))
+
+        // Anything else on the admin port, or any other port, is not one.
+        frame.payload = ProtoFixture().bytes(34, channel.data).data
+        XCTAssertNil(Settings.Event(.packet(frame)))
+        frame.payload = ProtoFixture().bytes(2, channel.data).data
+        frame.portNum = 3
+        XCTAssertNil(Settings.Event(.packet(frame)))
+    }
+
+    // MARK: Free slots
+
+    func testTheFreeSlotsAreTheSecondarySlotsTheRadioReportsAsDisabled() {
+        var settings = started()
+        let slots = RadioFixtures.channelSlots()           // 0 primary, 1 in use, 2 to 7 disabled
+        for index in 0...7 { settings.apply(.channel(index: index, body: slots[index]!.data)) }
+        XCTAssertEqual(settings.freeChannelSlots, [2, 3, 4, 5, 6, 7])
+    }
+
+    func testASlotNothingIsKnownAboutIsNotFree() {
+        var settings = started()
+        for index in [0, 1, 3] {
+            settings.apply(.channel(index: index, body: RadioFixtures.disabledChannel(index: index).data))
+        }
+        XCTAssertEqual(settings.freeChannelSlots, [1, 3], "slot 2 was not reported, so it may be in use; slot 0 is the primary")
+
+        settings.invalidateChannel(index: 3)
+        XCTAssertEqual(settings.freeChannelSlots, [1], "and a slot with a write on its way is not free")
+    }
+
+    func testASlotMalformedOrWithTheWrongIndexIsNotFree() {
+        var settings = started()
+        settings.apply(.channel(index: 2, body: Data([0x08, 0x05])))      // says it is slot 5
+        settings.apply(.channel(index: 3, body: Data([0x08, 0x03])))
+        XCTAssertEqual(settings.freeChannelSlots, [3])
+    }
+
+    func testTheSlotHoldingAChannelIsFoundByNameAndKey() {
+        var settings = started()
+        settings.apply(.channel(index: 0, body: RadioFixtures.channel(index: 0, name: "ops", psk: RadioFixtures.key, role: RadioProto.ChannelRole.primary).data))
+        settings.apply(.channel(index: 4, body: RadioFixtures.channel(index: 4, name: "ops", psk: RadioFixtures.otherKey).data))
+        settings.apply(.channel(index: 5, body: RadioFixtures.disabledChannel(index: 5).data))
+
+        XCTAssertEqual(settings.slotHolding(name: "ops", key: RadioFixtures.key), 0)
+        XCTAssertEqual(settings.slotHolding(name: "ops", key: RadioFixtures.otherKey), 4)
+        XCTAssertNil(settings.slotHolding(name: "ops", key: Data([1])), "same name, another key")
+        XCTAssertNil(settings.slotHolding(name: "", key: Data()), "a disabled slot holds nothing")
+    }
+
     // MARK: What the screen reads
 
     func testTheScreenValuesAreReadFromWhatWasKept() {
-        var settings = Settings()
+        var settings = started()
         XCTAssertNil(settings.deviceRole)
         XCTAssertNil(settings.rebroadcastMode)
         XCTAssertNil(settings.positionBroadcastSeconds)
@@ -348,7 +493,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testARoleTheAppHasNoNameForIsReportedAsItIs() {
-        var settings = Settings()
+        var settings = started()
         let device = ProtoFixture()
             .varint(RadioProto.Device.role, RadioProto.DeviceRole.sensor)
             .varint(RadioProto.Device.rebroadcastMode, RadioProto.Rebroadcast.coreOnly)
@@ -364,7 +509,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     func testAFactoryRadioReadsAsClientAndAllAndItsOwnInterval() {
         // The device config has neither a role nor a rebroadcast mode, because
         // both are at their defaults. They are CLIENT and ALL, not unknown.
-        var settings = Settings()
+        var settings = started()
         settings.apply(.config(variant: RadioProto.Config.device, body: RadioFixtures.factoryDeviceConfig().data))
         settings.apply(.config(variant: RadioProto.Config.position, body: RadioFixtures.factoryPositionConfig(broadcastSecs: 900).data))
 
@@ -379,7 +524,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testAnEmptyDeviceConfigIsClientAndAllNotNotLoaded() {
-        var settings = Settings()
+        var settings = started()
         settings.apply(.config(variant: RadioProto.Config.device, body: Data()))
         XCTAssertTrue(settings.hasDeviceConfig)
         XCTAssertEqual(settings.namedDeviceRole, .client)
@@ -387,7 +532,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testAPositionConfigWithoutAnIntervalReadsAsZero() {
-        var settings = Settings()
+        var settings = started()
         XCTAssertNil(settings.positionBroadcastSeconds, "not loaded")
         settings.apply(.config(variant: RadioProto.Config.position, body: ProtoFixture().varint(RadioProto.Position.gpsMode, 1).data))
         XCTAssertTrue(settings.hasPositionConfig)
@@ -404,7 +549,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testARoleWithNoNameIsUnlistedAndNeverBecomesANamedRole() {
-        var settings = Settings()
+        var settings = started()
         let device = ProtoFixture()
             .varint(RadioProto.Device.role, 12)    // CLIENT_BASE, which the app has no entry for
             .varint(RadioProto.Device.rebroadcastMode, RadioProto.Rebroadcast.coreOnly)
@@ -417,7 +562,7 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
     }
 
     func testANamedRoleIsNotUnlisted() {
-        var settings = Settings()
+        var settings = started()
         settings.apply(.config(variant: RadioProto.Config.device, body: ProtoFixture().varint(RadioProto.Device.role, RadioProto.DeviceRole.tak).data))
         XCTAssertEqual(settings.namedDeviceRole, .tak)
         XCTAssertNil(settings.unlistedDeviceRole)

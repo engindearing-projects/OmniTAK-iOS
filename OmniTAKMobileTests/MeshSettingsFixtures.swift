@@ -344,8 +344,9 @@ enum RadioFixtures {
             .message(RadioProto.ChannelSettings.moduleSettings, moduleSettings)
             .bool(RadioProto.ChannelSettings.useAead, true)
             .varint(40, 9)
-        return ProtoFixture()
-            .varint(RadioProto.Channel.index, UInt64(index))
+        // Slot 0 is index 0, a default, so a radio leaves the field out.
+        let head = index == 0 ? ProtoFixture() : ProtoFixture().varint(RadioProto.Channel.index, UInt64(index))
+        return head
             .message(RadioProto.Channel.settings, settings)
             .varint(RadioProto.Channel.role, role)
     }
