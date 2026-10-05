@@ -1362,6 +1362,10 @@ class TAKService: ObservableObject {
     private var serverConnections: [UUID: ServerConnectionState] = [:]
     private let connectionsLock = NSLock()
 
+    /// Liveness timings for the senders made from now on. The defaults are the
+    /// real ones; tests shorten them.
+    var livenessTiming = TAKLinkLiveness.Timing()
+
     /// IDs of currently-connected servers, derived from serverConnections
     /// (cached state, refreshed by updateOverallConnectionState's sync
     /// sweep — the same freshness the old stored set had). Views observing
@@ -1590,6 +1594,7 @@ class TAKService: ObservableObject {
         // thread, not from the sender's queue.
         let pingUID = PositionBroadcastService.shared.userUID + "-ping"
         sender.pingUID = { pingUID }
+        sender.livenessTiming = livenessTiming
 
         // The handlers hold the sender weakly and do nothing unless the entry
         // for this server still holds this very sender, so a callback that

@@ -218,10 +218,17 @@ final class TAKServiceDialTests: XCTestCase {
 
     override func tearDown() {
         service.disconnect()
+        service.livenessTiming = TAKLinkLiveness.Timing()
         server?.stop()
         server = nil
         record = nil
         super.tearDown()
+    }
+
+    /// Short timings for the senders the service makes: a ping after 0.3 s idle,
+    /// 0.5 s to answer, a tick every 0.1 s.
+    private func useShortLivenessTimings() {
+        service.livenessTiming = TAKLinkLiveness.Timing(pingIdle: 0.3, pongWait: 0.5, tick: 0.1)
     }
 
     private var phase: ServerConnectionState.Phase? { service.connectionPhase(of: record.id) }
@@ -303,6 +310,33 @@ final class TAKServiceDialTests: XCTestCase {
         XCTAssertNil(phase)
         observe(for: 3)
         XCTAssertEqual(server.acceptedCount, accepted)
+    }
+
+    func testWhatIsKnownAboutAServerCarriesToTheNextDial() {
+        useShortLivenessTimings()
+        service.connectToServer(record)
+        waitUntilUp()
+        // A second ping goes out only after the first one's answer was read.
+        waitUntil("two pings, so the first answer has been read") { server.pingCount >= 2 }
+
+        // The server stops answering and drops the connection. The new connection
+        // gets no answer to its first ping. Only a sender that was told this
+        // server answers pings gives up on that: for one that never heard an
+        // answer, quiet is not a reason to drop it.
+        server.pingBehavior = .ignore
+        server.close(connection: 0)
+        waitUntil(10, "the app to give up on the silent server on the second connection") {
+            server.acceptedCount >= 2 && server.closedByClientCount >= 1
+        }
+    }
+
+    func testThePingUIDIsTheDeviceUIDPlusPing() {
+        useShortLivenessTimings()
+        server.pingBehavior = .ignore
+        service.connectToServer(record)
+        waitUntil("a ping") { server.pingCount >= 1 }
+        let ping = server.allFrames.first { $0.type == TAKPing.pingType }
+        XCTAssertEqual(ping?.uid, (PositionBroadcastService.shared.userUID + "-ping").xmlEscaped)
     }
 
     func testConnectingAgainWhileWaitingDialsNowInsteadOfWaiting() {
