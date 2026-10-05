@@ -122,6 +122,37 @@ final class TAKSenderLivenessTests: XCTestCase {
         XCTAssertEqual(recorder.states, [true])
     }
 
+    func testWhatIsKnownAboutOneServerIsForgottenWhenTheSenderIsPointedAtAnother() throws {
+        // The older single connection reuses its sender for whatever server it is
+        // asked to dial next.
+        let other = LoopbackTAKServer(pingBehavior: .ignore)
+        try other.start()
+        defer { other.stop() }
+
+        connect()                                    // server: answers pings
+        waitUntil("the sender to read an answer") { sender.serverAnswersPings }
+
+        let rec = recorder!
+        // The same server again: what is known about it stays.
+        sender.connect(host: "127.0.0.1", port: server.port) { rec.recordDial($0) }
+        XCTAssertTrue(sender.serverAnswersPings, "the same host and port: still the server that answers pings")
+
+        // Another port: a different server. Nothing is known about it.
+        sender.connect(host: "127.0.0.1", port: other.port) { rec.recordDial($0) }
+        XCTAssertFalse(sender.serverAnswersPings, "a different server has not answered anything yet")
+    }
+
+    func testAFreshSenderThatIsToldTheServerAnswersKeepsTheFactOnItsFirstDial() {
+        // TAKService sets this before the first dial of every new sender.
+        let s = DirectTCPSender()
+        s.serverAnswersPings = true
+        let rec = recorder!
+        recorder.attach(to: s)
+        sender = s
+        s.connect(host: "127.0.0.1", port: server.port) { rec.recordDial($0) }
+        XCTAssertTrue(s.serverAnswersPings)
+    }
+
     func testWhatIsKnownAboutTheServerCarriesToANewSender() {
         // The owner sets this from the previous sender for the same server.
         server.pingBehavior = .ignore
@@ -152,11 +183,36 @@ final class TAKSenderLivenessTests: XCTestCase {
     }
 
     func testAnEndedSessionCancelsItsConnection() {
+        // The server ignores pings, so it is the SENDER that ends the session
+        // ("No response from server"). The server must then see the client close
+        // its end: the connection is cancelled, not left half open.
+        server.pingBehavior = .answerDoubleQuoted
+        connect()
+        waitUntil("the sender to read an answer") { sender.serverAnswersPings }
+        server.pingBehavior = .ignore
+        waitUntil(10, "the sender to give up on the silent server") { sender.endReason != nil }
+        XCTAssertEqual(sender.endReason, "No response from server")
+        waitUntil("the server to see the client close the connection") { server.closedByClient(connection: 0) }
+        XCTAssertNil(sender.activeConnection, "and the sender lets go of it")
+    }
+
+    func testAFailedSendEndsTheSession() {
+        // The write side of the connection is closed (a final message), while the
+        // server keeps its end open and keeps talking: the receive side is healthy,
+        // so the only thing that can end the session is the write that fails.
         connect()
         waitForConnection()
-        server.close(connection: 0)
-        waitUntil("the session to end") { sender.endReason != nil }
-        XCTAssertNil(sender.connectionParameters, "the connection is let go, not left half open")
+        let live = try! XCTUnwrap(sender.activeConnection)
+        live.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in })
+        observe(for: 0.2)
+        XCTAssertNil(sender.endReason, "closing the write side alone ends nothing here")
+
+        XCTAssertTrue(sender.send(xml: "<event/>"), "the write is accepted, then fails")
+        waitUntil("the failed write to end the session") { sender.endReason != nil }
+        XCTAssertTrue(sender.endReason?.hasPrefix("Send failed") == true, sender.endReason ?? "nil")
+        XCTAssertFalse(sender.isConnected)
+        XCTAssertEqual(recorder.states, [true, false], "reported down once")
+        XCTAssertEqual(recorder.isConnectedInsideDownReport, [false])
     }
 
     // MARK: - Ping exchange stays out of the CoT pipeline
@@ -293,12 +349,24 @@ final class TAKSenderLivenessTests: XCTestCase {
     }
 
     func testDisconnectWhileTheDialIsInFlightReportsNothing() {
-        connect()
+        // Hold the dial in flight for real: a TLS handshake to a server that
+        // accepts the TCP connection and never answers stays in .preparing until
+        // the connect timeout, which is set far away here.
+        server.pingBehavior = .ignore
+        connect(useTLS: true, connectTimeout: 60)
+        waitUntil("the server to accept the TCP connection") { server.acceptedCount == 1 }
+        XCTAssertFalse(sender.isConnected, "the handshake is still going: this dial is in flight")
+        XCTAssertNotNil(sender.activeConnection)
+
         sender.disconnect()
-        // The dial would have completed within milliseconds on loopback.
-        observe(for: 0.5)
+        XCTAssertNil(sender.activeConnection)
+        // The connection is cancelled, which the server sees ...
+        waitUntil("the server to see the connection cancelled") { server.closedByClient(connection: 0) }
+        // ... and the owner is told nothing: no state, no dial result.
+        observe(for: 0.3)
         XCTAssertTrue(recorder.states.isEmpty)
         XCTAssertTrue(recorder.dials.isEmpty)
+        XCTAssertNil(sender.endReason)
         XCTAssertFalse(sender.isConnected)
     }
 
@@ -321,14 +389,15 @@ final class TAKSenderLivenessTests: XCTestCase {
 
     // MARK: - A dial that does not come up
 
-    func testADialToAServerThatIsNotListeningEndsOnceAndTellsTheOwner() {
+    func testADialToAServerThatIsNotListeningFailsAtOnceAndTellsTheOwnerOnce() {
         let port = server.port
         server.stop()
-        connect(port: port, connectTimeout: 0.7)
-        waitUntil(10, "the dial to end") { sender.endReason != nil }
+        // The connect timeout is far away: only the refusal itself can end this dial
+        // inside the deadline below.
+        connect(port: port, connectTimeout: 30)
+        waitUntil(5, "the refused dial to end, long before the connect timeout") { sender.endReason != nil }
 
-        let reason = sender.endReason ?? ""
-        XCTAssertTrue(reason.hasPrefix("Connection failed") || reason.hasPrefix("Connect timed out"), reason)
+        XCTAssertEqual(sender.endReason, "Connection refused")
         XCTAssertFalse(sender.isConnected)
         XCTAssertEqual(recorder.dials, [false])
         XCTAssertEqual(recorder.states, [false], "down once, never up")
@@ -370,38 +439,11 @@ final class TAKSenderLivenessTests: XCTestCase {
     // MARK: - UDP
 
     func testAUDPDatagramIsNotTheEndOfTheConnectionAndUDPIsNeverPinged() throws {
-        let queue = DispatchQueue(label: "test.udp.server")
-        let lock = NSLock()
-        var peers: [NWConnection] = []
-        var datagrams = 0
-        let listener = try NWListener(using: .udp, on: .any)
-        let ready = DispatchSemaphore(value: 0)
-        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
-        listener.newConnectionHandler = { connection in
-            lock.lock(); peers.append(connection); lock.unlock()
-            connection.start(queue: queue)
-            func receiveNext() {
-                connection.receiveMessage { data, _, _, error in
-                    guard error == nil else { return }
-                    lock.lock(); datagrams += 1; let first = datagrams == 1; lock.unlock()
-                    // Once the client has sent its first datagram, answer with two.
-                    if first {
-                        for uid in ["ONE", "TWO"] {
-                            let frame = LoopbackTAKServer.positionFrame(uid: uid)
-                            connection.send(content: frame.data(using: .utf8), completion: .contentProcessed { _ in })
-                        }
-                    }
-                    receiveNext()
-                }
-            }
-            receiveNext()
-        }
-        listener.start(queue: queue)
-        defer { listener.cancel() }
-        XCTAssertEqual(ready.wait(timeout: .now() + 5), .success)
-        let port = try XCTUnwrap(listener.port?.rawValue)
+        let udp = LoopbackUDPServer(repliesAfterFirstDatagram: ["ONE", "TWO"])
+        try udp.start()
+        defer { udp.stop() }
 
-        connect(port: port, protocolType: "udp")
+        connect(port: udp.port, protocolType: "udp")
         waitUntil("the UDP connection to be up") { sender.isConnected }
         XCTAssertTrue(sender.send(xml: LoopbackTAKServer.positionFrame(uid: "CLIENT")))
 
@@ -413,9 +455,112 @@ final class TAKSenderLivenessTests: XCTestCase {
         // No liveness on UDP: with a ping after 0.3 s idle, the server would have
         // seen a second datagram within this window.
         observe(for: 0.8)
-        lock.lock(); let seen = datagrams; lock.unlock()
-        XCTAssertEqual(seen, 1, "only the client's own datagram: UDP is never pinged")
+        XCTAssertEqual(udp.datagrams, 1, "only the client's own datagram: UDP is never pinged")
         XCTAssertEqual(recorder.messages.count, 2)
         XCTAssertNil(sender.endReason)
+    }
+
+    func testAUDPPortThatIsNotListeningDoesNotEndTheConnection() throws {
+        // A datagram to a closed UDP port comes back as an ICMP error, which the
+        // connection reports as an error on the next read or write. On main that
+        // was only printed. A UDP link must not blink once per cycle because of it.
+        let udp = LoopbackUDPServer(repliesAfterFirstDatagram: [])
+        try udp.start()
+        let closedPort = udp.port
+        udp.stop()
+
+        connect(port: closedPort, protocolType: "udp")
+        waitUntil("the UDP connection to be up") { sender.isConnected }
+        for _ in 0..<5 {
+            _ = sender.send(xml: LoopbackTAKServer.positionFrame(uid: "NOBODY-HOME"))
+            observe(for: 0.1)
+        }
+        // Whatever error came back has been delivered by now.
+        observe(for: 0.5)
+        XCTAssertNil(sender.endReason, "an error on a UDP connection is logged, not a session end: \(sender.endReason ?? "")")
+        XCTAssertTrue(sender.isConnected)
+        XCTAssertEqual(recorder.states, [true])
+    }
+
+    func testAUDPSendErrorEndsNothing() throws {
+        let udp = LoopbackUDPServer(repliesAfterFirstDatagram: [])
+        try udp.start()
+        defer { udp.stop() }
+
+        connect(port: udp.port, protocolType: "udp")
+        waitUntil("the UDP connection to be up") { sender.isConnected }
+
+        // A datagram larger than UDP can carry: the write is accepted and then
+        // fails. On main that was only logged. It must not end the connection, or a
+        // UDP link would bounce on the first oversized message.
+        XCTAssertTrue(sender.send(xml: String(repeating: "x", count: 70_000)))
+        // A normal datagram right behind it still gets through.
+        XCTAssertTrue(sender.send(xml: LoopbackTAKServer.positionFrame(uid: "AFTER")))
+        waitUntil("the datagram after the failed one to reach the server") { udp.datagrams >= 1 }
+        // The failed write's completion has run by now. (Only a window can show
+        // that something did not happen.)
+        observe(for: 0.3)
+
+        XCTAssertNil(sender.endReason, "a UDP send error is logged, not a session end")
+        XCTAssertTrue(sender.isConnected)
+        XCTAssertEqual(recorder.states, [true])
+        XCTAssertEqual(udp.datagrams, 1, "the oversized one never left")
+    }
+}
+
+/// An in-process UDP listener on 127.0.0.1. It counts the datagrams it receives
+/// and, after the first, sends back one datagram per entry in `replies`.
+private final class LoopbackUDPServer {
+    private let queue = DispatchQueue(label: "test.udp.server")
+    private let lock = NSLock()
+    private let replies: [String]
+    private var peers: [NWConnection] = []
+    private var count = 0
+    private var listener: NWListener?
+    private(set) var port: UInt16 = 0
+
+    init(repliesAfterFirstDatagram replies: [String]) { self.replies = replies }
+
+    var datagrams: Int { lock.lock(); defer { lock.unlock() }; return count }
+
+    func start() throws {
+        let parameters = NWParameters.udp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+        let listener = try NWListener(using: parameters)
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self = self else { return }
+            self.lock.lock(); self.peers.append(connection); self.lock.unlock()
+            connection.start(queue: self.queue)
+            self.receiveNext(on: connection)
+        }
+        listener.start(queue: queue)
+        guard ready.wait(timeout: .now() + 5) == .success, let bound = listener.port?.rawValue else {
+            listener.cancel()
+            throw NSError(domain: "LoopbackUDPServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "listener did not start"])
+        }
+        self.listener = listener
+        port = bound
+    }
+
+    func stop() {
+        listener?.cancel()
+        lock.lock(); let all = peers; peers = []; lock.unlock()
+        for peer in all { peer.cancel() }
+    }
+
+    private func receiveNext(on connection: NWConnection) {
+        connection.receiveMessage { [weak self] _, _, _, error in
+            guard let self = self, error == nil else { return }
+            self.lock.lock(); self.count += 1; let first = self.count == 1; self.lock.unlock()
+            if first {
+                for uid in self.replies {
+                    let frame = LoopbackTAKServer.positionFrame(uid: uid)
+                    connection.send(content: frame.data(using: .utf8), completion: .contentProcessed { _ in })
+                }
+            }
+            self.receiveNext(on: connection)
+        }
     }
 }

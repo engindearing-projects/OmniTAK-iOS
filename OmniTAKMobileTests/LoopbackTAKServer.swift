@@ -59,9 +59,12 @@ final class LoopbackTAKServer {
 
     // MARK: - Control
 
-    /// Start listening on an ephemeral loopback port. Returns when it is ready.
+    /// Start listening on an ephemeral port on 127.0.0.1 only. Returns when it
+    /// is ready.
     func start() throws {
-        let listener = try NWListener(using: .tcp, on: .any)
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+        let listener = try NWListener(using: parameters)
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { state in
             switch state {
@@ -134,6 +137,13 @@ final class LoopbackTAKServer {
     var closedByClientCount: Int {
         lock.lock(); defer { lock.unlock() }
         return peers.filter { $0.closedByClient }.count
+    }
+
+    /// True when the client closed connection `index` (end of stream or reset
+    /// seen), not counting a close this server did itself.
+    func closedByClient(connection index: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return index < peers.count && peers[index].closedByClient
     }
 
     // MARK: - Talking to the client

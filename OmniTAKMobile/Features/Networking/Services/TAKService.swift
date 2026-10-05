@@ -299,6 +299,10 @@ class DirectTCPSender {
     private var liveness: TAKLinkLiveness?
     private var livenessTimer: DispatchSourceTimer?
     private var lastPingUID: String?
+    /// The host and port of the last dial, on `queue`. A reused sender (the older
+    /// single connection) that is pointed at another server forgets that the
+    /// last one answered pings.
+    private var lastDial: (host: String, port: UInt16)?
 
     /// TCP keepalive for TCP and TLS: the first probe after 30 s idle, then
     /// every 10 s, and the connection is dropped after 3 unanswered probes.
@@ -312,12 +316,15 @@ class DirectTCPSender {
         return options
     }
 
-    /// The parameters of the live connection, for tests.
-    var connectionParameters: NWParameters? {
+    /// The live connection, or nil. For tests.
+    var activeConnection: NWConnection? {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return connection?.parameters
+        return connection
     }
+
+    /// The parameters of the live connection, for tests.
+    var connectionParameters: NWParameters? { activeConnection?.parameters }
 
     func connect(host: String, port: UInt16, protocolType: String = "tcp", useTLS: Bool = false, certificateName: String? = nil, certificatePassword: String? = nil, caCertificateName: String? = nil, caCertificatePassword: String? = nil, allowLegacyTLS: Bool = false, allowUntrustedTLS: Bool = false, completion: @escaping (Bool) -> Void) {
         // Create endpoint with explicit IPv4 if possible
@@ -558,7 +565,7 @@ class DirectTCPSender {
             #endif
         }
 
-        startSession(endpoint: endpoint, parameters: parameters, completion: completion)
+        startSession(host: host, port: port, endpoint: endpoint, parameters: parameters, completion: completion)
     }
 
     // MARK: - Session
@@ -569,11 +576,19 @@ class DirectTCPSender {
         return queue.sync(execute: body)
     }
 
-    private func startSession(endpoint: NWEndpoint, parameters: NWParameters, completion: @escaping (Bool) -> Void) {
+    private func startSession(host: String, port: UInt16, endpoint: NWEndpoint, parameters: NWParameters, completion: @escaping (Bool) -> Void) {
         onQueue {
             // A second connect on the same sender (the legacy single connection
             // is reused) ends the first session quietly.
             releaseSession()
+
+            // Another server than the last dial's: what was learned about that one
+            // does not carry over. A new sender that was given the fact before its
+            // first dial (TAKService does this for the same server) keeps it.
+            if let last = lastDial, last.host != host || last.port != port {
+                serverAnswersPings = false
+            }
+            lastDial = (host, port)
 
             let conn = NWConnection(to: endpoint, using: parameters)
             stateLock.lock()
@@ -631,9 +646,18 @@ class DirectTCPSender {
         case .waiting(let error):
             let errStr = "\(error)"
             Logger.takNetwork.debug("Waiting to connect: \(errStr, privacy: .public)")
-            // Don't end here: NWConnection can sit in .waiting forever
-            // (unreachable host, stalled handshake). The connect timeout
-            // ends the session if we never reach .ready.
+            // A refusal says nobody is listening on that port. NWConnection would
+            // keep the dial in .waiting until the connect timeout, which makes
+            // every attempt on the backoff 15 s longer than its delay and picks a
+            // server that comes back mid-attempt up late. End the dial now.
+            // UDP has no connect to refuse: only .failed and .cancelled end it.
+            if currentProtocol != .udp, case .posix(let code) = error, code == .ECONNREFUSED {
+                end(reason: "Connection refused")
+                return
+            }
+            // Any other .waiting error: don't end here. NWConnection can sit in
+            // .waiting forever (unreachable host, stalled handshake). The connect
+            // timeout ends the session if we never reach .ready.
         case .cancelled:
             // A cancel this sender asked for is ignored by owns(): end() and
             // disconnect() drop the connection first. This one came from outside.
@@ -699,11 +723,18 @@ class DirectTCPSender {
         )
         let interval = max(livenessTiming.tick, 0.01)
         let nanos = Int(interval * 1_000_000_000)
+        let leeway = DispatchTimeInterval.nanoseconds(nanos / 10)
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + interval, repeating: .nanoseconds(nanos), leeway: .nanoseconds(nanos / 10))
+        timer.schedule(deadline: .now() + interval, leeway: leeway)
         timer.setEventHandler { [weak self, weak conn] in
             guard let self = self, let conn = conn else { return }
             self.livenessTick(for: conn)
+            // The next look is a full tick after this one. A repeating timer
+            // would fire two looks close together when it catches up after the
+            // process was stalled, and the rules want a second look to be a
+            // real second chance for the answer to be read.
+            guard self.owns(conn), let timer = self.livenessTimer else { return }
+            timer.schedule(deadline: .now() + interval, leeway: leeway)
         }
         livenessTimer = timer
         timer.resume()
@@ -750,6 +781,14 @@ class DirectTCPSender {
 
             if let error = error {
                 Logger.takNetwork.error("Receive error: \(String(describing: error), privacy: .public)")
+                if self.currentProtocol == .udp {
+                    // As on main: a UDP error is logged and does not end the
+                    // connection (a closed port answers with an ICMP error, an
+                    // oversized datagram fails to send). Only .failed and
+                    // .cancelled end a UDP session. Keep receiving while it is up.
+                    if conn.state == .ready { self.startReceiveLoop(on: conn) }
+                    return
+                }
                 self.end(reason: "Receive error: \(error)")
                 return
             }
@@ -938,9 +977,11 @@ class DirectTCPSender {
         connection.send(content: data, completion: .contentProcessed { [weak self, weak connection] error in
             if let error = error {
                 print("❌ DirectNetwork: Send failed: \(error)")
-                // A failed write ends the session instead of leaving it "connected".
+                // A failed write ends a TCP or TLS session instead of leaving it
+                // "connected". On UDP an error is only logged, as on main.
                 self?.queue.async {
                     guard let self = self, let conn = connection, self.owns(conn) else { return }
+                    guard self.currentProtocol != .udp else { return }
                     self.end(reason: "Send failed: \(error)")
                 }
             } else {
@@ -1366,6 +1407,23 @@ class TAKService: ObservableObject {
     /// real ones; tests shorten them.
     var livenessTiming = TAKLinkLiveness.Timing()
 
+    /// How long a dial may take to come up, for the senders made from now on.
+    var connectTimeout: TimeInterval = 15
+
+    /// The record of a server as it is saved right now, or nil when it is not
+    /// saved. Asked before every dial: only a saved server that is switched on is
+    /// dialed, and it is dialed as saved at that moment, so an edit made while a
+    /// dial was waiting is used. Tests replace it so they do not touch the
+    /// operator's saved list.
+    var serverLookup: (UUID) -> TAKServer? = { id in
+        ServerManager.shared.servers.first { $0.id == id }
+    }
+
+    /// Every server that is saved and switched on. The foreground check asks it.
+    var enabledServers: () -> [TAKServer] = {
+        ServerManager.shared.getEnabledServers()
+    }
+
     /// IDs of currently-connected servers, derived from serverConnections
     /// (cached state, refreshed by updateOverallConnectionState's sync
     /// sweep — the same freshness the old stored set had). Views observing
@@ -1463,19 +1521,22 @@ class TAKService: ObservableObject {
         }
     }
 
-    /// Verify connection state and reconnect if disconnected
-    private func verifyAndReconnectIfNeeded() {
-        // Check if we should be connected but aren't
-        let activeServer = ServerManager.shared.activeServer
-
-        if activeServer != nil && !isConnected {
-            print("[TAKService] Was disconnected during background - attempting reconnect")
-            // Reconnect to the active server
-            if let server = activeServer {
-                connectToServer(server)
-            }
-        } else if isConnected {
-            print("[TAKService] Connection maintained during background")
+    /// Back in the foreground: ask for every server that is saved and switched on,
+    /// not only the active one. `connectToServer` leaves a link that is up or being
+    /// dialed alone, dials a link that is waiting for its next dial at once, and
+    /// dials a switched-on server that has no link. It dials nothing for a server
+    /// that is not saved or is switched off.
+    func verifyAndReconnectIfNeeded() {
+        let wanted = enabledServers()
+        if wanted.isEmpty {
+            print("[TAKService] No server is switched on - nothing to reconnect")
+            return
+        }
+        if !isConnected {
+            print("[TAKService] Not connected after the background - asking for \(wanted.count) server(s) that are switched on")
+        }
+        for server in wanted {
+            connectToServer(server)
         }
     }
 
@@ -1509,6 +1570,13 @@ class TAKService: ObservableObject {
         return serverConnections[serverId]?.phase
     }
 
+    /// The dial that is scheduled for a waiting link, or nil. For tests.
+    func scheduledDial(of serverId: UUID) -> DispatchWorkItem? {
+        connectionsLock.lock()
+        defer { connectionsLock.unlock() }
+        return serverConnections[serverId]?.pendingDial
+    }
+
     /// #180 — human-readable name for a connected server, used to tag inbound
     /// CoT with its source ("TAK: <name>") at the ingest point. Falls back to the
     /// single-connection `currentServerName` (host:port) when the id is unknown
@@ -1525,44 +1593,75 @@ class TAKService: ObservableObject {
 
     /// Connect to a specific server. This marks it as one the operator wants
     /// connected: from here on a link that drops, or a dial that fails, is dialed
-    /// again on a backoff until `disconnectFromServer` or `disconnect` removes it.
+    /// again on a backoff until `disconnectFromServer` or `disconnect` removes it,
+    /// or until the server is no longer saved or is switched off.
+    ///
+    /// Only a server that is saved and switched on is ever dialed, and it is dialed
+    /// as it is saved now (`serverLookup`), whatever `server` says. A server that is
+    /// not saved, or is switched off, is not dialed, and any link or scheduled dial
+    /// for it is let go.
     ///
     /// - A link that is up, or a dial in flight: nothing happens.
     /// - A link waiting for its scheduled dial: the wait is cancelled and it is
     ///   dialed now.
     /// - A server not known yet: a new entry, dialed now.
     func connectToServer(_ server: TAKServer) {
+        // Everything below is main-thread state. addServer is called from import
+        // and enrollment code that is not always on the main thread.
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.connectToServer(server) }
+            return
+        }
+
         #if DEBUG
         print("🔌 TAKService.connectToServer() - \(server.name) (\(server.host):\(server.port))")
         #endif
 
+        guard let saved = serverLookup(server.id), saved.enabled else {
+            dropUnwanted(server.id, name: server.name)
+            return
+        }
+
         connectionsLock.lock()
 
-        if var existing = serverConnections[server.id] {
-            let dialNow = existing.wantedAgain(server)
-            serverConnections[server.id] = existing
+        if var existing = serverConnections[saved.id] {
+            let dialNow = existing.wantedAgain(saved)
+            serverConnections[saved.id] = existing
             connectionsLock.unlock()
             if dialNow {
-                dial(server)
+                dial(saved)
             } else {
                 #if DEBUG
-                print("ℹ️ Already connected or dialing \(server.name)")
+                print("ℹ️ Already connected or dialing \(saved.name)")
                 #endif
             }
             return
         }
 
         let sender = DirectTCPSender()
-        serverConnections[server.id] = ServerConnectionState(
-            serverId: server.id,
-            serverName: server.name,
+        serverConnections[saved.id] = ServerConnectionState(
+            serverId: saved.id,
+            serverName: saved.name,
             isConnected: false,
             sender: sender,
-            server: server
+            server: saved
         )
         connectionsLock.unlock()
 
-        startDial(server, with: sender)
+        startDial(saved, with: sender)
+    }
+
+    /// The server is not saved, or is switched off: dial nothing, and let go of
+    /// any link and any scheduled dial for it. Quiet toward the sender: no callback.
+    private func dropUnwanted(_ serverId: UUID, name: String) {
+        connectionsLock.lock()
+        let state = serverConnections.removeValue(forKey: serverId)
+        connectionsLock.unlock()
+
+        state?.pendingDial?.cancel()
+        state?.sender.disconnect()
+        Logger.takNetwork.info("Not dialing \(name, privacy: .public): it is not saved or is switched off")
+        if state != nil { updateOverallConnectionState() }
     }
 
     /// Dial an entry again with a new sender. The old sender is disconnected
@@ -1579,6 +1678,7 @@ class TAKService: ObservableObject {
         let old = entry.sender
         sender.serverAnswersPings = entry.answersPings
         entry.sender = sender
+        entry.server = server          // what was dialed, as saved now
         serverConnections[server.id] = entry
         connectionsLock.unlock()
 
@@ -1586,15 +1686,26 @@ class TAKService: ObservableObject {
         startDial(server, with: sender)
     }
 
-    /// Wire up a new sender for `server` and connect it.
+    /// What every sender this service uses is given before it dials: the ping uid
+    /// (the device uid plus "-ping") and the timings.
+    func prepare(_ sender: DirectTCPSender) {
+        let uid = devicePingUID()
+        sender.pingUID = { uid }
+        sender.livenessTiming = livenessTiming
+        sender.connectTimeoutSeconds = connectTimeout
+    }
+
+    /// The device uid plus "-ping", read on the main thread whichever thread asks:
+    /// PositionBroadcastService is created on first use, and it is UIKit state.
+    private func devicePingUID() -> String {
+        let read = { PositionBroadcastService.shared.userUID + "-ping" }
+        return Thread.isMainThread ? read() : DispatchQueue.main.sync(execute: read)
+    }
+
+    /// Wire up a new sender for `server` and connect it. On the main thread.
     private func startDial(_ server: TAKServer, with sender: DirectTCPSender) {
         let serverId = server.id
-
-        // The ping's uid is the device uid plus "-ping". Read here on the main
-        // thread, not from the sender's queue.
-        let pingUID = PositionBroadcastService.shared.userUID + "-ping"
-        sender.pingUID = { pingUID }
-        sender.livenessTiming = livenessTiming
+        prepare(sender)
 
         // The handlers hold the sender weakly and do nothing unless the entry
         // for this server still holds this very sender, so a callback that
@@ -1698,19 +1809,28 @@ class TAKService: ObservableObject {
     }
 
     /// A scheduled dial is due. On the main thread. Checks that the operator has
-    /// not switched the server off since it was scheduled: the entry must still
-    /// be there and still waiting.
+    /// not switched the server off or deleted it since the dial was scheduled (the
+    /// saved record must exist and be switched on), and that the entry is still
+    /// there and still waiting. Then dials the record as saved now: an edit made
+    /// while the dial was waiting is used.
     private func redialDue(serverId: UUID) {
+        guard let saved = serverLookup(serverId), saved.enabled else {
+            connectionsLock.lock()
+            let name = serverConnections[serverId]?.serverName
+            connectionsLock.unlock()
+            if let name = name { dropUnwanted(serverId, name: name) }
+            return
+        }
+
         connectionsLock.lock()
         guard var entry = serverConnections[serverId], entry.redialDue() else {
             connectionsLock.unlock()
             return
         }
         serverConnections[serverId] = entry
-        let server = entry.server
         connectionsLock.unlock()
 
-        dial(server)
+        dial(saved)
     }
 
     /// The dial of `sender` finished, with success or not. On the main thread.
@@ -1908,6 +2028,10 @@ class TAKService: ObservableObject {
         // Use DirectTCPSender for actual network communication
         connectionState = .connecting(serverName: currentServerName)
 
+        // The older single connection pings too, with the same uid as the others.
+        // It is not dialed again if it drops.
+        if let legacy = directTCP { prepare(legacy) }
+
         directTCP?.connect(host: host, port: port, protocolType: protocolType, useTLS: useTLS, certificateName: certificateName, certificatePassword: certificatePassword, caCertificateName: caCertificateName, caCertificatePassword: caCertificatePassword, allowUntrustedTLS: allowUntrustedTLS) { [weak self] success in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -2079,7 +2203,7 @@ class TAKService: ObservableObject {
 
             guard let directTCP = directTCP, directTCP.isConnected else {
                 Logger.takNetwork.error("sendCoT failed: not connected to any server")
-                Logger.takNetwork.debug("isConnected=\(self.isConnected, privacy: .public) connectedServerIds=\(self.connectedServerIds.count, privacy: .public) serverConnections=\(self.serverConnections.count, privacy: .public)")
+                Logger.takNetwork.debug("isConnected=\(self.isConnected, privacy: .public) connectedServerIds=\(self.connectedServerIds.count, privacy: .public) serverConnections=\(totalConnections, privacy: .public)")
                 return false
             }
 
