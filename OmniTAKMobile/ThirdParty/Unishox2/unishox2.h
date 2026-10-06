@@ -45,7 +45,10 @@
  * The simple api, i.e. unishox2_(de)compress_simple will always omit the buffer length
  */
 #ifndef UNISHOX_API_WITH_OUTPUT_LEN
-#  define UNISHOX_API_WITH_OUTPUT_LEN 0
+// OmniTAK change from upstream (was 0): the decoder is fed bytes that arrive over
+// the air, so every call must carry the size of its output buffer. The "simple"
+// calls still take no size; do not use them (see the bridging header).
+#  define UNISHOX_API_WITH_OUTPUT_LEN 1
 #endif
 
 

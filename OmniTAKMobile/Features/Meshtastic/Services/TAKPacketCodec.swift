@@ -45,8 +45,8 @@
 //
 //  Unishox2 compression:
 //  When is_compressed=true, all bytes fields in Contact, GeoChat.message, and
-//  GeoChat.to are individually compressed with unishox2_compress_simple /
-//  unishox2_decompress_simple using USX_PSET_DFLT. GeoChat.to_callsign is
+//  GeoChat.to are individually compressed with unishox2 (the bounded
+//  omni_unishox2_compress / omni_unishox2_decompress) using USX_PSET_DFLT. GeoChat.to_callsign is
 //  only written in compressed outbound packets when present.
 //
 //  Wire helpers are intentionally identical in style to ATAKPluginSerializer
@@ -198,6 +198,11 @@ enum TAKPacketCodec {
 
     // MARK: - Unishox2 Swift wrappers
 
+    /// The longest text a TAKPacket field may decompress to. A LoRa payload is
+    /// under 240 bytes, so a real callsign or chat message is far below this.
+    /// Compressed bytes that ask for more are refused.
+    static let maxDecompressedBytes = 4096
+
     /// Compress a UTF-8 string with unishox2 (USX_PSET_DFLT).
     /// Returns the compressed bytes, or the original UTF-8 bytes on failure.
     static func compress(_ text: String) -> Data {
@@ -207,29 +212,41 @@ enum TAKPacketCodec {
         let bufSize = max(Int(inLen) * 2 + 16, 32)
         var outBuf = [CChar](repeating: 0, count: bufSize)
         let result = text.withCString { inPtr in
-            unishox2_compress_simple(inPtr, inLen, &outBuf)
+            omni_unishox2_compress(inPtr, inLen, &outBuf, Int32(bufSize))
         }
-        if result <= 0 {
-            // Compression failed — return raw UTF-8 (caller must handle is_compressed=false)
+        if result <= 0 || result > Int32(bufSize) {
+            // Compression failed or did not fit: return raw UTF-8 (caller must handle is_compressed=false)
             return Data(utf8)
         }
         return Data(bytes: outBuf, count: Int(result))
     }
 
     /// Decompress unishox2-compressed bytes to a UTF-8 string.
-    /// Returns nil if decompression fails.
-    static func decompress(_ data: Data) -> String? {
-        guard !data.isEmpty else { return nil }
-        let inLen = Int32(data.count)
-        let bufSize = max(data.count * 8 + 64, 256)
-        var outBuf = [CChar](repeating: 0, count: bufSize)
-        let result = data.withUnsafeBytes { rawBuf -> Int32 in
-            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: CChar.self) else { return -1 }
-            return unishox2_decompress_simple(ptr, inLen, &outBuf)
-        }
-        guard result >= 0 else { return nil }
-        outBuf[Int(result)] = 0  // null-terminate
+    /// Returns nil if the bytes cannot be decoded, or if the text would be
+    /// longer than `maxOutputBytes`.
+    ///
+    /// These bytes come from other radios. The compressed stream alone decides
+    /// how much text comes out (a few bytes can ask for kilobytes), so the
+    /// output size is enforced by the library on every write.
+    static func decompress(_ data: Data, maxOutputBytes: Int = maxDecompressedBytes) -> String? {
+        guard !data.isEmpty, maxOutputBytes > 0 else { return nil }
+        var outBuf = [CChar](repeating: 0, count: maxOutputBytes + 1)
+        let written = decompressRaw(data, into: &outBuf, limit: maxOutputBytes)
+        guard written >= 0, written <= Int32(maxOutputBytes) else { return nil }
+        outBuf[Int(written)] = 0  // null-terminate
         return String(cString: outBuf)
+    }
+
+    /// The bounded library call. Writes at most `limit` bytes to `buffer` and
+    /// returns the count, a value above `limit` when the text does not fit, or
+    /// a negative number for input that cannot be decoded.
+    static func decompressRaw(_ data: Data, into buffer: inout [CChar], limit: Int) -> Int32 {
+        precondition(limit >= 0 && limit <= buffer.count, "limit must fit the buffer")
+        guard !data.isEmpty else { return -1 }
+        return data.withUnsafeBytes { rawBuf -> Int32 in
+            guard let ptr = rawBuf.baseAddress?.assumingMemoryBound(to: CChar.self) else { return -1 }
+            return omni_unishox2_decompress(ptr, Int32(data.count), &buffer, Int32(limit))
+        }
     }
 
     // MARK: - Decode
