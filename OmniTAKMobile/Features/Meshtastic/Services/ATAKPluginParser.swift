@@ -208,10 +208,10 @@ enum ATAKPluginParser {
             switch (tag.field, tag.wire) {
             case (1, 2): // takControl — ignore
                 guard let len = readVarint(data, &idx) else { return nil }
-                idx = min(idx + Int(len), data.count)
+                idx = clampedEnd(data, idx, length: len)
             case (2, 2): // cotEvent
                 guard let len = readVarint(data, &idx) else { return nil }
-                let end = min(idx + Int(len), data.count)
+                let end = clampedEnd(data, idx, length: len)
                 cotEventBytes = data.subdata(in: idx..<end)
                 idx = end
             default:
@@ -277,7 +277,7 @@ enum ATAKPluginParser {
                 le = Double(bitPattern: v)
             case (15, 2):
                 guard let len = readVarint(data, &idx) else { return nil }
-                let end = min(idx + Int(len), data.count)
+                let end = clampedEnd(data, idx, length: len)
                 detailBytes = data.subdata(in: idx..<end)
                 idx = end
             default:
@@ -581,12 +581,21 @@ enum ATAKPluginParser {
     }
 
     private static func readLengthDelimited(_ data: Data, _ idx: inout Int) -> Data? {
-        guard let len = readVarint(data, &idx) else { return nil }
+        // The length is compared as UInt64 first: a varint above Int.max would
+        // trap in the conversion, and these bytes come off the air.
+        guard let len = readVarint(data, &idx), len <= UInt64(data.count - idx) else { return nil }
         let end = idx + Int(len)
-        guard end <= data.count else { return nil }
         let slice = data.subdata(in: idx..<end)
         idx = end
         return slice
+    }
+
+    /// `idx + length`, limited to the end of `data`. A length that is more than
+    /// what is left (or does not fit in an Int) ends at the end of the buffer
+    /// instead of trapping in the conversion.
+    private static func clampedEnd(_ data: Data, _ idx: Int, length: UInt64) -> Int {
+        let remaining = data.count - idx
+        return length >= UInt64(remaining) ? data.count : idx + Int(length)
     }
 
     private static func skip(_ data: Data, _ idx: inout Int, wire: UInt8) -> Bool {
@@ -598,10 +607,8 @@ enum ATAKPluginParser {
             idx += 8
             return true
         case 2:
-            guard let len = readVarint(data, &idx) else { return false }
-            let end = idx + Int(len)
-            guard end <= data.count else { return false }
-            idx = end
+            guard let len = readVarint(data, &idx), len <= UInt64(data.count - idx) else { return false }
+            idx += Int(len)
             return true
         case 5:
             guard idx + 4 <= data.count else { return false }

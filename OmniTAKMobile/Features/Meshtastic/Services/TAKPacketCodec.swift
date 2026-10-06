@@ -696,9 +696,10 @@ enum TAKPacketCodec {
     }
 
     private static func readLengthDelimited(_ data: Data, _ idx: inout Int) -> Data? {
-        guard let len = readVarint(data, &idx) else { return nil }
+        // Compared as UInt64 first: a varint above Int.max would trap in the
+        // conversion, and these bytes come off the air.
+        guard let len = readVarint(data, &idx), len <= UInt64(data.count - idx) else { return nil }
         let end = idx + Int(len)
-        guard end <= data.count else { return nil }
         let slice = data.subdata(in: idx..<end)
         idx = end
         return slice
@@ -711,10 +712,8 @@ enum TAKPacketCodec {
             guard idx + 8 <= data.count else { return false }
             idx += 8; return true
         case 2:
-            guard let len = readVarint(data, &idx) else { return false }
-            let end = idx + Int(len)
-            guard end <= data.count else { return false }
-            idx = end; return true
+            guard let len = readVarint(data, &idx), len <= UInt64(data.count - idx) else { return false }
+            idx += Int(len); return true
         case 5:
             guard idx + 4 <= data.count else { return false }
             idx += 4; return true

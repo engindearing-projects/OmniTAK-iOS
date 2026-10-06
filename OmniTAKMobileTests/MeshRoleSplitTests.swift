@@ -11,9 +11,9 @@
 //  runs role TAK — but the iOS NodeInfo parser skipped `User.role` entirely.
 //
 //  Covers:
-//    • MeshtasticTCPClient.parseUserSubmessage — decodes User.role (field 7,
+//    • MeshtasticProtoDecoder.decodeUser: decodes User.role (field 7,
 //      varint) alongside long_name (2) and short_name (3), tolerates absent
-//      and unknown fields. The BLE client carries a byte-identical decoder.
+//      and unknown fields. Both the BLE and the TCP client call it.
 //    • MeshNode.isTakPaired — role TAK only, not TAK_TRACKER.
 //    • MeshtasticManager.mapVisibleNodes — hides paired radios by default,
 //      keeps standalone trackers, honours the opt-in.
@@ -42,8 +42,7 @@ final class MeshRoleSplitTests: XCTestCase {
     }
 
     private func decode(_ user: Data) -> (short: String, long: String, role: Int?) {
-        let client = MeshtasticTCPClient()
-        return client.parseUserSubmessage(user, from: 0, end: user.count)
+        MeshtasticProtoDecoder.decodeUser(user)
     }
 
     // MARK: - Decode

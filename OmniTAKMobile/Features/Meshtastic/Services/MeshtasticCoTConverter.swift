@@ -19,14 +19,13 @@ class MeshtasticCoTConverter {
     /// - Parameters:
     ///   - node: The mesh node to convert
     ///   - staleTime: How long the event should remain valid (default 5 minutes)
+    ///   - now: The time the event is generated (default the current time)
     /// - Returns: TAK-compatible CoT XML string
-    static func generateCoT(for node: MeshNode, staleTime: TimeInterval = 300) -> String? {
+    static func generateCoT(for node: MeshNode, staleTime: TimeInterval = 300, now: Date = Date()) -> String? {
         // Position is required for map display
         guard let position = node.position else {
             return nil
         }
-
-        let now = Date()
 
         // Create unique UID for the mesh node
         let uid = "mesh-\(String(format: "%08X", node.id).lowercased())"
@@ -52,12 +51,21 @@ class MeshtasticCoTConverter {
             remarks += "\nHop Distance: \(hops)"
         }
 
-        if let battery = node.batteryLevel {
-            remarks += "\nBattery: \(battery)%"
+        if let battery = node.batteryLabel {
+            remarks += "\nBattery: \(battery)"
         }
 
-        let lastHeardStr = formatTimeAgo(from: node.lastHeard)
-        remarks += "\nLast Heard: \(lastHeardStr)"
+        // Left out when the radio does not know when it last heard the node,
+        // the same as SNR, hops and battery.
+        if let heard = node.lastHeard {
+            remarks += "\nLast Heard: \(formatTimeAgo(from: heard, now: now))"
+        }
+
+        // Only written when known. An unknown last heard must not turn into a
+        // timestamp, least of all 1970 or now.
+        let lastHeardXML = node.lastHeard.map {
+            "\n                    <last_heard>\(CoTXMLBuilder.timestamp($0))</last_heard>"
+        } ?? ""
 
         let detail = """
                 <contact callsign="\(callsign.xmlEscaped)"/>
@@ -72,8 +80,7 @@ class MeshtasticCoTConverter {
                     <long_name>\(callsign.xmlEscaped)</long_name>
                     <snr>\(node.snr ?? 0)</snr>
                     <hop_distance>\(node.hopDistance ?? 0)</hop_distance>
-                    <battery>\(node.batteryLevel ?? -1)</battery>
-                    <last_heard>\(CoTXMLBuilder.timestamp(node.lastHeard))</last_heard>
+                    <battery>\(node.batteryLevel ?? -1)</battery>\(lastHeardXML)
                 </__meshtastic__>
                 <takv device="Meshtastic" platform="OmniTAK" os="iOS" version="\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0.0")"/>
         """
@@ -208,12 +215,21 @@ class MeshtasticCoTConverter {
             }
         }
 
+        // Extract last_heard. It is left out of the XML when it was unknown, and
+        // absent stays unknown here instead of becoming "now".
+        var lastHeard: Date? = nil
+        if let heardMatch = cotXML.range(of: "<last_heard>([^<]+)</last_heard>", options: .regularExpression) {
+            let heardStr = String(cotXML[heardMatch]).replacingOccurrences(of: "<last_heard>", with: "").replacingOccurrences(of: "</last_heard>", with: "")
+            lastHeard = CoTXMLBuilder.timestampFormatter.date(from: heardStr)
+                ?? CoTXMLBuilder.timestampFormatterNoFraction.date(from: heardStr)
+        }
+
         return MeshNode(
             id: nodeId,
             shortName: shortName,
             longName: longName,
             position: position,
-            lastHeard: Date(),
+            lastHeard: lastHeard,
             snr: snr,
             hopDistance: hopDistance,
             batteryLevel: battery
@@ -223,8 +239,8 @@ class MeshtasticCoTConverter {
     // MARK: - Helper Methods
 
     /// Format time ago string
-    private static func formatTimeAgo(from date: Date) -> String {
-        let seconds = Int(Date().timeIntervalSince(date))
+    private static func formatTimeAgo(from date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
 
         if seconds < 60 {
             return "\(seconds) seconds ago"
@@ -243,9 +259,16 @@ class MeshtasticCoTConverter {
     // MARK: - Direct CoTEvent Generation
 
     /// Convert a MeshNode directly to a CoTEvent for CoTEventHandler.handle()
-    /// - Parameter node: The mesh node to convert
+    ///
+    /// The event time is when the radio last heard the node, never later than
+    /// `now` (the radio's clock can run ahead of the phone's). When last heard
+    /// is unknown it is `now`, the moment this event was built, because the
+    /// event needs some time and that is the true one.
+    /// - Parameters:
+    ///   - node: The mesh node to convert
+    ///   - now: The time the event is built (default the current time)
     /// - Returns: CoTEvent object ready for TAKService, or nil if node has no position
-    static func toCoTEvent(node: MeshNode, isOwnNode: Bool = false) -> CoTEvent? {
+    static func toCoTEvent(node: MeshNode, isOwnNode: Bool = false, now: Date = Date()) -> CoTEvent? {
         guard let position = node.position else { return nil }
 
         let uid = isOwnNode ? "mesh-self-\(String(format: "%08X", node.id).lowercased())" : node.takUID
@@ -261,8 +284,8 @@ class MeshtasticCoTConverter {
         if let hops = node.hopDistance {
             remarks += " | Hops: \(hops)"
         }
-        if let battery = node.batteryLevel {
-            remarks += " | Bat: \(battery)%"
+        if let battery = node.batteryLabel {
+            remarks += " | Bat: \(battery)"
         }
 
         let point = CoTPoint(
@@ -280,7 +303,7 @@ class MeshtasticCoTConverter {
             speed: nil,
             course: nil,
             remarks: remarks,
-            battery: node.batteryLevel,
+            battery: node.batteryPercentCapped,
             device: "Meshtastic",
             platform: "LoRa"
         )
@@ -288,17 +311,17 @@ class MeshtasticCoTConverter {
         return CoTEvent(
             uid: uid,
             type: cotType,
-            time: node.lastHeard,
+            time: node.lastHeard.map { min($0, now) } ?? now,
             point: point,
             detail: detail
         )
     }
 
     /// Convert all mesh nodes to CoTEvents
-    static func toCoTEvents(nodes: [MeshNode], ownNodeId: UInt32? = nil) -> [CoTEvent] {
+    static func toCoTEvents(nodes: [MeshNode], ownNodeId: UInt32? = nil, now: Date = Date()) -> [CoTEvent] {
         return nodes.compactMap { node in
             let isOwn = (ownNodeId != nil && node.id == ownNodeId)
-            return toCoTEvent(node: node, isOwnNode: isOwn)
+            return toCoTEvent(node: node, isOwnNode: isOwn, now: now)
         }
     }
 }

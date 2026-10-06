@@ -167,8 +167,10 @@ enum MeshtasticChannelCodec {
         return nil
     }
     private static func readLengthDelimited(_ data: Data, _ idx: inout Int) -> Data? {
-        guard let len = readVarint(data, &idx) else { return nil }
-        let end = idx + Int(len); guard end <= data.count else { return nil }
+        // Compared as UInt64 first: a varint above Int.max would trap in the
+        // conversion, and a pasted link is untrusted input.
+        guard let len = readVarint(data, &idx), len <= UInt64(data.count - idx) else { return nil }
+        let end = idx + Int(len)
         let slice = data.subdata(in: (data.startIndex + idx)..<(data.startIndex + end))
         idx = end; return slice
     }
@@ -176,8 +178,8 @@ enum MeshtasticChannelCodec {
         switch wire {
         case 0: return readVarint(data, &idx) != nil
         case 1: guard idx + 8 <= data.count else { return false }; idx += 8; return true
-        case 2: guard let len = readVarint(data, &idx) else { return false }
-                let end = idx + Int(len); guard end <= data.count else { return false }; idx = end; return true
+        case 2: guard let len = readVarint(data, &idx), len <= UInt64(data.count - idx) else { return false }
+                idx += Int(len); return true
         case 5: guard idx + 4 <= data.count else { return false }; idx += 4; return true
         default: return false
         }
