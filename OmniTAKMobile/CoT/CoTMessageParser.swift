@@ -140,12 +140,20 @@ class CoTMessageParser {
         // Extract detail information
         let detail = extractDetail(from: xml)
 
+        // #137: how the position was obtained, from the <event> tag ("m-g" = a
+        // device reporting its GPS, "h-e" = a person placed it).
+        var how: String? = nil
+        if let eventRange = xml.range(of: "<event[^>]*>", options: .regularExpression) {
+            how = extractAttribute("how", from: String(xml[eventRange]))
+        }
+
         return CoTEvent(
             uid: uid,
             type: typeStr,
             time: time,
             point: point,
-            detail: detail
+            detail: detail,
+            how: how
         )
     }
 
