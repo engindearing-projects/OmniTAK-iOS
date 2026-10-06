@@ -180,7 +180,9 @@ final class TAKSenderLivenessTests: XCTestCase {
     // MARK: - A closed stream
 
     func testTheServerClosingTheStreamEndsTheSession() {
-        connect()
+        // No pings in this test: a ping written just after the server closed could
+        // fail first and end the session as a failed send instead.
+        connect(pingIdle: 60, pongWait: 60, tick: 0.1)
         waitForConnection()
         XCTAssertNil(sender.endReason)
 
@@ -215,7 +217,12 @@ final class TAKSenderLivenessTests: XCTestCase {
         // The write side of the connection is closed (a final message) while the
         // server keeps its end open: the receive side is healthy, so the only thing
         // that can end the session is the write that fails.
-        connect()
+        //
+        // The pinger is a writer too. With the short test timings its first ping
+        // is due 0.3 s after the connect, and on a slow machine that fell inside
+        // the 0.2 s window below, so a ping was the write that failed. The pinger
+        // waits a minute here: the write under test is the only one.
+        connect(pingIdle: 60, pongWait: 60, tick: 0.1)
         waitForConnection()
         let live = try XCTUnwrap(sender.activeConnection)
         live.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in })
