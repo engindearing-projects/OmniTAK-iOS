@@ -240,6 +240,9 @@ enum TAKPacketCodec {
     /// GeoChat (and optionally a contact). Returns nil if the bytes don't look
     /// like a valid TAKPacket (e.g. Phase-1 TAKMessage payload).
     static func decode(_ data: Data) -> DecodedTAKPacket? {
+        // The readers below index from zero. A slice of a larger buffer does
+        // not start there, so take a copy that does.
+        let data = data.startIndex == 0 ? data : Data(data)
         var pkt = DecodedTAKPacket()
         var idx = 0
         var seenContact = false

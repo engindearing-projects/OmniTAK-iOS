@@ -132,6 +132,79 @@ final class ATAKPluginParserTests: XCTestCase {
         XCTAssertNil(ATAKPluginParser.parse(junk))
     }
 
+    // MARK: - Hostile input
+    //
+    // Whatever arrives on portnum 72 or 257 comes from another radio. The
+    // parser has to come back from all of it: in Swift an integer overflow or
+    // an index past the end is not an error value, it ends the app.
+
+    /// CoTEvent { type = "", uid = "", sendTime = UInt64.max }, 15 bytes.
+    private var eventWithTheLargestSendTime: Data {
+        Data([0x0a, 0x00, 0x2a, 0x00, 0x30,
+              0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01])
+    }
+
+    func testASendTimeAtTheTopOfTheRangeDoesNotOverflowTheDefaultStaleTime() {
+        // No stale time in the message, so it is derived: send time plus a
+        // minute. Reaching the assertions is the point of this test.
+        let parsed = ATAKPluginParser.parseDetailed(eventWithTheLargestSendTime)
+        _ = ATAKPluginParser.parse(eventWithTheLargestSendTime)
+        if let parsed = parsed {
+            XCTAssertLessThanOrEqual(
+                parsed.event.time.timeIntervalSince1970,
+                TimeInterval(ATAKPluginParser.maxWireMillis) / 1000.0 + 1,
+                "a time off the wire is kept inside the range that names a date"
+            )
+        }
+    }
+
+    func testEverySendTimeNearTheTopOfTheRangeIsSurvived() {
+        // The overflow started 60 000 below the maximum.
+        for sendTime in [UInt64.max, UInt64.max - 1, UInt64.max - 59_999, UInt64.max - 60_000,
+                         UInt64.max - 60_001, UInt64(Int64.max), UInt64(Int64.max) + 1,
+                         ATAKPluginParser.maxWireMillis, ATAKPluginParser.maxWireMillis + 1] {
+            var payload = Data([0x0a, 0x00, 0x2a, 0x00, 0x30])
+            var v = sendTime
+            while v >= 0x80 { payload.append(UInt8(v & 0x7f) | 0x80); v >>= 7 }
+            payload.append(UInt8(v))
+            _ = ATAKPluginParser.parseDetailed(payload)
+        }
+    }
+
+    func testStartAndStaleTimesAtTheTopOfTheRangeAreSurvivedToo() {
+        // sendTime (6), startTime (7) and staleTime (8) all at UInt64.max.
+        var payload = Data([0x0a, 0x00, 0x2a, 0x00])
+        for tag: UInt8 in [0x30, 0x38, 0x40] {
+            payload.append(tag)
+            payload.append(contentsOf: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01])
+        }
+        _ = ATAKPluginParser.parseDetailed(payload)
+    }
+
+    func testASliceOfALargerBufferParsesLikeItsCopy() {
+        let event = CoTEvent(
+            uid: "ANDROID-slice",
+            type: "a-f-G-U-C",
+            time: Date(timeIntervalSince1970: 1714000000),
+            point: CoTPoint(lat: 1.5, lon: 2.5, hae: 3.0, ce: 4.0, le: 5.0),
+            detail: CoTDetail(callsign: "SLICE", team: nil, teamRole: nil, speed: nil, course: nil,
+                              remarks: nil, battery: nil, device: nil, platform: nil)
+        )
+        let bytes = ATAKPluginSerializer.serialize(
+            event, sendTime: event.time, startTime: event.time, staleTime: event.time.addingTimeInterval(60)
+        )
+        // Seven bytes in front, three behind: the slice starts at index 7.
+        let padded = Data(repeating: 0xEE, count: 7) + bytes + Data(repeating: 0xEE, count: 3)
+        let slice = padded[7 ..< 7 + bytes.count]
+        XCTAssertNotEqual(slice.startIndex, 0)
+
+        XCTAssertEqual(ATAKPluginParser.parse(slice)?.uid, "ANDROID-slice")
+        XCTAssertEqual(ATAKPluginParser.parse(slice)?.detail.callsign, ATAKPluginParser.parse(bytes)?.detail.callsign)
+        // The same for the TAKPacket decoder, which reads the same way.
+        _ = TAKPacketCodec.decode(slice)
+        _ = TAKPacketCodec.decode(Data(repeating: 0x0a, count: 9)[4...])
+    }
+
     func testRejectsEmpty() {
         XCTAssertNil(ATAKPluginParser.parse(Data()))
     }

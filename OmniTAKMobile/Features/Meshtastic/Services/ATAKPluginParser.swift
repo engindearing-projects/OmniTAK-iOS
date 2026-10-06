@@ -81,6 +81,9 @@ enum ATAKPluginParser {
     /// pipeline) instead of the structured event.
     static func parseDetailed(_ payload: Data) -> ATAKPluginParsedMessage? {
         guard !payload.isEmpty else { return nil }
+        // The readers below index from zero. A slice of a larger buffer does
+        // not start there, so take a copy that does.
+        let payload = payload.startIndex == 0 ? payload : Data(payload)
 
         // XML fast-path — older ATAK plugin clients shove raw CoT XML directly
         // into the portnum-72 payload, no protobuf wrapper.
@@ -317,7 +320,11 @@ enum ATAKPluginParser {
             how: how ?? "m-g",
             sendTime: dateFromMillis(sendTime),
             startTime: dateFromMillis(startTime == 0 ? sendTime : startTime),
-            staleTime: dateFromMillis(staleTime == 0 ? sendTime + 60_000 : staleTime),
+            // The times are uint64 off the wire and can hold anything. The
+            // default stale time is a minute after the send time: on a send
+            // time near the top of the range that addition overflowed, and one
+            // such packet from any radio on the channel took the app down.
+            staleTime: dateFromMillis(staleTime == 0 ? min(sendTime, maxWireMillis) + 60_000 : staleTime),
             detailXML: detailXML
         )
 
@@ -645,9 +652,14 @@ enum ATAKPluginParser {
         return false
     }
 
+    /// The last moment a time off the wire is taken to name: the end of the
+    /// year 9999, in milliseconds. Beyond it the value is not a date anything
+    /// downstream can format or compare.
+    static let maxWireMillis: UInt64 = 253_402_300_799_000
+
     private static func dateFromMillis(_ ms: UInt64) -> Date {
         if ms == 0 { return Date() }
-        return Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        return Date(timeIntervalSince1970: TimeInterval(min(ms, maxWireMillis)) / 1000.0)
     }
 
     private static func escape(_ s: String) -> String {
