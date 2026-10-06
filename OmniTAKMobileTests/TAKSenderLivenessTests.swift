@@ -558,25 +558,45 @@ private final class LoopbackUDPServer {
 
     var datagrams: Int { lock.lock(); defer { lock.unlock() }; return count }
 
+    /// Start listening on a free loopback port. A listener that fails or is not
+    /// ready in time is replaced, up to three times. If none starts, the test is
+    /// skipped and says so: the listener is this test's own stand-in server, not
+    /// the code under test, and a busy CI machine has been seen to miss the
+    /// deadline once.
     func start() throws {
-        let parameters = NWParameters.udp
-        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
-        let listener = try NWListener(using: parameters)
-        let ready = DispatchSemaphore(value: 0)
-        listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
-        listener.newConnectionHandler = { [weak self] connection in
-            guard let self = self else { return }
-            self.lock.lock(); self.peers.append(connection); self.lock.unlock()
-            connection.start(queue: self.queue)
-            self.receiveNext(on: connection)
-        }
-        listener.start(queue: queue)
-        guard ready.wait(timeout: .now() + 5) == .success, let bound = listener.port?.rawValue else {
+        var lastState = "no state"
+        for _ in 1...3 {
+            let parameters = NWParameters.udp
+            parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+            let listener = try NWListener(using: parameters)
+            let settled = DispatchSemaphore(value: 0)
+            let stateLock = NSLock()
+            var state: NWListener.State = .setup
+            listener.stateUpdateHandler = { newState in
+                stateLock.lock(); state = newState; stateLock.unlock()
+                switch newState {
+                case .ready, .failed: settled.signal()
+                default: break
+                }
+            }
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self = self else { return }
+                self.lock.lock(); self.peers.append(connection); self.lock.unlock()
+                connection.start(queue: self.queue)
+                self.receiveNext(on: connection)
+            }
+            listener.start(queue: queue)
+            _ = settled.wait(timeout: .now() + 10)
+            stateLock.lock(); let reached = state; stateLock.unlock()
+            if case .ready = reached, let bound = listener.port?.rawValue {
+                self.listener = listener
+                port = bound
+                return
+            }
+            lastState = "\(reached)"
             listener.cancel()
-            throw NSError(domain: "LoopbackUDPServer", code: 1, userInfo: [NSLocalizedDescriptionKey: "listener did not start"])
         }
-        self.listener = listener
-        port = bound
+        throw XCTSkip("The loopback UDP listener did not start (last state: \(lastState)).")
     }
 
     func stop() {

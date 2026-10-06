@@ -23,6 +23,7 @@
 //
 
 import XCTest
+import Combine
 @testable import OmniTAK
 
 @MainActor
@@ -131,17 +132,30 @@ final class MeshtasticBluetoothLinkTests: XCTestCase {
         let client = MeshtasticBLEClient()
         client.parseFromRadio(RadioFixtures.myInfoFrame(nodeNum: node))
         _ = try await eventually { client.myNodeNum == self.node }
-        let before = client.lastError
+
+        // Every value lastError takes from here on. The Bluetooth state callback
+        // writes it whenever the system reports the radio's state (on a simulator
+        // without Bluetooth: "Bluetooth is not supported on this device"), at a
+        // moment no test controls, so comparing lastError before and after races
+        // that callback. What matters is that a refusal never writes it.
+        let written = WrittenValues()
+        let watch = client.$lastError.sink { written.append($0) }
+        defer { watch.cancel() }
+
         _ = client.sendAdmin(payload: MeshtasticAdminCodec.encodeGetChannelRequest(index: 0),
                              to: otherNode, connection: 0, wantResponse: true)
         _ = client.sendAdmin(payload: MeshtasticAdminCodec.encodeGetChannelRequest(index: 0),
                              to: node, connection: 0, wantResponse: true)
-        try await Task.sleep(nanoseconds: 50_000_000)
-        // What the Bluetooth state callbacks put in lastError is theirs. A refusal
-        // adds nothing to it, so it is not a banner on the connection screens.
-        XCTAssertNotEqual(client.lastError, MeshtasticWriteResult.linkChanged)
-        XCTAssertNotEqual(client.lastError, MeshtasticWriteResult.notConnected)
-        XCTAssertEqual(client.lastError, before)
+        // The old code wrote lastError from a block on the main queue: give such a
+        // block time to run.
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        // A refusal is the caller's answer (lastRefusal), not a banner on the
+        // connection screens.
+        let values = written.all
+        XCTAssertFalse(values.contains(MeshtasticWriteResult.linkChanged), "lastError took: \(values)")
+        XCTAssertFalse(values.contains(MeshtasticWriteResult.notConnected), "lastError took: \(values)")
+        XCTAssertEqual(client.lastRefusal, MeshtasticWriteResult.notConnected)
     }
 
     func testTheBluetoothClientSendsNothingWithoutANodeNumber() {
@@ -290,5 +304,20 @@ final class MeshtasticBluetoothLinkTests: XCTestCase {
             XCTAssertEqual(result, .noAnswerRefusal)
             XCTAssertTrue(rig.link.sets.isEmpty)
         }
+    }
+}
+
+/// Values written to a published property, from whichever thread writes them.
+private final class WrittenValues {
+    private let lock = NSLock()
+    private var values: [String?] = []
+
+    func append(_ value: String?) {
+        lock.lock(); values.append(value); lock.unlock()
+    }
+
+    var all: [String?] {
+        lock.lock(); defer { lock.unlock() }
+        return values
     }
 }
