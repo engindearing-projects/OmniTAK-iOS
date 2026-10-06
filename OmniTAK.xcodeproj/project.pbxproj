@@ -339,6 +339,7 @@
 		B9E7DBC722AEC04DE005B11A /* GeofenceCoTGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44E4C96A60189A209DF1BCC /* GeofenceCoTGenerator.swift */; };
 		BA48E5AF94AC2F79CA47909E /* NetworkPreferencesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E4704B7EFCF8D32FD44130A /* NetworkPreferencesView.swift */; };
 		BA8C5E40E6CC074300E7BB41 /* H264NalSplitterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6377E6967A044A812D98864B /* H264NalSplitterTests.swift */; };
+		F19CAB0B4150F1C8F808AD6C /* VideoSourcePipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E7237E86F812AD4E2D9A98 /* VideoSourcePipTests.swift */; };
 		BA99585B9C229B3644590571 /* SUGPU------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 48F59F0E2FEC5B9DA32F3AC8 /* SUGPU------.svg */; };
 		BAE1A69DAA51A73F27D59B30 /* MissionPackageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46167ED785145DB9FB57E36B /* MissionPackageModels.swift */; };
 		BBA4E00E6B526C5939CA07A8 /* GeofenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F2DB9AB5D80CD00790B99A /* GeofenceService.swift */; };
@@ -632,6 +633,7 @@
 		628B317671CF6452847569CB /* RadialMenuMapCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RadialMenuMapCoordinator.swift; path = OmniTAKMobile/Shared/UI/RadialMenu/RadialMenuMapCoordinator.swift; sourceTree = "<group>"; };
 		634644F50DF0B69A944A6048 /* PPLISchedulerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PPLISchedulerTests.swift; path = OmniTAKMobileTests/PPLISchedulerTests.swift; sourceTree = "<group>"; };
 		6377E6967A044A812D98864B /* H264NalSplitterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = H264NalSplitterTests.swift; path = OmniTAKMobileTests/H264NalSplitterTests.swift; sourceTree = "<group>"; };
+		F2E7237E86F812AD4E2D9A98 /* VideoSourcePipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VideoSourcePipTests.swift; path = OmniTAKMobileTests/VideoSourcePipTests.swift; sourceTree = "<group>"; };
 		63C4E34598B862901EB54825 /* EchelonService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EchelonService.swift; path = OmniTAKMobile/Features/Teams/Services/EchelonService.swift; sourceTree = "<group>"; };
 		64977A5E2ADECCCF61D023F2 /* OmniTAKMobile-Bridging-Header.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; name = "OmniTAKMobile-Bridging-Header.h"; path = "OmniTAKMobile/Core/OmniTAKMobile-Bridging-Header.h"; sourceTree = "<group>"; };
 		64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingVertexEditTests.swift; path = OmniTAKMobileTests/DrawingVertexEditTests.swift; sourceTree = "<group>"; };
@@ -1198,6 +1200,7 @@
 				0A7FB9C4E1E1A57D761DBE6B /* MeshBroadcastTests.swift */,
 				C644AA06A8883B0013638A4E /* OpenDroneIdParserTests.swift */,
 				6377E6967A044A812D98864B /* H264NalSplitterTests.swift */,
+				F2E7237E86F812AD4E2D9A98 /* VideoSourcePipTests.swift */,
 				634644F50DF0B69A944A6048 /* PPLISchedulerTests.swift */,
 				0C8884B98F8B309825903DC6 /* ServerValidatorTests.swift */,
 				7FC1D4C513E2C2C744439752 /* TAKServerSecureAPIPortTests.swift */,
@@ -2911,6 +2914,7 @@
 				6FE43BA548D82C170FEE6275 /* MeshBroadcastTests.swift in Sources */,
 				A351A8B77C3983E18499A04F /* OpenDroneIdParserTests.swift in Sources */,
 				BA8C5E40E6CC074300E7BB41 /* H264NalSplitterTests.swift in Sources */,
+				F19CAB0B4150F1C8F808AD6C /* VideoSourcePipTests.swift in Sources */,
 				D1E674552E2BFBA766EFA496 /* PPLISchedulerTests.swift in Sources */,
 				1412A35EC6121F54838D6CCA /* ServerValidatorTests.swift in Sources */,
 				21E444F72F9D14820940739A /* TAKServerSecureAPIPortTests.swift in Sources */,
