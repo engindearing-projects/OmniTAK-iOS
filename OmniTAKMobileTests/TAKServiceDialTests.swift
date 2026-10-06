@@ -274,6 +274,16 @@ final class TAKServiceDialTests: XCTestCase {
         service.livenessTiming = TAKLinkLiveness.Timing(pingIdle: 0.3, pongWait: 0.5, tick: 0.1)
     }
 
+    /// The stand-in accepts every connection and closes it at once. On a busy
+    /// machine the close can reach the sender before its connection is ready,
+    /// and Network.framework may then hold the dial in `.waiting` until the
+    /// connect timeout (15 s in the app). These tests are about when the next
+    /// dial happens, not about that timeout, so it is 2 s here.
+    private func useServerThatDropsEveryConnection() {
+        server.closeNewConnectionsAtOnce = true
+        service.connectTimeout = 2
+    }
+
     private var phase: ServerConnectionState.Phase? { service.connectionPhase(of: record.id) }
 
     /// The link is up when the server has accepted it and the service says so.
@@ -324,7 +334,7 @@ final class TAKServiceDialTests: XCTestCase {
     }
 
     func testAConnectionTheServerDropsAtOnceIsNotDialedInATightLoop() {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
         // The first drop is dialed again at once; the second waits 2 s.
         waitUntil("the second connection") { server.acceptedCount >= 2 }
@@ -335,9 +345,9 @@ final class TAKServiceDialTests: XCTestCase {
     }
 
     func testConnectingAgainWhileWaitingDialsNowInsteadOfWaiting() {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let accepted = server.acceptedCount
@@ -350,10 +360,10 @@ final class TAKServiceDialTests: XCTestCase {
     // MARK: - Switching a server off stops the dials
 
     func testNothingDialsAfterDisconnectFromServer() throws {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
         // After the second connection dropped, the next dial is scheduled 2 s ahead.
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let accepted = server.acceptedCount
@@ -372,9 +382,9 @@ final class TAKServiceDialTests: XCTestCase {
     }
 
     func testNothingDialsAfterDisconnectAll() throws {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let accepted = server.acceptedCount
@@ -419,9 +429,9 @@ final class TAKServiceDialTests: XCTestCase {
     }
 
     func testAWaitingLinkForAServerSwitchedOffIsNotDialedAtItsScheduledTime() {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let accepted = server.acceptedCount
@@ -430,21 +440,21 @@ final class TAKServiceDialTests: XCTestCase {
         // forgets to call disconnectFromServer. The dial scheduled 2 s ahead has to
         // find that out for itself.
         saved.edit(record.id) { $0.enabled = false }
-        waitUntil(6, "the scheduled dial to let the link go") { phase == nil }
+        waitUntil(15, "the scheduled dial to let the link go") { phase == nil }
         observe(for: 0.5)
         XCTAssertEqual(server.acceptedCount, accepted)
     }
 
     func testAWaitingLinkForAServerThatWasDeletedIsNotDialedAtItsScheduledTime() {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let accepted = server.acceptedCount
 
         saved.servers = []
-        waitUntil(6, "the scheduled dial to let the link go") { phase == nil }
+        waitUntil(15, "the scheduled dial to let the link go") { phase == nil }
         observe(for: 0.5)
         XCTAssertEqual(server.acceptedCount, accepted)
     }
@@ -473,9 +483,9 @@ final class TAKServiceDialTests: XCTestCase {
     }
 
     func testTheForegroundCheckDialsALinkThatIsWaitingAtOnce() {
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let accepted = server.acceptedCount
@@ -490,9 +500,9 @@ final class TAKServiceDialTests: XCTestCase {
     func testAnEditMadeWhileTheLinkWaitsIsUsedByTheNextDial() throws {
         let other = try anotherServer()
         defer { other.server.stop() }
-        server.closeNewConnectionsAtOnce = true
+        useServerThatDropsEveryConnection()
         service.connectToServer(record)
-        waitUntil("the link to be waiting for its third dial") {
+        waitUntil(20, "the link to be waiting for its third dial") {
             server.acceptedCount >= 2 && phase == .waiting
         }
         let before = server.acceptedCount
