@@ -106,6 +106,16 @@ class ChatManager: ObservableObject {
         }
     }
 
+    // MARK: - Mesh mirror
+
+    /// Whether a message sent in `conversation` is also sent over the mesh
+    /// radio: the broadcast room only, and only while the operator has
+    /// "Broadcast over mesh" on. That switch says it covers position and
+    /// GeoChat; chat used to go out with it off.
+    static func mirrorsToMesh(_ conversation: Conversation, meshBroadcastEnabled: Bool) -> Bool {
+        conversation.mirrorsToMesh && meshBroadcastEnabled
+    }
+
     // MARK: - Send Message
 
     func sendMessage(text: String, to conversationId: String) {
@@ -186,6 +196,13 @@ class ChatManager: ObservableObject {
         // Mirror the text message over the active mesh radio so peers with no
         // server can see the chat. Route via the active framework
         // (selectedMeshFramework key) — Meshtastic or MeshCore.
+        //
+        // Only the broadcast room is mirrored, and only while "Broadcast over
+        // mesh" is on. The copy goes to the whole radio channel, so a direct
+        // message used to be readable by everyone on it.
+        guard Self.mirrorsToMesh(
+            conversation, meshBroadcastEnabled: PositionBroadcastService.shared.meshBroadcastEnabled
+        ) else { return }
         let meshText = text
         let meshCallsign = currentUserCallsign
         let meshLocation = locationManager?.location
@@ -296,7 +313,10 @@ class ChatManager: ObservableObject {
         }
 
         // --- Mesh off-grid GeoChat (text portion only — images are not sent over mesh) ---
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // The broadcast room only, as in sendMessage.
+        if Self.mirrorsToMesh(
+            conversation, meshBroadcastEnabled: PositionBroadcastService.shared.meshBroadcastEnabled
+        ), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let meshText = text
             let meshCallsign = currentUserCallsign
             let meshLocation = locationManager?.location
