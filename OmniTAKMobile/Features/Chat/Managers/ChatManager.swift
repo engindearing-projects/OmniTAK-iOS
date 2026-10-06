@@ -578,6 +578,17 @@ class ChatManager: ObservableObject {
         }
     }
 
+    /// Drops contacts from the roster and saves it (#137: a teammate not heard
+    /// from for twice the contact max age). Only `participants` changes. The
+    /// conversations and messages with those contacts stay exactly as they are,
+    /// so a direct-message thread is still there, and can still be written to,
+    /// after the contact has gone from the list.
+    func removeParticipants(ids: Set<String>) {
+        guard !ids.isEmpty, participants.contains(where: { ids.contains($0.id) }) else { return }
+        participants.removeAll { ids.contains($0.id) }
+        saveParticipants()
+    }
+
     func getParticipant(byId id: String) -> ChatParticipant? {
         return participants.first { $0.id == id }
     }

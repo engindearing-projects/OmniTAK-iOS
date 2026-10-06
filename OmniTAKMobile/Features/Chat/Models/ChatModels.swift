@@ -77,14 +77,21 @@ struct ChatParticipant: Identifiable, Codable, Equatable, Hashable {
     var isOnline: Bool
     /// The TAK server this contact was most recently seen on (multi-server).
     var serverId: UUID?
+    /// #137: true when this contact was saved from another operator's own position
+    /// report (ContactMaxAge.appliesTo). It lets the contact max age age a saved
+    /// contact after a restart, when the event store is empty. Nil for a contact
+    /// saved any other way (a chat message, presence, an older build): those are
+    /// left alone. Optional so contacts saved before this existed still decode.
+    var fromPositionReport: Bool?
 
-    init(id: String, callsign: String, endpoint: String? = nil, lastSeen: Date = Date(), isOnline: Bool = true, serverId: UUID? = nil) {
+    init(id: String, callsign: String, endpoint: String? = nil, lastSeen: Date = Date(), isOnline: Bool = true, serverId: UUID? = nil, fromPositionReport: Bool? = nil) {
         self.id = id
         self.callsign = callsign
         self.endpoint = endpoint
         self.lastSeen = lastSeen
         self.isOnline = isOnline
         self.serverId = serverId
+        self.fromPositionReport = fromPositionReport
     }
 
     static func == (lhs: ChatParticipant, rhs: ChatParticipant) -> Bool {
