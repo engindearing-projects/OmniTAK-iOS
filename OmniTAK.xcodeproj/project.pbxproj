@@ -39,6 +39,23 @@
 		149136897028455D70FB7E32 /* CASRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD9F8A771AD5292E85B04E77 /* CASRequestView.swift */; };
 		1617F4748D2D2F267F2CB9B2 /* SNAPMH-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = AD3B3966EEC56487F6A0C2FB /* SNAPMH-----.svg */; };
 		189AC7BB7CDBC52621F181A3 /* MarkerLabelRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C54003C6B604F6DFB40F5E3B /* MarkerLabelRenderTests.swift */; };
+		8A3B43C540640529190590A2 /* MeshtasticSettingsMessagesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EF3CAEC3CBCB1B12CA0FDEC /* MeshtasticSettingsMessagesTests.swift */; };
+		161ACBD9B19D22F036E51DE9 /* MeshtasticConfigReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405D749ACECBD7AB39A8CA4E /* MeshtasticConfigReportTests.swift */; };
+		31FA136DD98A12EE0EFA1EED /* MeshtasticBluetoothLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8186E4D9345DE88759A5A122 /* MeshtasticBluetoothLinkTests.swift */; };
+		3DEE75F273626FC79E850ACD /* MeshtasticAdminRequestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F29421DEF82853B7C55F5F6A /* MeshtasticAdminRequestTests.swift */; };
+		9DF8EBD11716B50CF0A0DCD0 /* SimulatedRadioModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F16850393B1D780DAE40BF2 /* SimulatedRadioModel.swift */; };
+		7956561D24E9DAA5FA11165E /* MeshtasticSettingsControlsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C37A46332F33B263B8DAD93E /* MeshtasticSettingsControlsTests.swift */; };
+		763013863F994DBED572581D /* MeshtasticChannelKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC80ABCAAB67619BBB35D2D /* MeshtasticChannelKeyTests.swift */; };
+		D07ED79E75DAAAC539F4E20D /* MeshtasticChannelWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42ED9BB934E34F663E364DB9 /* MeshtasticChannelWriteTests.swift */; };
+		F8586B2580B1BF21BFF9E12C /* MeshtasticLinkOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133F9E5C095D9ACDB6F4B0A7 /* MeshtasticLinkOwnershipTests.swift */; };
+		6C78B5F030CEC9D804956E61 /* MeshWriteRig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90EDA3CC6246102ABD0AB2A7 /* MeshWriteRig.swift */; };
+		269249F05E8C9D5F4D07084D /* LoopbackRadio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86165191C554731E56C7997A /* LoopbackRadio.swift */; };
+		9DD9ECEEAE8B9A08FA016694 /* MeshtasticSimulatedRadioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB55ADAD35D54E5C59442249 /* MeshtasticSimulatedRadioTests.swift */; };
+		C95AC6B6305BAD9F6F5926B5 /* MeshtasticSettingsWriteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39E4C474AB5809BD484C1980 /* MeshtasticSettingsWriteTests.swift */; };
+		CC4A1B981B86B58DC4EA41F3 /* MeshtasticRadioSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9FB201F8C09ECA1B56A77A3 /* MeshtasticRadioSettingsTests.swift */; };
+		0E649183B4659D07D4A70955 /* MeshtasticAdminCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B46706CCB880F85AD8E3DC0B /* MeshtasticAdminCodecTests.swift */; };
+		51A743B84D0CA24A6B041444 /* ProtoFieldsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0268FA141D073E6EE10A424 /* ProtoFieldsTests.swift */; };
+		79123BA4D3B447A3DE665E4E /* MeshSettingsFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB90BCA282A0DB648763808C /* MeshSettingsFixtures.swift */; };
 		FBC3484949779BD66E9FFA76 /* MeshNodeLastHeardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47233E28A71F637837D22507 /* MeshNodeLastHeardTests.swift */; };
 		CD1E3C409EE9D7E869EBD04C /* MeshtasticProtoDecoderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FBF2A7098F37344F6A244DB /* MeshtasticProtoDecoderTests.swift */; };
 		DB9D4179F59C36F9F4E258A7 /* MBTilesRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0E7ACFAB445E2075F4E5FEF /* MBTilesRenderTests.swift */; };
@@ -274,6 +291,13 @@
 		A7CA00030000000000B00003 /* MeshChannelShare.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00030000000000A00003 /* MeshChannelShare.swift */; };
 		A7CA00040000000000B00004 /* MeshtasticAdminCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00040000000000A00004 /* MeshtasticAdminCodec.swift */; };
 		A7CA00050000000000B00005 /* MeshtasticProtoDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00050000000000A00005 /* MeshtasticProtoDecoder.swift */; };
+		A7CA00060000000000B00006 /* ProtoFields.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00060000000000A00006 /* ProtoFields.swift */; };
+		A7CA00070000000000B00007 /* MeshtasticRadioSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00070000000000A00007 /* MeshtasticRadioSettings.swift */; };
+		A7CA00080000000000B00008 /* MeshtasticChannelKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00080000000000A00008 /* MeshtasticChannelKey.swift */; };
+		A7CA00090000000000B00009 /* MeshtasticSettingsControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA00090000000000A00009 /* MeshtasticSettingsControls.swift */; };
+		A7CA000A0000000000B0000A /* MeshtasticAdminSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA000A0000000000A0000A /* MeshtasticAdminSession.swift */; };
+		A7CA000B0000000000B0000B /* MeshtasticManager+Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA000B0000000000A0000B /* MeshtasticManager+Settings.swift */; };
+		A7CA000C0000000000B0000C /* MeshtasticSettingsMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CA000C0000000000A0000C /* MeshtasticSettingsMessages.swift */; };
 		A7CB00010000000000B00001 /* MeshChannelApplyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CB00010000000000A00001 /* MeshChannelApplyTests.swift */; };
 		A7CC00010000000000B00001 /* MeshtasticSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CC00010000000000A00001 /* MeshtasticSettingsView.swift */; };
 		A9321E0EC74569E8473691D6 /* CompassOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D240A72682F8C0E3253BA1F /* CompassOverlayView.swift */; };
@@ -717,6 +741,13 @@
 		A7CA00030000000000A00003 /* MeshChannelShare.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshChannelShare.swift; path = OmniTAKMobile/Features/Mesh/Services/MeshChannelShare.swift; sourceTree = "<group>"; };
 		A7CA00040000000000A00004 /* MeshtasticAdminCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticAdminCodec.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticAdminCodec.swift; sourceTree = "<group>"; };
 		A7CA00050000000000A00005 /* MeshtasticProtoDecoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticProtoDecoder.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticProtoDecoder.swift; sourceTree = "<group>"; };
+		A7CA00060000000000A00006 /* ProtoFields.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProtoFields.swift; path = OmniTAKMobile/Features/Meshtastic/Services/ProtoFields.swift; sourceTree = "<group>"; };
+		A7CA00070000000000A00007 /* MeshtasticRadioSettings.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticRadioSettings.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticRadioSettings.swift; sourceTree = "<group>"; };
+		A7CA00080000000000A00008 /* MeshtasticChannelKey.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticChannelKey.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticChannelKey.swift; sourceTree = "<group>"; };
+		A7CA00090000000000A00009 /* MeshtasticSettingsControls.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsControls.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticSettingsControls.swift; sourceTree = "<group>"; };
+		A7CA000A0000000000A0000A /* MeshtasticAdminSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticAdminSession.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticAdminSession.swift; sourceTree = "<group>"; };
+		A7CA000B0000000000A0000B /* MeshtasticManager+Settings.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "MeshtasticManager+Settings.swift"; path = "OmniTAKMobile/Features/Meshtastic/Managers/MeshtasticManager+Settings.swift"; sourceTree = "<group>"; };
+		A7CA000C0000000000A0000C /* MeshtasticSettingsMessages.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsMessages.swift; path = OmniTAKMobile/Features/Meshtastic/Services/MeshtasticSettingsMessages.swift; sourceTree = "<group>"; };
 		A7CB00010000000000A00001 /* MeshChannelApplyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshChannelApplyTests.swift; path = OmniTAKMobileTests/MeshChannelApplyTests.swift; sourceTree = "<group>"; };
 		A7CC00010000000000A00001 /* MeshtasticSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsView.swift; path = OmniTAKMobile/Features/Meshtastic/Views/MeshtasticSettingsView.swift; sourceTree = "<group>"; };
 		A82EDDDAEBCE973D79E5F5EE /* RouteModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RouteModels.swift; path = OmniTAKMobile/Features/Navigation/Models/RouteModels.swift; sourceTree = "<group>"; };
@@ -765,6 +796,23 @@
 		C3D4E5F60718293A4B5C6D7F /* TAKTLSSessionDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKTLSSessionDelegate.swift; path = OmniTAKMobile/Features/Networking/Services/TAKTLSSessionDelegate.swift; sourceTree = "<group>"; };
 		C4C6755C8B6629F45526C18E /* SUAPMHQ----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUAPMHQ----.svg"; sourceTree = "<group>"; };
 		C54003C6B604F6DFB40F5E3B /* MarkerLabelRenderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MarkerLabelRenderTests.swift; path = OmniTAKMobileTests/MarkerLabelRenderTests.swift; sourceTree = "<group>"; };
+		8EF3CAEC3CBCB1B12CA0FDEC /* MeshtasticSettingsMessagesTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsMessagesTests.swift; path = OmniTAKMobileTests/MeshtasticSettingsMessagesTests.swift; sourceTree = "<group>"; };
+		405D749ACECBD7AB39A8CA4E /* MeshtasticConfigReportTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticConfigReportTests.swift; path = OmniTAKMobileTests/MeshtasticConfigReportTests.swift; sourceTree = "<group>"; };
+		8186E4D9345DE88759A5A122 /* MeshtasticBluetoothLinkTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticBluetoothLinkTests.swift; path = OmniTAKMobileTests/MeshtasticBluetoothLinkTests.swift; sourceTree = "<group>"; };
+		F29421DEF82853B7C55F5F6A /* MeshtasticAdminRequestTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticAdminRequestTests.swift; path = OmniTAKMobileTests/MeshtasticAdminRequestTests.swift; sourceTree = "<group>"; };
+		8F16850393B1D780DAE40BF2 /* SimulatedRadioModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SimulatedRadioModel.swift; path = OmniTAKMobileTests/SimulatedRadioModel.swift; sourceTree = "<group>"; };
+		C37A46332F33B263B8DAD93E /* MeshtasticSettingsControlsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsControlsTests.swift; path = OmniTAKMobileTests/MeshtasticSettingsControlsTests.swift; sourceTree = "<group>"; };
+		5FC80ABCAAB67619BBB35D2D /* MeshtasticChannelKeyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticChannelKeyTests.swift; path = OmniTAKMobileTests/MeshtasticChannelKeyTests.swift; sourceTree = "<group>"; };
+		42ED9BB934E34F663E364DB9 /* MeshtasticChannelWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticChannelWriteTests.swift; path = OmniTAKMobileTests/MeshtasticChannelWriteTests.swift; sourceTree = "<group>"; };
+		133F9E5C095D9ACDB6F4B0A7 /* MeshtasticLinkOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticLinkOwnershipTests.swift; path = OmniTAKMobileTests/MeshtasticLinkOwnershipTests.swift; sourceTree = "<group>"; };
+		90EDA3CC6246102ABD0AB2A7 /* MeshWriteRig.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshWriteRig.swift; path = OmniTAKMobileTests/MeshWriteRig.swift; sourceTree = "<group>"; };
+		86165191C554731E56C7997A /* LoopbackRadio.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LoopbackRadio.swift; path = OmniTAKMobileTests/LoopbackRadio.swift; sourceTree = "<group>"; };
+		EB55ADAD35D54E5C59442249 /* MeshtasticSimulatedRadioTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSimulatedRadioTests.swift; path = OmniTAKMobileTests/MeshtasticSimulatedRadioTests.swift; sourceTree = "<group>"; };
+		39E4C474AB5809BD484C1980 /* MeshtasticSettingsWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsWriteTests.swift; path = OmniTAKMobileTests/MeshtasticSettingsWriteTests.swift; sourceTree = "<group>"; };
+		B9FB201F8C09ECA1B56A77A3 /* MeshtasticRadioSettingsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticRadioSettingsTests.swift; path = OmniTAKMobileTests/MeshtasticRadioSettingsTests.swift; sourceTree = "<group>"; };
+		B46706CCB880F85AD8E3DC0B /* MeshtasticAdminCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticAdminCodecTests.swift; path = OmniTAKMobileTests/MeshtasticAdminCodecTests.swift; sourceTree = "<group>"; };
+		B0268FA141D073E6EE10A424 /* ProtoFieldsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ProtoFieldsTests.swift; path = OmniTAKMobileTests/ProtoFieldsTests.swift; sourceTree = "<group>"; };
+		DB90BCA282A0DB648763808C /* MeshSettingsFixtures.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshSettingsFixtures.swift; path = OmniTAKMobileTests/MeshSettingsFixtures.swift; sourceTree = "<group>"; };
 		47233E28A71F637837D22507 /* MeshNodeLastHeardTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshNodeLastHeardTests.swift; path = OmniTAKMobileTests/MeshNodeLastHeardTests.swift; sourceTree = "<group>"; };
 		7FBF2A7098F37344F6A244DB /* MeshtasticProtoDecoderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticProtoDecoderTests.swift; path = OmniTAKMobileTests/MeshtasticProtoDecoderTests.swift; sourceTree = "<group>"; };
 		F0E7ACFAB445E2075F4E5FEF /* MBTilesRenderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MBTilesRenderTests.swift; path = OmniTAKMobileTests/MBTilesRenderTests.swift; sourceTree = "<group>"; };
@@ -1157,6 +1205,23 @@
 				AB1603E6586A65EEB4B8F2D3 /* ChatXMLGeneratorTests.swift */,
 				8A1C8BE0D1AB61B76CD11A65 /* DeepLinkAPIPortTests.swift */,
 				C54003C6B604F6DFB40F5E3B /* MarkerLabelRenderTests.swift */,
+				8EF3CAEC3CBCB1B12CA0FDEC /* MeshtasticSettingsMessagesTests.swift */,
+				405D749ACECBD7AB39A8CA4E /* MeshtasticConfigReportTests.swift */,
+				8186E4D9345DE88759A5A122 /* MeshtasticBluetoothLinkTests.swift */,
+				F29421DEF82853B7C55F5F6A /* MeshtasticAdminRequestTests.swift */,
+				8F16850393B1D780DAE40BF2 /* SimulatedRadioModel.swift */,
+				C37A46332F33B263B8DAD93E /* MeshtasticSettingsControlsTests.swift */,
+				5FC80ABCAAB67619BBB35D2D /* MeshtasticChannelKeyTests.swift */,
+				42ED9BB934E34F663E364DB9 /* MeshtasticChannelWriteTests.swift */,
+				133F9E5C095D9ACDB6F4B0A7 /* MeshtasticLinkOwnershipTests.swift */,
+				90EDA3CC6246102ABD0AB2A7 /* MeshWriteRig.swift */,
+				86165191C554731E56C7997A /* LoopbackRadio.swift */,
+				EB55ADAD35D54E5C59442249 /* MeshtasticSimulatedRadioTests.swift */,
+				39E4C474AB5809BD484C1980 /* MeshtasticSettingsWriteTests.swift */,
+				B9FB201F8C09ECA1B56A77A3 /* MeshtasticRadioSettingsTests.swift */,
+				B46706CCB880F85AD8E3DC0B /* MeshtasticAdminCodecTests.swift */,
+				B0268FA141D073E6EE10A424 /* ProtoFieldsTests.swift */,
+				DB90BCA282A0DB648763808C /* MeshSettingsFixtures.swift */,
 				47233E28A71F637837D22507 /* MeshNodeLastHeardTests.swift */,
 				7FBF2A7098F37344F6A244DB /* MeshtasticProtoDecoderTests.swift */,
 				F0E7ACFAB445E2075F4E5FEF /* MBTilesRenderTests.swift */,
@@ -1509,6 +1574,12 @@
 				A7CA00030000000000A00003 /* MeshChannelShare.swift */,
 				A7CA00040000000000A00004 /* MeshtasticAdminCodec.swift */,
 				A7CA00050000000000A00005 /* MeshtasticProtoDecoder.swift */,
+				A7CA00060000000000A00006 /* ProtoFields.swift */,
+				A7CA00070000000000A00007 /* MeshtasticRadioSettings.swift */,
+				A7CA00080000000000A00008 /* MeshtasticChannelKey.swift */,
+				A7CA00090000000000A00009 /* MeshtasticSettingsControls.swift */,
+				A7CA000A0000000000A0000A /* MeshtasticAdminSession.swift */,
+				A7CA000C0000000000A0000C /* MeshtasticSettingsMessages.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -2309,6 +2380,7 @@
 			isa = PBXGroup;
 			children = (
 				C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */,
+				A7CA000B0000000000A0000B /* MeshtasticManager+Settings.swift */,
 			);
 			name = Managers;
 			sourceTree = "<group>";
@@ -2842,6 +2914,23 @@
 				8C15CAB8ADB1E32F734D28C0 /* ChatXMLGeneratorTests.swift in Sources */,
 				EF0CC48BDD0F4677A29BE8CA /* DeepLinkAPIPortTests.swift in Sources */,
 				189AC7BB7CDBC52621F181A3 /* MarkerLabelRenderTests.swift in Sources */,
+				8A3B43C540640529190590A2 /* MeshtasticSettingsMessagesTests.swift in Sources */,
+				161ACBD9B19D22F036E51DE9 /* MeshtasticConfigReportTests.swift in Sources */,
+				31FA136DD98A12EE0EFA1EED /* MeshtasticBluetoothLinkTests.swift in Sources */,
+				3DEE75F273626FC79E850ACD /* MeshtasticAdminRequestTests.swift in Sources */,
+				9DF8EBD11716B50CF0A0DCD0 /* SimulatedRadioModel.swift in Sources */,
+				7956561D24E9DAA5FA11165E /* MeshtasticSettingsControlsTests.swift in Sources */,
+				763013863F994DBED572581D /* MeshtasticChannelKeyTests.swift in Sources */,
+				D07ED79E75DAAAC539F4E20D /* MeshtasticChannelWriteTests.swift in Sources */,
+				F8586B2580B1BF21BFF9E12C /* MeshtasticLinkOwnershipTests.swift in Sources */,
+				6C78B5F030CEC9D804956E61 /* MeshWriteRig.swift in Sources */,
+				269249F05E8C9D5F4D07084D /* LoopbackRadio.swift in Sources */,
+				9DD9ECEEAE8B9A08FA016694 /* MeshtasticSimulatedRadioTests.swift in Sources */,
+				C95AC6B6305BAD9F6F5926B5 /* MeshtasticSettingsWriteTests.swift in Sources */,
+				CC4A1B981B86B58DC4EA41F3 /* MeshtasticRadioSettingsTests.swift in Sources */,
+				0E649183B4659D07D4A70955 /* MeshtasticAdminCodecTests.swift in Sources */,
+				51A743B84D0CA24A6B041444 /* ProtoFieldsTests.swift in Sources */,
+				79123BA4D3B447A3DE665E4E /* MeshSettingsFixtures.swift in Sources */,
 				FBC3484949779BD66E9FFA76 /* MeshNodeLastHeardTests.swift in Sources */,
 				CD1E3C409EE9D7E869EBD04C /* MeshtasticProtoDecoderTests.swift in Sources */,
 				DB9D4179F59C36F9F4E258A7 /* MBTilesRenderTests.swift in Sources */,
@@ -3028,6 +3117,13 @@
 				A7CA00030000000000B00003 /* MeshChannelShare.swift in Sources */,
 				A7CA00040000000000B00004 /* MeshtasticAdminCodec.swift in Sources */,
 				A7CA00050000000000B00005 /* MeshtasticProtoDecoder.swift in Sources */,
+				A7CA00060000000000B00006 /* ProtoFields.swift in Sources */,
+				A7CA00070000000000B00007 /* MeshtasticRadioSettings.swift in Sources */,
+				A7CA00080000000000B00008 /* MeshtasticChannelKey.swift in Sources */,
+				A7CA00090000000000B00009 /* MeshtasticSettingsControls.swift in Sources */,
+				A7CA000A0000000000B0000A /* MeshtasticAdminSession.swift in Sources */,
+				A7CA000B0000000000B0000B /* MeshtasticManager+Settings.swift in Sources */,
+				A7CA000C0000000000B0000C /* MeshtasticSettingsMessages.swift in Sources */,
 				A7AC00020000000000B00004 /* unishox2.c in Sources */,
 				1374EB3089F65B0141A84BC7 /* MeshNodeMapView.swift in Sources */,
 				2C213DD4704CBFF5DCE841C5 /* PluginSettingsManager.swift in Sources */,

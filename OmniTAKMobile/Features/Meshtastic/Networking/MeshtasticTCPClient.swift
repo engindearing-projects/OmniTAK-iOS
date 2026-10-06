@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Combine
 import Network
 
 // MARK: - Protocol Constants
@@ -56,22 +57,98 @@ class MeshtasticTCPClient: ObservableObject {
 
     weak var delegate: MeshtasticTCPClientDelegate?
 
-    private var connection: NWConnection?
+    /// The radio's own settings as they come in during the config download, and
+    /// the start of each download, each with the connection that delivered it.
+    /// MeshtasticManager keeps them so a settings write can change one field and
+    /// send the rest back (#148). Events are sent in the order the frames arrive.
+    let settingsEvents = PassthroughSubject<MeshtasticLinkEvent, Never>()
+
+    /// For tests: called when the radio has closed the stream of a connection,
+    /// before the client closes that connection on its side.
+    var endOfStreamHook: (() -> Void)?
+
+    /// For tests: called by `sendAdmin` after it has taken the connection it
+    /// checked and before it sends on it, which is where a `connect` that begins
+    /// in between would show.
+    var beforeAdminSendHook: (() -> Void)?
+
+    /// Why the last `sendAdmin` was refused, or nil when it was not. A refusal is
+    /// the answer to the caller that asked, and the settings screen says it. It is
+    /// not a connection error, so it is not `lastError`, which the connection
+    /// screens show as a banner.
+    private(set) var lastRefusal: String? {
+        get { stateLock.lock(); defer { stateLock.unlock() }; return _lastRefusal }
+        set { stateLock.lock(); _lastRefusal = newValue; stateLock.unlock() }
+    }
+    private var _lastRefusal: String?
+
     private let queue = DispatchQueue(label: "com.omnitak.meshtastic.tcp", qos: .userInitiated)
     private var receiveBuffer = Data()
     private var host: String = ""
     private var port: UInt16 = MeshtasticProtocol.defaultPort
 
+    // MARK: - Which connection
+
+    // Every connect and every disconnect starts a new connection, numbered. The
+    // old one is cancelled, and whatever it still delivers (frames, state
+    // changes, a config request that was waiting) is ignored: it is not the
+    // radio the operator asked for now. Settings, the node number and the
+    // connected state all belong to one connection (#148).
+
+    private let stateLock = NSLock()
+    private var _connection: NWConnection?
+    private var _serial = 0
+
+    private var connection: NWConnection? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _connection
+    }
+
+    /// The number of the current connection. It changes with every `connect` and
+    /// `disconnect`.
+    var connectionSerial: Int {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _serial
+    }
+
+    /// The connection, if it is the one numbered `expected`. The number and the
+    /// connection are read together.
+    private func currentConnection(ifSerial expected: Int) -> NWConnection? {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _serial == expected ? _connection : nil
+    }
+
+    /// Make `new` the connection, as the next connection number. Returns the one
+    /// it replaces, which the caller cancels, and the new number.
+    private func replaceConnection(with new: NWConnection?) -> (old: NWConnection?, serial: Int) {
+        stateLock.lock(); defer { stateLock.unlock() }
+        let old = _connection
+        _connection = new
+        _serial += 1
+        return (old, _serial)
+    }
+
+    private func onMain(_ block: @escaping () -> Void) {
+        if Thread.isMainThread { block() } else { DispatchQueue.main.async(execute: block) }
+    }
+
+    /// Run `block` on the main queue, unless connection `serial` is no longer
+    /// the current one by then.
+    private func onMain(ifCurrent serial: Int, _ block: @escaping () -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.connectionSerial == serial else { return }
+            block()
+        }
+    }
+
     // MARK: - Connection Management
 
+    /// Connect to a radio. Any connection already open is cancelled first, and
+    /// nothing of it is carried over: not its frames, not its node number, not
+    /// what was half-read from it.
     func connect(host: String, port: UInt16 = MeshtasticProtocol.defaultPort) {
         self.host = host
         self.port = port
-
-        DispatchQueue.main.async {
-            self.connectionState = .connecting
-            self.lastError = nil
-        }
 
         let tcpOptions = NWProtocolTCP.Options()
         tcpOptions.connectionTimeout = 10
@@ -86,22 +163,61 @@ class MeshtasticTCPClient: ObservableObject {
             port: NWEndpoint.Port(rawValue: port)!
         )
 
-        connection = NWConnection(to: endpoint, using: parameters)
+        let new = NWConnection(to: endpoint, using: parameters)
+        let (old, serial) = replaceConnection(with: new)
+        old?.cancel()
+        // On the queue that reads, and before the new connection can deliver
+        // anything, so a half-read frame of the old connection is not the start
+        // of the new one's.
+        queue.async { [weak self] in self?.receiveBuffer.removeAll() }
 
-        connection?.stateUpdateHandler = { [weak self] state in
-            self?.handleConnectionState(state)
+        onMain {
+            self.isConnected = false
+            self.myNodeNum = 0
+            self.firmwareVersion = ""
+            self.nodes.removeAll()
+            self.connectionState = .connecting
+            self.lastError = nil
         }
 
-        connection?.start(queue: queue)
+        // The handler works on the connection it was made for, not on whichever
+        // one is current by the time it runs.
+        new.stateUpdateHandler = { [weak self, weak new] state in
+            guard let connection = new else { return }
+            self?.handleConnectionState(state, serial: serial, connection: connection)
+        }
+        new.start(queue: queue)
     }
 
     func disconnect() {
-        connection?.cancel()
-        connection = nil
+        let (old, _) = replaceConnection(with: nil)
+        finishDisconnect(old)
+    }
 
-        DispatchQueue.main.async {
+    /// Close connection `serial` when it is still the current one. A connect that
+    /// has begun since has replaced it, and is not to be cancelled by the end of
+    /// a connection that is already gone.
+    private func disconnect(ifCurrent serial: Int) {
+        stateLock.lock()
+        guard _serial == serial else {
+            stateLock.unlock()
+            return
+        }
+        let old = _connection
+        _connection = nil
+        _serial += 1
+        stateLock.unlock()
+        finishDisconnect(old)
+    }
+
+    private func finishDisconnect(_ old: NWConnection?) {
+        old?.cancel()
+
+        onMain {
             self.isConnected = false
             self.connectionState = .disconnected
+            self.myNodeNum = 0
+            self.firmwareVersion = ""
             self.nodes.removeAll()
         }
 
@@ -110,22 +226,26 @@ class MeshtasticTCPClient: ObservableObject {
 
     // MARK: - State Handling
 
-    private func handleConnectionState(_ state: NWConnection.State) {
+    private func handleConnectionState(_ state: NWConnection.State, serial: Int, connection: NWConnection) {
+        // A connection that has been replaced is not the radio any more.
+        guard serial == connectionSerial else { return }
+
         switch state {
         case .ready:
-            DispatchQueue.main.async {
+            onMain(ifCurrent: serial) {
                 self.isConnected = true
                 self.connectionState = .connected
             }
             delegate?.tcpClient(self, didConnect: host, port: port)
-            startReceiving()
+            startReceiving(on: connection, serial: serial)
             // Delay config request slightly to ensure connection is fully ready
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.requestConfig()
+                guard let self = self, self.connectionSerial == serial else { return }
+                self.requestConfig()
             }
 
         case .failed(let error):
-            DispatchQueue.main.async {
+            onMain(ifCurrent: serial) {
                 self.isConnected = false
                 self.connectionState = .failed
                 self.lastError = error.localizedDescription
@@ -133,13 +253,13 @@ class MeshtasticTCPClient: ObservableObject {
             delegate?.tcpClient(self, didDisconnect: error)
 
         case .cancelled:
-            DispatchQueue.main.async {
+            onMain(ifCurrent: serial) {
                 self.isConnected = false
                 self.connectionState = .disconnected
             }
 
         case .waiting(let error):
-            DispatchQueue.main.async {
+            onMain(ifCurrent: serial) {
                 self.lastError = "Waiting: \(error.localizedDescription)"
             }
 
@@ -150,31 +270,32 @@ class MeshtasticTCPClient: ObservableObject {
 
     // MARK: - Receiving Data
 
-    private func startReceiving() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
-            guard let self = self else { return }
+    private func startReceiving(on connection: NWConnection, serial: Int) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
+            guard let self = self, self.connectionSerial == serial else { return }
 
             if let data = content {
                 self.receiveBuffer.append(data)
-                self.processBuffer()
+                self.processBuffer(serial: serial)
             }
 
             if let error = error {
-                DispatchQueue.main.async {
+                self.onMain(ifCurrent: serial) {
                     self.lastError = error.localizedDescription
                 }
                 return
             }
 
             if isComplete {
-                self.disconnect()
+                self.endOfStreamHook?()
+                self.disconnect(ifCurrent: serial)
             } else {
-                self.startReceiving()
+                self.startReceiving(on: connection, serial: serial)
             }
         }
     }
 
-    private func processBuffer() {
+    private func processBuffer(serial: Int) {
         // Process all complete packets in the buffer
         while true {
             // Need at least 4 bytes for header
@@ -217,28 +338,32 @@ class MeshtasticTCPClient: ObservableObject {
             receiveBuffer.removeFirst(totalLength)
 
             // Parse protobuf
-            parseFromRadio(payloadData)
+            parseFromRadio(payloadData, serial: serial)
         }
     }
 
     // MARK: - FromRadio handling (decoding lives in MeshtasticProtoDecoder)
 
-    private func parseFromRadio(_ data: Data) {
+    private func parseFromRadio(_ data: Data, serial: Int) {
         guard let payload = MeshtasticProtoDecoder.decodeFromRadio(data) else { return }
+
+        if let event = MeshtasticRadioSettings.Event(payload) {
+            settingsEvents.send(MeshtasticLinkEvent(transport: .tcp, connection: serial, event: event))
+        }
 
         switch payload {
         case .myInfo(let nodeNum):
             // FromRadio.my_info carries the node number only. The firmware
             // version arrives in a separate metadata frame, which is not decoded.
             let firmware = "Unknown"
-            DispatchQueue.main.async {
+            onMain(ifCurrent: serial) {
                 self.myNodeNum = nodeNum
                 self.firmwareVersion = firmware
             }
             delegate?.tcpClient(self, didUpdateMyInfo: nodeNum, firmwareVersion: firmware)
 
         case .nodeInfo(let node):
-            DispatchQueue.main.async {
+            onMain(ifCurrent: serial) {
                 // A later frame without a role or a last-heard time must not
                 // erase what an earlier one told us.
                 self.nodes[node.id] = node.carryingForward(from: self.nodes[node.id])
@@ -246,14 +371,15 @@ class MeshtasticTCPClient: ObservableObject {
             delegate?.tcpClient(self, didReceiveNodeInfo: node)
 
         case .packet(let packet):
-            handleMeshPacket(packet)
+            handleMeshPacket(packet, serial: serial)
 
-        case .configComplete, .rebooted, .other:
+        case .configComplete, .rebooted, .config, .channel, .other:
+            // config and channel went to settingsEvents above.
             break
         }
     }
 
-    private func handleMeshPacket(_ packet: MeshtasticProtoDecoder.MeshPacketFrame) {
+    private func handleMeshPacket(_ packet: MeshtasticProtoDecoder.MeshPacketFrame, serial: Int) {
         // Port numbers from Meshtastic:
         // 1 = TEXT_MESSAGE_APP
         // 3 = POSITION_APP
@@ -273,7 +399,7 @@ class MeshtasticTCPClient: ObservableObject {
                 // The radio's rx_time says when; it is absent when the radio has
                 // no clock, and then the phone's clock is the best there is.
                 let heardAt = packet.rxTime ?? Date()
-                DispatchQueue.main.async {
+                onMain(ifCurrent: serial) {
                     if var node = self.nodes[packet.from] {
                         node.position = position
                         node.noteHeard(at: heardAt)
@@ -353,24 +479,44 @@ class MeshtasticTCPClient: ObservableObject {
     }
 
     /// Send an `AdminMessage` payload (channel / config apply) on the ADMIN_APP
-    /// portnum (6) to the local radio. Unicast to our own node with want_ack so
-    /// the radio applies + persists the change. Returns true if dispatched.
+    /// portnum (6) to the local radio. Unicast to the radio's own node with
+    /// want_ack so the radio applies + persists the change. Returns true if
+    /// dispatched.
+    ///
+    /// The write names the connection it was built on and the radio it was
+    /// built for. It is refused, and nothing is sent, when the connection is
+    /// not that one any more (a newer one has begun), or the node number this
+    /// client holds is not that radio's. There is no fallback to the broadcast
+    /// address: that would put the admin message, and for set_channel the
+    /// channel key, on the air.
+    ///
+    /// True only when the frame was handed to the connection it was checked
+    /// against. The connection is taken once, with its number, so a connect that
+    /// begins in between cannot send it down the new one.
     @discardableResult
-    func sendAdmin(payload: Data) -> Bool {
-        guard connection != nil, isConnected else {
-            DispatchQueue.main.async { self.lastError = "Not connected" }
+    func sendAdmin(
+        payload: Data,
+        to nodeNum: UInt32,
+        connection expected: Int,
+        wantResponse: Bool = false,
+        packetID: UInt32 = UInt32.random(in: 1...UInt32.max)
+    ) -> Bool {
+        lastRefusal = nil
+        guard isConnected, let current = currentConnection(ifSerial: expected) else {
+            lastRefusal = MeshtasticWriteResult.notConnected
             return false
         }
-        let destination = myNodeNum != 0 ? myNodeNum : 0xFFFFFFFF
-        let toRadio = ATAKPluginSerializer.buildToRadio(
-            atakPayload: payload,
-            to: destination,
-            channel: 0,
-            portnum: MeshtasticAdminCodec.adminPortnum,
-            hopLimit: 3,
-            wantAck: true
-        )
-        sendToRadio(toRadio)
+        guard myNodeNum == nodeNum,
+              let toRadio = MeshtasticAdminCodec.toRadioFrame(
+                  adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse, packetID: packetID) else {
+            lastRefusal = MeshtasticWriteResult.linkChanged
+            return false
+        }
+        beforeAdminSendHook?()
+        guard sendToRadio(toRadio, on: current) else {
+            lastRefusal = MeshtasticWriteResult.notConnected
+            return false
+        }
         return true
     }
 
@@ -442,8 +588,12 @@ class MeshtasticTCPClient: ObservableObject {
         return data
     }
 
-    private func sendToRadio(_ payload: Data) {
-        guard let connection = connection else { return }
+    @discardableResult
+    private func sendToRadio(_ payload: Data, on given: NWConnection? = nil) -> Bool {
+        guard let connection = given ?? connection else { return false }
+        // A frame for a connection that was named is only sent if that
+        // connection can take it.
+        if given != nil, connection.state != .ready { return false }
 
         // Build frame with header
         var frame = Data()
@@ -460,6 +610,7 @@ class MeshtasticTCPClient: ObservableObject {
                 }
             }
         })
+        return true
     }
 
     // MARK: - Protobuf Helpers
@@ -473,3 +624,8 @@ class MeshtasticTCPClient: ObservableObject {
         data.append(UInt8(v))
     }
 }
+
+// MARK: - Settings writes
+
+@available(iOS 13.0, *)
+extension MeshtasticTCPClient: MeshtasticAdminLink {}

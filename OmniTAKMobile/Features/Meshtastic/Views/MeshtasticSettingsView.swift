@@ -35,17 +35,18 @@ struct MeshtasticSettingsView: View {
 
     // Create-channel form state
     @State private var newName: String = ""
-    @State private var newPSKHex: String = ""
-    @State private var newIsPrimary: Bool = false
+    @State private var newKeyText: String = ""
+    @State private var newNoEncryption: Bool = false
+    @State private var newReplacesPrimary: Bool = false
 
     // Join (scan/paste) state
     @State private var joinText: String = ""
     @State private var joinResult: String?
 
-    // Settings state
-    @State private var selectedRole: MeshtasticAdminCodec.DeviceRole = .tak
-    @State private var selectedRebroadcast: MeshtasticAdminCodec.RebroadcastMode = .all
-    @State private var positionIntervalSecs: Double = 900
+    // Device and Position controls (#148). They start at what the radio reports
+    // and Apply writes only what the operator changed from it; the rules, and
+    // their tests, are in MeshtasticSettingsControls.
+    @State private var controls = MeshtasticSettingsControls()
 
     // Share sheet
     @State private var shareChannel: MeshtasticManager.StoredChannel?
@@ -73,6 +74,20 @@ struct MeshtasticSettingsView: View {
                 if let status = statusMessage {
                     Section { Text(status).font(.footnote).foregroundColor(.secondary) }
                 }
+                if !meshtastic.configReports.isEmpty {
+                    Section("Config writes") {
+                        ForEach(meshtastic.configReports) { report in
+                            Text(report.text).font(.footnote).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                if !meshtastic.channelReports.isEmpty {
+                    Section("Channel writes") {
+                        ForEach(meshtastic.channelReports) { report in
+                            Text(report.text).font(.footnote).foregroundColor(.secondary)
+                        }
+                    }
+                }
             }
             .navigationTitle("Mesh Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -81,6 +96,11 @@ struct MeshtasticSettingsView: View {
                     MeshChannelShareSheet(channel: ch, transport: shareTransportLabel)
                 }
             }
+            // Seeding only starts a control over when the radio's own value for
+            // it has changed, so this does not undo the operator's choice when a
+            // pushed picker pops back and the form appears again.
+            .onAppear { controls.seed(from: meshtastic.radioSettings) }
+            .onChange(of: meshtastic.radioSettings) { _ in controls.seed(from: meshtastic.radioSettings) }
         }
     }
 
@@ -100,7 +120,7 @@ struct MeshtasticSettingsView: View {
     }
 
     private var channelsSection: some View {
-        Section("Channels") {
+        Section {
             let channels = meshtastic.appChannels
             if channels.isEmpty {
                 Text("No channels yet. Create one below or join from a shared link.")
@@ -108,10 +128,14 @@ struct MeshtasticSettingsView: View {
             } else {
                 ForEach(channels) { ch in
                     HStack {
-                        VStack(alignment: .leading) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(ch.name.isEmpty ? "(default)" : ch.name)
-                            Text("index \(ch.index)\(ch.isPrimary ? " · primary" : "")\(ch.pskHex.isEmpty ? " · open" : " · encrypted")")
+                            Text(channelDetail(ch))
                                 .font(.caption2).foregroundColor(.secondary)
+                            let standing = meshtastic.standing(of: ch)
+                            Text(standing.label)
+                                .font(.caption2)
+                                .foregroundColor(standing.onRadio ? .green : .orange)
                         }
                         Spacer()
                         Button {
@@ -122,24 +146,65 @@ struct MeshtasticSettingsView: View {
                         }
                         .buttonStyle(.borderless)
                     }
-                }
-                .onDelete { idxSet in
-                    for i in idxSet { meshtastic.removeAppChannel(index: channels[i].index) }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            meshtastic.removeAppChannel(ch)
+                        } label: {
+                            Label("Remove from list", systemImage: "minus.circle")
+                        }
+                    }
                 }
             }
+            if activeTransport == .meshtastic {
+                Button("Re-read from radio") { rereadFromRadio() }
+                    .disabled(meshtastic.settingsBusy)
+            }
+        } header: {
+            Text("Channels")
+        } footer: {
+            Text("This is the list kept in this app, not what the radio holds. "
+                 + "Removing a channel here does not remove it from the radio.")
         }
     }
 
+    /// The slot, role, key and radio of a saved channel.
+    private func channelDetail(_ ch: MeshtasticManager.StoredChannel) -> String {
+        var parts: [String] = []
+        if ch.index >= 0 {
+            parts.append("slot \(ch.index)\(ch.isPrimary ? " (primary)" : "")")
+        }
+        parts.append(ch.keyKind.label)
+        if let node = ch.nodeNum {
+            parts.append(String(format: "radio !%08x", node))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private var createChannelSection: some View {
-        Section("Create Channel") {
-            TextField("Name", text: $newName)
+        // The key rules, the free-slot choice and the two toggles are for a
+        // Meshtastic radio. A MeshCore radio keeps the form it had.
+        let meshtasticForm = activeTransport != .meshcore
+        return Section {
+            TextField(meshtasticForm ? "Name (11 bytes at most)" : "Name", text: $newName)
                 .autocorrectionDisabled()
-            TextField("PSK (hex, optional)", text: $newPSKHex)
+            TextField(meshtasticForm ? "Key (hex or base64)" : "PSK (hex, optional)", text: $newKeyText)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
-            Toggle("Primary channel", isOn: $newIsPrimary)
+            if meshtasticForm {
+                Toggle("No encryption (open channel)", isOn: $newNoEncryption)
+                Toggle("Replace primary channel", isOn: $newReplacesPrimary)
+            }
             Button("Create & Apply") { createAndApply() }
                 .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+        } header: {
+            Text("Create Channel")
+        } footer: {
+            if meshtasticForm {
+                Text("A new channel goes into a free slot on the radio. Replacing the primary changes its name, "
+                     + "and its key if you enter one; leave the key blank to keep the radio's key. "
+                     + "No encryption makes the channel open. A key left out is not open: "
+                     + "the radio would use the primary channel's key.")
+            }
         }
     }
 
@@ -157,19 +222,41 @@ struct MeshtasticSettingsView: View {
     }
 
     private var deviceConfigSection: some View {
-        Section("Device") {
-            Picker("Role", selection: $selectedRole) {
+        Section {
+            Picker("Role", selection: $controls.role) {
+                // The radio's own role when this screen has no name for it, or a
+                // placeholder until the radio has said. Neither is ever written.
+                if !deviceLoaded {
+                    Text("Not loaded").tag(MeshtasticAdminCodec.DeviceRole?.none)
+                } else if let raw = meshtastic.radioSettings.unlistedDeviceRole {
+                    Text("Role \(raw)").tag(MeshtasticAdminCodec.DeviceRole?.none)
+                }
                 ForEach(MeshtasticAdminCodec.DeviceRole.allCases, id: \.rawValue) { role in
-                    Text(role.displayName).tag(role)
+                    Text(role.displayName).tag(Optional(role))
                 }
             }
-            Picker("Rebroadcast Scope", selection: $selectedRebroadcast) {
+            .disabled(!deviceLoaded)
+            Picker("Rebroadcast Scope", selection: $controls.rebroadcast) {
+                if !deviceLoaded {
+                    Text("Not loaded").tag(MeshtasticAdminCodec.RebroadcastMode?.none)
+                } else if let raw = meshtastic.radioSettings.unlistedRebroadcastMode {
+                    Text("Mode \(raw)").tag(MeshtasticAdminCodec.RebroadcastMode?.none)
+                }
                 ForEach(MeshtasticAdminCodec.RebroadcastMode.allCases, id: \.rawValue) { mode in
-                    Text(mode.displayName).tag(mode)
+                    Text(mode.displayName).tag(Optional(mode))
                 }
             }
+            .disabled(!deviceLoaded)
             Button("Apply Device Config") { applyDeviceConfig() }
-                .disabled(activeTransport != .meshtastic)
+                .disabled(activeTransport != .meshtastic || !deviceLoaded || meshtastic.settingsBusy)
+        } header: {
+            Text("Device")
+        } footer: {
+            if !deviceLoaded {
+                Text(notLoadedText(variant: MeshtasticAdminCodec.ConfigVariant.device))
+            } else if let note = unlistedDeviceValuesNote {
+                Text(note)
+            }
         }
     }
 
@@ -189,19 +276,32 @@ struct MeshtasticSettingsView: View {
     }
 
     private var positionSection: some View {
-        Section("Position Broadcast") {
+        let radio = meshtastic.radioSettings
+        return Section {
             HStack {
                 Text("Interval")
                 Spacer()
-                Text("\(Int(positionIntervalSecs))s")
+                Text(controls.intervalLabel(radio: radio))
                     .foregroundColor(.secondary)
             }
-            Slider(value: $positionIntervalSecs, in: 30...3600, step: 30)
-            Button("Apply Interval") {
-                let ok = meshtastic.applyPositionBroadcastInterval(seconds: UInt32(positionIntervalSecs))
-                statusMessage = ok ? "Position interval sent." : "Apply failed: \(meshtastic.lastError ?? "not connected")"
+            Slider(
+                value: Binding(
+                    get: { controls.sliderValue(radio: radio) },
+                    set: { controls.sliderMoved(to: $0, radio: radio) }),
+                in: MeshtasticSettingsControls.sliderRange,
+                step: controls.sliderStep(radio: radio))
+                .disabled(!positionLoaded)
+            Button("Apply Interval") { applyInterval() }
+                .disabled(activeTransport != .meshtastic || !positionLoaded || meshtastic.settingsBusy)
+        } header: {
+            Text("Position Broadcast")
+        } footer: {
+            if !positionLoaded {
+                Text(notLoadedText(variant: MeshtasticAdminCodec.ConfigVariant.position))
+            } else if controls.intervalOutsideSlider(radio: radio) {
+                Text("This radio's interval is outside what the slider reaches. "
+                     + "It stays as it is unless you move the slider.")
             }
-            .disabled(activeTransport != .meshtastic)
         }
     }
 
@@ -211,23 +311,29 @@ struct MeshtasticSettingsView: View {
         let name = newName.trimmingCharacters(in: .whitespaces)
         switch activeTransport {
         case .meshtastic, .none:
-            // Default new channels to the first free private index (or 0 if primary).
-            let index = newIsPrimary ? 0 : nextFreeMeshtasticIndex()
-            let ch = MeshtasticManager.StoredChannel(
-                index: index, name: name, pskHex: newPSKHex.trimmingCharacters(in: .whitespaces),
-                isPrimary: newIsPrimary
-            )
-            let ok = meshtastic.applyChannel(ch)
-            statusMessage = ok
-                ? "Channel \"\(name)\" applied at index \(index)."
-                : "Saved \"\(name)\" (apply needs a connected radio)."
+            let keyText = newKeyText, noEncryption = newNoEncryption, replacePrimary = newReplacesPrimary
+            statusMessage = "Working with the radio..."
+            Task { @MainActor in
+                let outcome = await meshtastic.createChannel(
+                    name: name, keyText: keyText, noEncryption: noEncryption, replacePrimary: replacePrimary)
+                statusMessage = MeshtasticSettingsMessages.create(outcome, name: name)
+                // Typed text stays after a refusal, so that it can be corrected.
+                if outcome.savedOnly || outcome.result.refusal == nil {
+                    clearCreateForm()
+                }
+            }
         case .meshcore:
+            // Not covered by #148: the MeshCore path keeps its own slot and key handling.
             if #available(iOS 13.0, *) {
-                let ok = meshcore.applyChannel(index: 1, name: name, secretHex: newPSKHex)
+                let ok = meshcore.applyChannel(index: 1, name: name, secretHex: newKeyText)
                 statusMessage = ok ? "MeshCore channel \"\(name)\" applied." : "Apply failed."
             }
+            clearCreateForm()
         }
-        newName = ""; newPSKHex = ""; newIsPrimary = false
+    }
+
+    private func clearCreateForm() {
+        newName = ""; newKeyText = ""; newNoEncryption = false; newReplacesPrimary = false
     }
 
     private func joinFromLink() {
@@ -238,10 +344,11 @@ struct MeshtasticSettingsView: View {
         }
         switch parsed {
         case .meshtastic(let chans):
-            let applied = meshtastic.applyImportedChannels(chans)
-            joinResult = applied > 0
-                ? "Applied \(applied) Meshtastic channel(s)."
-                : "Imported \(chans.count) channel(s) (connect a radio to apply)."
+            joinResult = "Working with the radio..."
+            Task { @MainActor in
+                let outcome = await meshtastic.importChannels(chans)
+                joinResult = MeshtasticSettingsMessages.importSummary(outcome, total: chans.count)
+            }
         case .meshcore(let ch):
             if #available(iOS 13.0, *) {
                 let ok = meshcore.applyImportedChannel(ch)
@@ -254,19 +361,73 @@ struct MeshtasticSettingsView: View {
     }
 
     private func applyDeviceConfig() {
-        let ok = meshtastic.applyDeviceConfig(role: selectedRole, rebroadcastMode: selectedRebroadcast)
-        statusMessage = ok
-            ? "Device config sent (\(selectedRole.displayName), \(selectedRebroadcast.displayName))."
-            : "Apply failed: \(meshtastic.lastError ?? "not connected")"
+        // Only what the operator changed from the radio's value is written. The
+        // radio's role is not touched by changing the rebroadcast scope, and the
+        // other way round.
+        let edits = controls.deviceEdits(against: meshtastic.radioSettings)
+        guard edits.role != nil || edits.rebroadcast != nil else {
+            statusMessage = MeshtasticWriteResult.nothingToChange
+            return
+        }
+        let changed = [edits.role?.displayName, edits.rebroadcast?.displayName].compactMap { $0 }
+        statusMessage = "Working with the radio..."
+        Task { @MainActor in
+            let result = await meshtastic.applyDeviceConfig(role: edits.role, rebroadcastMode: edits.rebroadcast)
+            statusMessage = MeshtasticSettingsMessages.config(result, what: "Device config (\(changed.joined(separator: ", ")))")
+        }
+    }
+
+    private func applyInterval() {
+        // The slider's value is written only if the operator moved it.
+        guard let seconds = controls.intervalToWrite() else {
+            statusMessage = MeshtasticWriteResult.nothingToChange
+            return
+        }
+        statusMessage = "Working with the radio..."
+        Task { @MainActor in
+            let result = await meshtastic.applyPositionBroadcastInterval(seconds: seconds)
+            statusMessage = MeshtasticSettingsMessages.config(result, what: "Position interval")
+        }
+    }
+
+    private func rereadFromRadio() {
+        statusMessage = "Asking the radio for its settings..."
+        Task { @MainActor in
+            let outcome = await meshtastic.rereadFromRadio()
+            statusMessage = MeshtasticSettingsMessages.reread(outcome)
+        }
+    }
+
+    // MARK: - What the radio reports
+
+    private var deviceLoaded: Bool { meshtastic.radioSettings.hasDeviceConfig }
+    private var positionLoaded: Bool { meshtastic.radioSettings.hasPositionConfig }
+
+    /// Why the controls of a sub-config are empty: the radio was sent a change
+    /// and is restarting, or its settings have not arrived.
+    private func notLoadedText(variant: Int) -> String {
+        meshtastic.radioSettings.isAwaitingRestart(variant: variant)
+            ? MeshtasticWriteResult.restarting
+            : MeshtasticWriteResult.notLoaded
+    }
+
+    /// Set when the radio holds a role or rebroadcast mode this screen has no
+    /// entry for. The picker is then empty, and Apply leaves that setting alone
+    /// unless the operator picks another.
+    private var unlistedDeviceValuesNote: String? {
+        var unlisted: [String] = []
+        if let raw = meshtastic.radioSettings.unlistedDeviceRole {
+            unlisted.append("role \(raw)")
+        }
+        if let raw = meshtastic.radioSettings.unlistedRebroadcastMode {
+            unlisted.append("rebroadcast mode \(raw)")
+        }
+        guard !unlisted.isEmpty else { return nil }
+        return "This radio uses \(unlisted.joined(separator: " and ")), which is not in the list. "
+            + "Apply leaves it as it is unless you pick another."
     }
 
     // MARK: - Helpers
-
-    private func nextFreeMeshtasticIndex() -> Int {
-        let used = Set(meshtastic.appChannels.map { $0.index })
-        for i in 1...7 where !used.contains(i) { return i }
-        return 1
-    }
 
     private var transportLabel: String {
         switch activeTransport {

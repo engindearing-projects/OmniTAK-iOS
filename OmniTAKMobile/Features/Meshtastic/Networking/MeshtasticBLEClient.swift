@@ -101,6 +101,13 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     @Published var nodes: [UInt32: MeshNode] = [:]
     @Published var lastError: String?
 
+    /// Why the last `sendAdmin` was refused, or nil when it was not. A refusal is
+    /// the answer to the caller that asked, and the settings screen says it. It is
+    /// not a connection error, so it is not `lastError`, which the connection
+    /// screens show as a banner and which the Bluetooth state callbacks also set.
+    /// Main thread only: the manager asks from the main actor.
+    private(set) var lastRefusal: String?
+
     enum ConnectionState: String {
         case disconnected = "Disconnected"
         case scanning = "Scanning..."
@@ -113,6 +120,17 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     // MARK: - Properties
 
     weak var delegate: MeshtasticBLEClientDelegate?
+
+    /// The radio's own settings as they come in during the config download, and
+    /// the start of each download, each with the connection that delivered it.
+    /// MeshtasticManager keeps them so a settings write can change one field and
+    /// send the rest back (#148). Events are sent in the order the frames arrive.
+    let settingsEvents = PassthroughSubject<MeshtasticLinkEvent, Never>()
+
+    /// This client does not number its connections. The manager treats the
+    /// Bluetooth link as one connection and starts from nothing whenever the
+    /// operator connects or the link drops.
+    var connectionSerial: Int { 0 }
 
     private var centralManager: CBCentralManager!
     private var toRadioCharacteristic: CBCharacteristic?
@@ -465,23 +483,33 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
     /// portnum (6) to the local radio. Admin writes are unicast to our own node
     /// with want_ack so the radio applies + persists them. Returns true if the
     /// bytes were dispatched.
+    ///
+    /// Without the radio's node number nothing is sent. There is no fallback to
+    /// the broadcast address: that would put the admin message, and for
+    /// set_channel the channel key, on the air.
     @discardableResult
-    func sendAdmin(payload: Data) -> Bool {
+    func sendAdmin(
+        payload: Data,
+        to nodeNum: UInt32,
+        connection expected: Int,
+        wantResponse: Bool = false,
+        packetID: UInt32 = UInt32.random(in: 1...UInt32.max)
+    ) -> Bool {
+        // The write is for one radio. Without that radio's node number here,
+        // or with another one, nothing goes out.
+        lastRefusal = nil
+        guard myNodeNum == nodeNum,
+              let toRadio = MeshtasticAdminCodec.toRadioFrame(
+                  adminPayload: payload, myNodeNum: nodeNum, wantResponse: wantResponse, packetID: packetID) else {
+            lastRefusal = MeshtasticWriteResult.linkChanged
+            return false
+        }
         guard let peripheral = connectedPeripheral,
               let characteristic = toRadioCharacteristic,
               peripheral.state == .connected else {
-            DispatchQueue.main.async { self.lastError = "Not connected" }
+            lastRefusal = MeshtasticWriteResult.notConnected
             return false
         }
-        let destination = myNodeNum != 0 ? myNodeNum : 0xFFFFFFFF
-        let toRadio = ATAKPluginSerializer.buildToRadio(
-            atakPayload: payload,
-            to: destination,
-            channel: 0,
-            portnum: MeshtasticAdminCodec.adminPortnum,
-            hopLimit: 3,
-            wantAck: true
-        )
         sendToRadio(toRadio, peripheral: peripheral, characteristic: characteristic)
         return true
     }
@@ -572,8 +600,12 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
 
     // MARK: - FromRadio handling (decoding lives in MeshtasticProtoDecoder)
 
-    private func parseFromRadio(_ data: Data) {
+    func parseFromRadio(_ data: Data) {
         guard let payload = MeshtasticProtoDecoder.decodeFromRadio(data) else { return }
+
+        if let event = MeshtasticRadioSettings.Event(payload) {
+            settingsEvents.send(MeshtasticLinkEvent(transport: .bluetooth, connection: 0, event: event))
+        }
 
         switch payload {
         case .myInfo(let nodeNum):
@@ -610,6 +642,14 @@ class MeshtasticBLEClient: NSObject, ObservableObject {
 
         case .rebooted:
             print("📦 rebooted notification (field 8)")
+
+        case .config(let variant, _):
+            // Not logged beyond the number: the security variant holds a key.
+            print("📦 config variant \(variant)")
+
+        case .channel(let index, _):
+            // Not logged beyond the index: a channel holds its key.
+            print("📦 channel slot \(index)")
 
         case .other(let field):
             print("📦 Unused FromRadio field \(field)")
@@ -1057,3 +1097,8 @@ extension MeshtasticBLEClient: CBPeripheralDelegate {
         print("📡 Stopped periodic reads")
     }
 }
+
+// MARK: - Settings writes
+
+@available(iOS 13.0, *)
+extension MeshtasticBLEClient: MeshtasticAdminLink {}

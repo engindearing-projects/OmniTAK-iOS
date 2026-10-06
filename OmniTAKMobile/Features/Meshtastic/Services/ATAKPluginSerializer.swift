@@ -211,6 +211,9 @@ enum ATAKPluginSerializer {
     ///   - wantAck: whether to request a delivery ACK. Defaults to false —
     ///     broadcast marker/chat traffic doesn't ACK (an ACK on a broadcast
     ///     just adds airtime). Unicast callers can opt in.
+    ///   - wantResponse: Data.want_response (field 3). An admin request such as
+    ///     get_channel_request is only answered when this is set. Defaults to
+    ///     false, which adds no bytes.
     static func buildToRadio(
         atakPayload: Data,
         to destination: UInt32 = 0xFFFFFFFF,
@@ -218,6 +221,7 @@ enum ATAKPluginSerializer {
         portnum: UInt64 = 72,
         hopLimit: UInt32 = 3,
         wantAck: Bool = false,
+        wantResponse: Bool = false,
         packetID: UInt32 = UInt32.random(in: 1...UInt32.max)
     ) -> Data {
         // Data submessage.
@@ -228,6 +232,10 @@ enum ATAKPluginSerializer {
         appendTag(&decoded, field: 2, wire: 2)
         appendVarint(&decoded, UInt64(atakPayload.count))
         decoded.append(atakPayload)
+        // 3: want_response (bool varint)
+        if wantResponse {
+            appendVarintField(&decoded, field: 3, value: 1)
+        }
 
         // MeshPacket.
         var meshPacket = Data()

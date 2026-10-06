@@ -4,7 +4,7 @@
 //
 //  Decoders for the radio-to-phone messages the Meshtastic BLE and TCP clients
 //  read: FromRadio, MyNodeInfo, NodeInfo, User, Position, DeviceMetrics,
-//  MeshPacket and Data.
+//  MeshPacket, Data, and the Config and Channel frames of the config download.
 //
 //  Field numbers and wire types are the ones in the published mesh.proto and
 //  telemetry.proto, written out by hand (no generated code, no proto text).
@@ -25,8 +25,16 @@
 //  Layouts used here (field number, name, wire type):
 //
 //    FromRadio   1 id varint, 2 packet len, 3 my_info len, 4 node_info len,
-//                7 config_complete_id varint, 8 rebooted varint. Everything
-//                else (5 config, 10 channel, 13 metadata, 16 and up) is skipped.
+//                5 config len, 7 config_complete_id varint, 8 rebooted varint,
+//                10 channel len. Everything else (13 metadata, 16 and up) is
+//                skipped.
+//    Config      one of device 1, position 2, power 3, network 4, display 5,
+//                lora 6, bluetooth 7, security 8, and the newer ones after
+//                them, each a message (len). The bytes of that message are kept
+//                as they came, not decoded: they are what a settings write
+//                changes one field of and sends back (#148).
+//    Channel     1 index varint. The whole message is kept as it came, for the
+//                same reason.
 //    MyNodeInfo  1 my_node_num varint
 //    NodeInfo    1 num varint, 2 user len, 3 position len, 4 snr float32,
 //                5 last_heard fixed32, 6 device_metrics len, 9 hops_away varint.
@@ -64,6 +72,18 @@ enum MeshtasticProtoDecoder {
         var rxSnr: Float?
         var hopLimit: Int?
         var rxRssi: Int?
+        /// MeshPacket.id. 0 when absent.
+        var id: UInt32 = 0
+        /// Data.request_id: the id of the packet this one answers. Nil when
+        /// absent.
+        var requestId: UInt32?
+        /// MeshPacket.hop_start. Nil when absent.
+        var hopStart: Int?
+        /// MeshPacket.via_mqtt.
+        var viaMQTT = false
+        /// MeshPacket.transport_mechanism. 0 when absent, which is also what a
+        /// packet that never left the radio carries.
+        var transportMechanism: UInt64 = 0
     }
 
     /// What a FromRadio frame carried. FromRadio holds one payload variant, so
@@ -74,8 +94,15 @@ enum MeshtasticProtoDecoder {
         case packet(MeshPacketFrame)
         case configComplete(id: UInt32)
         case rebooted
-        /// A variant the app does not use (config, channel, metadata, ...), or a
-        /// node_info that could not be decoded.
+        /// One sub-config of the config download: its field number inside
+        /// `Config` (device 1, position 2, ...) and the bytes of that message.
+        case config(variant: Int, body: Data)
+        /// One channel slot of the config download: its index and the bytes of
+        /// the whole Channel message.
+        case channel(index: Int, body: Data)
+        /// A variant the app does not use (metadata, ...), a node_info that
+        /// could not be decoded, or a config or channel that is not a complete,
+        /// well-formed message.
         case other(field: Int)
     }
 
@@ -98,18 +125,60 @@ enum MeshtasticProtoDecoder {
             case (4, 2):
                 guard let body = reader.readBytes() else { return result }
                 result = decodeNodeInfo(body).map { .nodeInfo($0) } ?? .other(field: 4)
+            case (5, 2):
+                guard let body = reader.readBytes() else { return result }
+                result = decodeConfig(body).map { .config(variant: $0.variant, body: $0.body) } ?? .other(field: 5)
             case (7, 0):
                 guard let value = reader.readVarint() else { return result }
                 result = .configComplete(id: UInt32(truncatingIfNeeded: value))
             case (8, 0):
                 guard reader.readVarint() != nil else { return result }
                 result = .rebooted
+            case (10, 2):
+                guard let body = reader.readBytes() else { return result }
+                result = decodeChannel(body).map { .channel(index: $0.index, body: $0.body) } ?? .other(field: 10)
             default:
                 guard reader.skip(wire: tag.wire) else { return result }
                 result = .other(field: tag.field)
             }
         }
         return result
+    }
+
+    // MARK: - Config and Channel (the config download)
+
+    /// The sub-config a `Config` message carries: its field number inside
+    /// `Config` and the bytes of that sub-config message.
+    ///
+    /// Unlike the decoders above, this one is all or nothing. The bytes are what
+    /// a later write changes one field of and sends back, and the radio replaces
+    /// its sub-config with whatever it is sent, so a message that was cut short
+    /// must not be kept: writing it back would reset the fields that were cut
+    /// off. Nil when `Config`, or the sub-config in it, is not well-formed all
+    /// the way through, or when it carries no sub-config.
+    ///
+    /// `Config` is a oneof. When a frame has more than one, the last wins.
+    static func decodeConfig(_ data: Data) -> (variant: Int, body: Data)? {
+        guard let fields = ProtoFields.parse(data),
+              let variant = fields.last(where: { $0.wireType == 2 }),
+              ProtoFields.parse(variant.value) != nil else { return nil }
+        return (variant.number, variant.value)
+    }
+
+    /// The index of a `Channel` message, and the whole message.
+    ///
+    /// All or nothing, for the reason given at `decodeConfig`. The index is
+    /// field 1; a message without it is slot 0, because the radio leaves a
+    /// default out. Nil when the message is not well-formed all the way through,
+    /// or the index is not a non-negative int32.
+    static func decodeChannel(_ data: Data) -> (index: Int, body: Data)? {
+        guard let fields = ProtoFields.parse(data) else { return nil }
+        var index = 0
+        if let field = fields.last(where: { $0.number == 1 }) {
+            guard let value = field.varintValue, value <= UInt64(Int32.max) else { return nil }
+            index = Int(value)
+        }
+        return (index, Data(data))
     }
 
     // MARK: - MyNodeInfo
@@ -296,6 +365,10 @@ enum MeshtasticProtoDecoder {
                 let decoded = decodeData(body)
                 packet.portNum = decoded.portNum
                 packet.payload = decoded.payload
+                packet.requestId = decoded.requestId
+            case (6, 5): // id
+                guard let value = reader.readFixed32() else { break fields }
+                packet.id = value
             case (7, 5): // rx_time
                 guard let seconds = reader.readFixed32() else { break fields }
                 packet.rxTime = seconds > 0 ? Date(timeIntervalSince1970: TimeInterval(seconds)) : nil
@@ -308,6 +381,15 @@ enum MeshtasticProtoDecoder {
             case (12, 0): // rx_rssi, int32
                 guard let value = reader.readVarint() else { break fields }
                 packet.rxRssi = Int(Int32(truncatingIfNeeded: value))
+            case (14, 0): // via_mqtt
+                guard let value = reader.readVarint() else { break fields }
+                packet.viaMQTT = value != 0
+            case (15, 0): // hop_start
+                guard let value = reader.readVarint() else { break fields }
+                packet.hopStart = Int(UInt32(truncatingIfNeeded: value))
+            case (21, 0): // transport_mechanism
+                guard let value = reader.readVarint() else { break fields }
+                packet.transportMechanism = value
             default:
                 guard reader.skip(wire: tag.wire) else { break fields }
             }
@@ -317,11 +399,12 @@ enum MeshtasticProtoDecoder {
 
     // MARK: - Data
 
-    /// portnum and payload of a MeshPacket's `decoded` Data.
-    static func decodeData(_ data: Data) -> (portNum: Int, payload: Data) {
+    /// portnum, payload and request_id of a MeshPacket's `decoded` Data.
+    static func decodeData(_ data: Data) -> (portNum: Int, payload: Data, requestId: UInt32?) {
         var reader = Reader(data)
         var portNum = 0
         var payload = Data()
+        var requestId: UInt32?
         fields: while let tag = reader.readTag() {
             switch (tag.field, tag.wire) {
             case (1, 0):
@@ -330,11 +413,14 @@ enum MeshtasticProtoDecoder {
             case (2, 2):
                 guard let body = reader.readBytes() else { break fields }
                 payload = body
+            case (6, 5): // request_id
+                guard let value = reader.readFixed32() else { break fields }
+                requestId = value
             default:
                 guard reader.skip(wire: tag.wire) else { break fields }
             }
         }
-        return (portNum, payload)
+        return (portNum, payload, requestId)
     }
 
     // MARK: - Wire reader
