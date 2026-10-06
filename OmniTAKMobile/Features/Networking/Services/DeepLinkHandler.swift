@@ -398,19 +398,17 @@ class DeepLinkHandler: ObservableObject {
             certificatePassword: nil
         )
 
-        // Add and connect
-        ServerManager.shared.addServer(server)
-        ServerManager.shared.setActiveServer(server)
+        // Add the server, or find the record already saved for that address, make
+        // it the active one and switch it on if it was off. The saved record is the
+        // one to dial: addServer returns an existing record when the address is
+        // already saved, and its id is not the id of the record built above.
+        let saved = ServerManager.shared.addAndSwitchOn(server)
 
-        // Connect immediately
-        TAKService.shared.connect(
-            host: server.host,
-            port: server.port,
-            protocolType: server.protocolType,
-            useTLS: server.useTLS,
-            certificateName: nil,
-            certificatePassword: nil
-        )
+        // Dial it once, through the same path as every other server. addServer has
+        // already dialed a new server that is switched on, and connectToServer
+        // leaves a dial in flight alone. The older TAKService.connect() opened a
+        // second connection to the same server (#156).
+        TAKService.shared.connectToServer(saved)
 
         isProcessing = false
         enrolledServerName = serverName

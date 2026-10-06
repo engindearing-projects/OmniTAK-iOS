@@ -38,6 +38,25 @@ Regression tests for OmniTAK Mobile networking and connection functionality.
 - Certificate manager state
 - TLS configuration
 
+### TAKLinkLivenessTests, TAKPingTests, TAKRedialBackoffTests
+- When a TAK server connection is pinged and when it is given up on, run
+  against a fake clock (#149)
+- The ping frame, and reading `type` and `uid` from a frame's start tag
+- The re-dial delays: 0, 2, 4, 8, 16, 30 seconds (#154)
+
+### TAKSenderLivenessTests
+- A real `DirectTCPSender` against an in-process listener on loopback: the
+  ping, the give-up rule, a closed stream, what is reported to the owner, the
+  "Monitor Server Connections" switch
+- Waits are for a condition with a deadline. The few claims that something does
+  not happen are watched for a stated time
+
+### TAKServiceDialTests
+- The rules for a server the operator has switched on, without sockets
+  (`ServerConnectionRulesTests`)
+- `TAKService` against a loopback server: one dial at a time, dial again after
+  a drop, nothing dials after the server is switched off
+
 ## Test Target
 
 These suites are compiled into the `OmniTAKMobileTests` unit-test target

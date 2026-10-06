@@ -790,15 +790,22 @@ struct SimpleEnrollView: View {
 
         await MainActor.run {
             enrollmentState = .creatingServer
-            let server = ServerManager.shared.addServer(TAKServer(
+            // The saved record for this address, switched on and active. If the
+            // address was saved but switched off, the operator has just asked for it,
+            // so it is switched on (and saved).
+            let server = ServerManager.shared.addAndSwitchOn(TAKServer(
                 name: host,
                 host: host,
                 port: port,
                 protocolType: "tcp",
                 useTLS: false
             ))
-            ServerManager.shared.setActiveServer(server)
-            TAKService.shared.connect(host: server.host, port: server.port, protocolType: "tcp", useTLS: false)
+            // addServer has already dialed a new server that is switched on. The
+            // legacy TAKService.connect() dialed it a second time, which opened a
+            // second connection to the same server. connectToServer leaves a link
+            // that is up or being dialed alone, and dials a saved server that has
+            // no link.
+            TAKService.shared.connectToServer(server)
             enrollmentState = .success
         }
         print("[SimpleEnroll] Added plain-TCP server \(host):\(port) and connecting")
