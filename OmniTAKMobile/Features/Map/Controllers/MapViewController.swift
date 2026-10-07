@@ -120,6 +120,11 @@ struct ATAKMapView: View {
     // #178 — on-map staleness overlay (Settings → "Show point age on map").
     // When on, contact pins fade by age bucket and gain a compact age label.
     @AppStorage("stalenessOverlayEnabled") private var stalenessOverlayEnabled = false
+    // #135: Settings, "Label size": the names under markers and the position box.
+    // Read here (not just in Settings) so a change redraws the map at once. The
+    // phone's own text size comes from the environment, so changing that redraws too.
+    @AppStorage(LabelSize.storageKey) private var labelScalePercent = LabelSize.defaultPercent
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     // Bumps once on a slow cadence while the overlay is on, so the pins
     // re-fade / re-label as points age even when no new CoT arrives. Idle when
     // the overlay is off, so the default render path is untouched.
@@ -204,6 +209,13 @@ struct ATAKMapView: View {
     private var gpsClusterBottomPad: CGFloat {
         if isCursorModeActive { return isLandscape ? 96 : 222 }
         return isLandscape ? 56 : (showQuickActionToolbar ? 150 : 90)
+    }
+
+    /// #135: the one multiplier for the names under markers and for the position
+    /// box: the phone's text size x the Label size setting.
+    private var labelFactor: Double {
+        LabelSize.factor(phoneFontScale: LabelSize.phoneFontScale(for: dynamicTypeSize),
+                         percent: labelScalePercent)
     }
 
     // Computed CoT markers from TAK service - filtered by overlay settings
@@ -328,7 +340,9 @@ struct ATAKMapView: View {
             // #178 — fade/label contact pins by age when enabled in Settings.
             // Referencing stalenessTick here ties the slow timer to a re-render
             // so pins age visibly even without inbound CoT.
-            stalenessOverlay: stalenessOverlayEnabled && stalenessTick >= 0
+            stalenessOverlay: stalenessOverlayEnabled && stalenessTick >= 0,
+            // #135: names under markers at the phone's text size x Label size.
+            labelFactor: labelFactor
         )
         .ignoresSafeArea()
         .onReceive(stalenessTimer) { _ in
@@ -568,25 +582,34 @@ struct ATAKMapView: View {
     @ViewBuilder
     private var callsignDisplay: some View {
         if showCallsignPanel, let location = locationManager.location {
-            VStack {
-                Spacer()
-                HStack {
+            // #135: GeometryReader so the box can be capped at a width that stops
+            // short of the map buttons on the left (long lines wrap instead).
+            GeometryReader { geo in
+                VStack {
                     Spacer()
-                    CallsignDisplay(
-                        callsign: userCallsign,
-                        coordinates: formatCoordinates(location.coordinate),
-                        altitude: formatAltitude(location.altitude),
-                        speed: formatSpeed(location.speed),
-                        heading: formatHeading(locationManager.heading),
-                        accuracy: "+/- \(Int(location.horizontalAccuracy))m",
-                        onDismiss: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showCallsignPanel = false
-                            }
-                        }
-                    )
-                    .padding(.trailing, 16)
-                    .padding(.bottom, callsignBottomPad)
+                    HStack {
+                        Spacer()
+                        CallsignDisplay(
+                            callsign: userCallsign,
+                            coordinates: formatCoordinates(location.coordinate),
+                            altitude: formatAltitude(location.altitude),
+                            speed: formatSpeed(location.speed),
+                            heading: formatHeading(locationManager.heading),
+                            accuracy: "+/- \(Int(location.horizontalAccuracy))m",
+                            onDismiss: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showCallsignPanel = false
+                                }
+                            },
+                            labelFactor: labelFactor,
+                            maxWidth: CGFloat(PositionBoxStyle.maxWidth(
+                                screenWidth: Double(geo.size.width),
+                                leadingReserved: PositionBoxStyle.leadingReserved,
+                                trailing: PositionBoxStyle.trailingPadding))
+                        )
+                        .padding(.trailing, CGFloat(PositionBoxStyle.trailingPadding))
+                        .padding(.bottom, callsignBottomPad)
+                    }
                 }
             }
             .zIndex(1003)

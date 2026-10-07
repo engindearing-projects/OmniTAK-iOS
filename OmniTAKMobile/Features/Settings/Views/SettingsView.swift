@@ -31,6 +31,9 @@ struct SettingsView: View {
     @AppStorage("showMGRSLabels") private var showMGRSLabels = true
     // #178 — on-map staleness overlay. Off by default; read by ATAKMapView.
     @AppStorage("stalenessOverlayEnabled") private var stalenessOverlayEnabled = false
+    // #135: Label size: names under markers and the position box, as a whole
+    // percent (80 to 160, default 100). Read by ATAKMapView, which redraws at once.
+    @AppStorage(LabelSize.storageKey) private var labelScalePercent = LabelSize.defaultPercent
     @AppStorage("coordinateDisplayFormat") private var coordinateFormatString = "MGRS"
     @AppStorage("breadcrumbTrailsEnabled") private var breadcrumbTrailsEnabled = true
     @AppStorage("trailMaxLength") private var trailMaxLength = 100
@@ -321,6 +324,22 @@ struct SettingsView: View {
                          "(fresh under 1 min, aging 1–5 min, stale over 5 min)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+
+                    // #135: Label size. Plain English like "Show point age on map"
+                    // above. One stored percent; the map reads it and redraws at once.
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Label size")
+                        Picker("Label size", selection: LabelSize.choiceBinding(for: $labelScalePercent)) {
+                            ForEach(LabelSize.choices, id: \.self) { percent in
+                                Text("\(percent)%").tag(percent)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Names under markers and the position box on the map. " +
+                             "For all other text, use your phone's font size setting.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 Section(loc.t("settings.section.droneDetection")) {

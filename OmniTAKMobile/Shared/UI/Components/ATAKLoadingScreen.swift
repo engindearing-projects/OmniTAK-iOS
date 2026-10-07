@@ -306,13 +306,22 @@ struct CallsignDisplay: View {
     /// the card's top-right corner so the operator can hide the card
     /// directly without having to dig through the Layers panel.
     var onDismiss: (() -> Void)? = nil
+    /// #135: the phone's text size x the Settings "Label size", as one multiplier
+    /// for every line of text in the box. 1 draws the sizes the box always had.
+    var labelFactor: Double = 1
+    /// #135: the widest the box may be. nil leaves the layout as it was. The map
+    /// passes a width that stops short of the buttons on the left: before, the box
+    /// stretched across almost the whole width and sat on top of them, and a large
+    /// text size would only have made that worse. Lines wrap inside the cap.
+    var maxWidth: CGFloat? = nil
 
     var body: some View {
+        let style = PositionBoxStyle(factor: labelFactor)
         VStack(alignment: .leading, spacing: 3) {
             // Callsign in green (ATAK style) — with optional close button
             HStack(spacing: 8) {
                 Text("Callsign: \(callsign)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: style.callsign, weight: .semibold))
                     .foregroundColor(.green)
                 if let onDismiss {
                     Spacer(minLength: 4)
@@ -328,18 +337,18 @@ struct CallsignDisplay: View {
 
             // MGRS Coordinates
             Text(coordinates)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: style.coordinates, weight: .medium, design: .monospaced))
                 .foregroundColor(.white)
 
             // Altitude and Heading on same line
             HStack(spacing: 16) {
                 Text(altitude)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: style.detail, weight: .medium))
                     .foregroundColor(.white)
 
                 if let heading = heading, !heading.isEmpty {
                     Text(heading)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: style.detail, weight: .medium))
                         .foregroundColor(.white)
                 }
             }
@@ -347,19 +356,39 @@ struct CallsignDisplay: View {
             // Speed and Accuracy on same line
             HStack(spacing: 16) {
                 Text(speed)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: style.detail, weight: .medium))
                     .foregroundColor(.white)
 
                 Text(accuracy)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: style.detail, weight: .medium))
                     .foregroundColor(.white)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+        .modifier(PositionBoxWidth(maxWidth: maxWidth))
         .background(Color.black.opacity(0.75))
         .cornerRadius(6)
         .shadow(color: .black.opacity(0.4), radius: 4, x: 0, y: 2)
+    }
+}
+
+/// #135: caps the position box's width and lets its lines wrap inside the cap.
+/// With no cap the box is left exactly as it was. Note that a frame with a maximum
+/// width fills up to that width when it is offered more, which is what the box did
+/// before (it filled the width it was offered).
+private struct PositionBoxWidth: ViewModifier {
+    let maxWidth: CGFloat?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let maxWidth {
+            content
+                .frame(maxWidth: maxWidth, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            content
+        }
     }
 }
 
