@@ -34,7 +34,9 @@ enum ContactMarkerRender {
     static let symbolMargin: CGFloat = 4
     /// Mapbox text-offset (in ems) from the contact's coordinate to the top of
     /// the label — clears the 28 pt frame (14 pt radius + stroke + glow) at the
-    /// 11 pt label size.
+    /// 11 pt label size. #135: this and `labelTextSize` are the design values, at
+    /// the phone's default text size and a Label size of 100%; `MapLabelStyle`
+    /// scales the size and keeps the same distance in points at every size.
     static let labelOffsetEm: Double = 1.5
     static let labelTextSize: Double = 11
 
@@ -147,10 +149,14 @@ enum ContactMarkerRender {
     ///   - image: the symbol bitmap (TAK-registry icon or `symbolImage`).
     ///   - stalenessOverlay: #178 — fade by age bucket and add the compact age
     ///     under the callsign. Off by default.
+    ///   - labelFactor: #135: the phone's text size x the Label size setting; the
+    ///     callsign (and the age under it) is drawn at this multiple of its design
+    ///     size. The symbol keeps its size. 1 is the size the app always drew.
     static func annotation(for marker: CoTMarker,
                            image: UIImage,
                            stalenessOverlay: Bool = false,
-                           now: Date = Date()) -> PointAnnotation {
+                           now: Date = Date(),
+                           labelFactor: Double = 1) -> PointAnnotation {
         var ann = PointAnnotation(id: "cot-\(marker.uid)", coordinate: marker.coordinate)
         // The name folds in the icon source so a spot-map dot and an affiliation
         // frame of the same type don't share one sprite. No callsign in it.
@@ -171,7 +177,8 @@ enum ContactMarkerRender {
             }
             ageLabel = CoTAge.shortLabel(receivedAt: marker.receivedAt, now: now)
         }
-        applyLabel(to: &ann, callsign: marker.callsign, ageLabel: ageLabel, opacity: labelOpacity)
+        applyLabel(to: &ann, callsign: marker.callsign, ageLabel: ageLabel, opacity: labelOpacity,
+                   labelFactor: labelFactor)
         return ann
     }
 
@@ -193,20 +200,26 @@ enum ContactMarkerRender {
     /// Put the callsign on the annotation as a Mapbox text field, styled like
     /// dropped pins (white, black halo, anchored under the symbol).
     ///
-    /// - Parameter opacity: label opacity; the staleness overlay passes the same
-    ///   alpha it gives the icon so the whole pin fades together.
+    /// - Parameters:
+    ///   - opacity: label opacity; the staleness overlay passes the same alpha it
+    ///     gives the icon so the whole pin fades together.
+    ///   - labelFactor: #135: see `annotation(for:image:stalenessOverlay:now:labelFactor:)`.
+    ///     The name starts the same distance below the point at every size
+    ///     (`MapLabelStyle`), so a bigger name never reaches the symbol.
     static func applyLabel(to annotation: inout PointAnnotation,
                            callsign: String,
                            ageLabel: String? = nil,
-                           opacity: Double? = nil) {
+                           opacity: Double? = nil,
+                           labelFactor: Double = 1) {
         guard let text = labelText(callsign: callsign, ageLabel: ageLabel) else { return }
+        let style = MapLabelStyle.contact(factor: labelFactor)
         annotation.textField = text
         annotation.textAnchor = .top
-        annotation.textOffset = [0, labelOffsetEm]
+        annotation.textOffset = [0, style.offsetEm]
         annotation.textColor = StyleColor(.white)
         annotation.textHaloColor = StyleColor(.black)
-        annotation.textHaloWidth = 1.0
-        annotation.textSize = labelTextSize
+        annotation.textHaloWidth = style.haloWidth
+        annotation.textSize = style.textSize
         if let opacity { annotation.textOpacity = opacity }
     }
 }
