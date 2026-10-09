@@ -120,6 +120,26 @@ final class TAKRestCredentialFallbackTests: XCTestCase {
         }
     }
 
+    /// The enrollment port itself not answering is reported as that, not as
+    /// rejected credentials.
+    func testNoCertificateAndAnEnrollmentPortThatDoesNotAnswerNamesThatPort() async throws {
+        let (_, apiPort) = try start(.clientCertificate)
+        let (closed, closedPort) = try start(.open)
+        closed.stop()
+        let server = entry(apiPort: apiPort, enrollPort: closedPort, certificateName: nil, username: "vaclav", password: "pw")
+
+        let client = TAKRestAPIClient()
+        do {
+            _ = try await client.connect(to: server)
+            XCTFail("a closed enrollment port cannot connect")
+        } catch let error as TAKAPIError {
+            let failure = try XCTUnwrap(error.connectionFailure, "\(error)")
+            XCTAssertEqual(failure.kind, .connectionRefused, failure.details)
+            XCTAssertEqual(failure.port, Int(closedPort))
+            XCTAssertFalse(failure.summary.contains("did not accept the stored username"), failure.summary)
+        }
+    }
+
     func testNoCredentialsMeansNoFallback() async throws {
         let (_, apiPort) = try start(.clientCertificate)
         let (enroll, enrollPort) = try start(.bearer(token: "tok-4", username: "vaclav", password: "pw"))

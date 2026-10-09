@@ -354,6 +354,9 @@ class TAKRestAPIClient: ObservableObject {
     /// What the username/password route said the last time it was tried
     /// and did not work (#169).
     private(set) var lastFallbackNote: String?
+    /// The enrollment port's own transport failure, when the fallback never
+    /// got an HTTP answer (TLS trust, refused, timeout).
+    private var lastFallbackTransportFailure: TAKConnectionFailure?
     private var bearerToken: String?
 
     private var urlSession: URLSession?
@@ -445,6 +448,13 @@ class TAKRestAPIClient: ObservableObject {
             lastError = failure.summary
             throw TAKAPIError.connectionFailed(failure)
         }
+        // No certificate: the enrollment port's own failure is the story when
+        // it never answered; otherwise it answered and refused the credentials.
+        if let transport = lastFallbackTransportFailure {
+            lastFailure = transport
+            lastError = transport.summary
+            throw TAKAPIError.connectionFailed(transport)
+        }
         let failure = TAKConnectionFailure.credentialsRejected(host: config.serverURL, port: config.enrollmentPort, note: note)
         lastFailure = failure
         lastError = failure.summary
@@ -458,6 +468,7 @@ class TAKRestAPIClient: ObservableObject {
         let port = config.enrollmentPort
         let endpoint = "\(config.serverURL):\(port)"
         lastFallbackNote = nil
+        lastFallbackTransportFailure = nil
         Logger.takNetwork.info("REST fallback: trying username/password on \(endpoint, privacy: .public)")
         var notes: [String] = []
 
@@ -466,8 +477,8 @@ class TAKRestAPIClient: ObservableObject {
         case .token(let token):
             bearerToken = token
             authMode = .bearerToken(port: port)
-            if let why = await probeCurrentRoute() {
-                notes.append("OAuth token from \(endpoint) accepted but the API answered: \(why)")
+            if let failure = await probeCurrentRoute() {
+                notes.append("OAuth token from \(endpoint) accepted but the API answered: \(failure.summary)")
             } else {
                 Logger.takNetwork.notice("REST fallback: \(endpoint, privacy: .public) reached with an OAuth token")
                 return authMode
@@ -478,13 +489,20 @@ class TAKRestAPIClient: ObservableObject {
             // Wrong credentials; Basic would not do better.
             notes.append("\(endpoint) rejected the username and password (\(why))")
             return endFallback(notes)
+        case .transportFailure(let failure):
+            // The port itself did not answer (TLS trust, refused, timeout);
+            // Basic on the same port would fail the same way.
+            lastFallbackTransportFailure = failure
+            notes.append("enrollment port \(endpoint): \(failure.summary)")
+            return endFallback(notes)
         }
 
         // 2. HTTP Basic (OpenTAKServer, taky).
         bearerToken = nil
         authMode = .basic(port: port)
-        if let why = await probeCurrentRoute() {
-            notes.append("Basic auth on \(endpoint): \(why)")
+        if let failure = await probeCurrentRoute() {
+            if let transport = failure.connectionFailure { lastFallbackTransportFailure = transport }
+            notes.append("Basic auth on \(endpoint): \(failure.summary)")
             return endFallback(notes)
         }
         Logger.takNetwork.notice("REST fallback: \(endpoint, privacy: .public) reached with Basic auth")
@@ -500,23 +518,32 @@ class TAKRestAPIClient: ObservableObject {
         return nil
     }
 
-    /// nil when the API answered 200 on the current route; otherwise why not.
-    private func probeCurrentRoute() async -> String? {
+    /// What a probe of the current route came back with, or nil on HTTP 200.
+    private struct ProbeFailure {
+        let summary: String
+        let connectionFailure: TAKConnectionFailure?
+    }
+
+    private func probeCurrentRoute() async -> ProbeFailure? {
         do {
             _ = try await checkReachability()
             return nil
         } catch let error as TAKAPIError {
-            if let failure = error.connectionFailure { return failure.summary }
-            return error.errorDescription ?? String(describing: error)
+            return ProbeFailure(summary: error.errorDescription ?? String(describing: error),
+                                connectionFailure: error.connectionFailure)
         } catch {
-            return error.localizedDescription
+            return ProbeFailure(summary: error.localizedDescription, connectionFailure: nil)
         }
     }
 
     private enum TokenResult {
         case token(String)
+        /// The port answered but has no usable OAuth (404, odd body).
         case unavailable(String)
+        /// The port answered and refused the credentials (400/401/403).
         case rejected(String)
+        /// The port never answered.
+        case transportFailure(TAKConnectionFailure)
     }
 
     /// `POST /oauth/token?grant_type=password` on the enrollment port. TAK
@@ -560,7 +587,7 @@ class TAKRestAPIClient: ObservableObject {
             let handshake = tlsDelegate?.report.snapshot() ?? TAKTLSHandshakeSnapshot(trustMode: config.trustMode.label)
             let failure = TAKConnectionFailure(error: error, host: config.serverURL, port: config.enrollmentPort, handshake: handshake)
             Logger.takNetwork.error("REST fallback: token request failed: \(failure.details, privacy: .public)")
-            return .unavailable(failure.summary)
+            return .transportFailure(failure)
         }
     }
 
