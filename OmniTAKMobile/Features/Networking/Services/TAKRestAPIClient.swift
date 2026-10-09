@@ -237,7 +237,7 @@ struct TAKDataPackageInfo: Codable, Identifiable {
 enum TAKAPIError: LocalizedError {
     case invalidConfiguration
     case certificateNotFound
-    case connectionFailed(String)
+    case connectionFailed(TAKConnectionFailure)
     case authenticationRequired
     case forbidden
     case notFound(String)
@@ -253,8 +253,8 @@ enum TAKAPIError: LocalizedError {
             return "Invalid API configuration"
         case .certificateNotFound:
             return "Client certificate not found"
-        case .connectionFailed(let message):
-            return "Connection failed: \(message)"
+        case .connectionFailed(let failure):
+            return failure.summary
         case .authenticationRequired:
             return "Authentication required"
         case .forbidden:
@@ -275,6 +275,14 @@ enum TAKAPIError: LocalizedError {
     }
 }
 
+extension TAKAPIError {
+    /// The diagnosed transport failure, when this error is one (#169).
+    var connectionFailure: TAKConnectionFailure? {
+        if case .connectionFailed(let failure) = self { return failure }
+        return nil
+    }
+}
+
 // MARK: - TAK REST API Client
 
 @MainActor
@@ -283,9 +291,13 @@ class TAKRestAPIClient: ObservableObject {
 
     @Published var isConnected: Bool = false
     @Published var lastError: String?
+    /// The last request that never got an HTTP answer, explained (#169).
+    @Published var lastFailure: TAKConnectionFailure?
 
     private var urlSession: URLSession?
     private var configuration: TAKAPIConfiguration?
+    /// Kept so a failed request can read the handshake report.
+    private var tlsDelegate: TAKTLSSessionDelegate?
 
     init() {}
 
@@ -305,9 +317,11 @@ class TAKRestAPIClient: ObservableObject {
             certificateName: config.certificateName
         )
         urlSession = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
+        tlsDelegate = delegate
 
         isConnected = true
         lastError = nil
+        lastFailure = nil
     }
 
     func configure(from server: TAKServer) {
@@ -318,6 +332,7 @@ class TAKRestAPIClient: ObservableObject {
     func disconnect() {
         urlSession?.invalidateAndCancel()
         urlSession = nil
+        tlsDelegate = nil
         configuration = nil
         isConnected = false
     }
@@ -455,7 +470,13 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
-        let (localURL, response) = try await session.download(for: request)
+        let download: (URL, URLResponse)
+        do {
+            download = try await session.download(for: request)
+        } catch {
+            throw transportFailure(error)
+        }
+        let (localURL, response) = download
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TAKAPIError.invalidResponse("Not an HTTP response")
@@ -518,7 +539,12 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
-        let (_, response) = try await session.data(for: request)
+        let response: URLResponse
+        do {
+            (_, response) = try await session.data(for: request)
+        } catch {
+            throw transportFailure(error)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TAKAPIError.invalidResponse("Not an HTTP response")
@@ -664,9 +690,28 @@ class TAKRestAPIClient: ObservableObject {
             lastError = error.errorDescription
             throw error
         } catch {
-            lastError = error.localizedDescription
-            throw TAKAPIError.connectionFailed(error.localizedDescription)
+            throw transportFailure(error)
         }
+    }
+
+    /// Turn a URLSession transport error into a diagnosable failure: which
+    /// host and port, what the system reported, and what the TLS delegate
+    /// saw during the handshake (server trust decision, whether the server
+    /// asked for a client certificate, whether one was presented). Logged in
+    /// full so a device log or the in-app diagnostics show the cause (#169).
+    private func transportFailure(_ error: Error) -> TAKAPIError {
+        let handshake = tlsDelegate?.report.snapshot()
+            ?? TAKTLSHandshakeSnapshot(trustMode: configuration?.trustMode.label ?? "unknown")
+        let failure = TAKConnectionFailure(
+            error: error,
+            host: configuration?.serverURL ?? "?",
+            port: configuration?.secureAPIPort ?? 0,
+            handshake: handshake
+        )
+        lastError = failure.summary
+        lastFailure = failure
+        Logger.takNetwork.error("REST transport failure: \(failure.details, privacy: .public)")
+        return .connectionFailed(failure)
     }
 
     private func handleHTTPResponse(_ response: HTTPURLResponse) throws {
