@@ -455,6 +455,11 @@ struct SettingsView: View {
                         Text(loc.t("settings.importDataPackage"))
                     }
 
+                    // The app's own log since launch, with export (#169).
+                    NavigationLink(destination: DiagnosticsLogView()) {
+                        Text("Diagnostics Log")
+                    }
+
                     Button(loc.t("settings.resetToDefaults")) {
                         userCallsign = "ALPHA-1"
                         unitSystemString = "Metric"
