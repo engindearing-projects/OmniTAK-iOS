@@ -77,6 +77,7 @@
 		291C82D9E8FEF5A9239B1CF4 /* SNGPUUL----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 23CA2FA2B3BB6DFD4BEC9ACE /* SNGPUUL----.svg */; };
 		2C213DD4704CBFF5DCE841C5 /* PluginSettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB82A68BE625612A8B0E94DC /* PluginSettingsManager.swift */; };
 		2CA3C8BEC25D704E76152257 /* SFSPX------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 1146597916B3AEC4BAE8C687 /* SFSPX------.svg */; };
+		2E31BCC75E8501E8AC7FC384 /* LoopbackMartiServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDBD09DEBB8909B501281BA4 /* LoopbackMartiServer.swift */; };
 		2E7F17AD3D074A695AC601C0 /* CoTAge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3335C3DF14B38CB233099BC6 /* CoTAge.swift */; };
 		2EA7B6EBC0683F9B2FE87994 /* CertificateImportPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9AB820E688425E45EE60103 /* CertificateImportPipeline.swift */; };
 		2F28591B9FC564C3E5B232CC /* DrawingToolsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FCF30C181516B0451F11577 /* DrawingToolsPanel.swift */; };
@@ -238,6 +239,7 @@
 		8EB591857FD97F76C54E7397 /* SNAPMF-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = B4E49EC79566C4E1FA39BB03 /* SNAPMF-----.svg */; };
 		8FAE4E52C1359FED5A96C71F /* SUAPMFQ----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 1D1C7A259A982FE51C314BC9 /* SUAPMFQ----.svg */; };
 		9008486FE4AD16E831A43BB9 /* RangeRingConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60E8E729DD91882F96747226 /* RangeRingConfigView.swift */; };
+		910ED6B46906499C2BF504B6 /* TAKRestCredentialFallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D5976117AB2765F95F1C1C5 /* TAKRestCredentialFallbackTests.swift */; };
 		91F91B699BCC7DBF69B67132 /* SHGPUSM----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 4666E1CBDE71ACA08FECE8DE /* SHGPUSM----.svg */; };
 		920333E0E3053D6914F3C368 /* MapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40BFBA51A756BC0EA91C9245 /* MapViewController.swift */; };
 		9283117A5B3461B4491D39CE /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB890E2F2655A343CC461349 /* AboutView.swift */; };
@@ -507,6 +509,7 @@
 		0CAB30EF2A4D5DDC51F0D945 /* SHGPEVF----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPEVF----.svg"; sourceTree = "<group>"; };
 		0CFC3F270A71C2F7D59AB900 /* LassoContactPickerSheet.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Views/LassoContactPickerSheet.swift; sourceTree = "<group>"; };
 		0D2FE0C197835A47A6E72903 /* MissionSyncView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MissionSyncView.swift; path = OmniTAKMobile/Features/DataPackages/Views/MissionSyncView.swift; sourceTree = "<group>"; };
+		0D5976117AB2765F95F1C1C5 /* TAKRestCredentialFallbackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKRestCredentialFallbackTests.swift; path = OmniTAKMobileTests/TAKRestCredentialFallbackTests.swift; sourceTree = "<group>"; };
 		0DADFB16189D9AD132105CFF /* SNSP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNSP-------.svg"; sourceTree = "<group>"; };
 		0E1F2A3B4C5D6E7F80910A0C /* RootTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RootTabView.swift; path = OmniTAKMobile/Core/App/RootTabView.swift; sourceTree = "<group>"; };
 		0E3E4F244163FBE4214BC0C6 /* LassoExporters.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Features/Drawing/Services/LassoExporters.swift; sourceTree = "<group>"; };
@@ -911,6 +914,7 @@
 		EC5FB4399952EB25310628E4 /* RangeBearingService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RangeBearingService.swift; path = OmniTAKMobile/Features/Measurement/Services/RangeBearingService.swift; sourceTree = "<group>"; };
 		ECFF97D1F93D4F76B58669BC /* IconsetPackParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconsetPackParserTests.swift; path = OmniTAKMobileTests/IconsetPackParserTests.swift; sourceTree = "<group>"; };
 		ED51505084DDA26949BB854D /* EchelonHierarchyView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EchelonHierarchyView.swift; path = OmniTAKMobile/Features/Teams/Views/EchelonHierarchyView.swift; sourceTree = "<group>"; };
+		EDBD09DEBB8909B501281BA4 /* LoopbackMartiServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LoopbackMartiServer.swift; path = OmniTAKMobileTests/LoopbackMartiServer.swift; sourceTree = "<group>"; };
 		EE2FC006021B8F5CE7D6554F /* SFGPEVC----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPEVC----.svg"; sourceTree = "<group>"; };
 		EF7BBAAC9A11F9C68877EBD3 /* SUSPCL-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUSPCL-----.svg"; sourceTree = "<group>"; };
 		F0B36E3A750CD455EFE5AD60 /* SUSPX------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUSPX------.svg"; sourceTree = "<group>"; };
@@ -1264,6 +1268,8 @@
 				682BC692F407FC662A8B8225 /* TAKConnectionFailureTests.swift */,
 				097E7B1ACA68E34F99BFD33F /* TAKTLSHandshakeReportTests.swift */,
 				E9B93E60B450030A02D23FEC /* TAKTLSClientCertificateRequiredTests.swift */,
+				EDBD09DEBB8909B501281BA4 /* LoopbackMartiServer.swift */,
+				0D5976117AB2765F95F1C1C5 /* TAKRestCredentialFallbackTests.swift */,
 			);
 			name = OmniTAKMobileTests;
 			sourceTree = "<group>";
@@ -2985,6 +2991,8 @@
 				1CE3742DB8135243CD19B392 /* TAKConnectionFailureTests.swift in Sources */,
 				A49185C59E9999989E0DA8A3 /* TAKTLSHandshakeReportTests.swift in Sources */,
 				8E328700C36C72A115ED715C /* TAKTLSClientCertificateRequiredTests.swift in Sources */,
+				2E31BCC75E8501E8AC7FC384 /* LoopbackMartiServer.swift in Sources */,
+				910ED6B46906499C2BF504B6 /* TAKRestCredentialFallbackTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -143,7 +143,7 @@ struct MissionSyncView: View {
     private func statusLine(_ s: ServerSyncSession) -> String {
         switch s.status {
         case .checking: return "\(s.host) — checking…"
-        case .online:   return s.host
+        case .online:   return s.authLabel.map { "\(s.host) · \($0)" } ?? s.host
         case .offline(let reason, _): return reason
         }
     }
@@ -209,7 +209,7 @@ struct MissionSyncView: View {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 44)).foregroundColor(.secondary)
             Text("No servers enabled").font(.system(size: 18, weight: .semibold)).foregroundColor(.primary)
-            Text("Enable a TLS TAK server with a client certificate in Servers, then pull to refresh. Every enabled server syncs here at once.")
+            Text("Enable a TLS TAK server with a client certificate or a username and password in Servers, then pull to refresh. Every enabled server syncs here at once.")
                 .font(.system(size: 13)).foregroundColor(.secondary)
                 .multilineTextAlignment(.center).padding(.horizontal, 32)
         }
