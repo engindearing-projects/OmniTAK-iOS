@@ -37,6 +37,8 @@ struct TAKConnectionFailure: Error, Equatable {
         case connectionLost
         case cancelled
         case other
+        /// The enrollment port answered but did not take the stored username and password.
+        case credentialsRejected
     }
 
     let kind: Kind
@@ -52,6 +54,33 @@ struct TAKConnectionFailure: Error, Equatable {
     /// What the system said, verbatim.
     let systemDescription: String
     let handshake: TAKTLSHandshakeSnapshot
+    /// What the username/password route said when it was tried after this
+    /// failure and did not work either (#169).
+    var fallbackNote: String?
+
+    private init(kind: Kind, host: String, port: Int, errorDomain: String, errorCode: Int,
+                 streamErrorDomain: Int?, streamErrorCode: Int?, systemDescription: String,
+                 handshake: TAKTLSHandshakeSnapshot) {
+        self.kind = kind
+        self.host = host
+        self.port = port
+        self.errorDomain = errorDomain
+        self.errorCode = errorCode
+        self.streamErrorDomain = streamErrorDomain
+        self.streamErrorCode = streamErrorCode
+        self.systemDescription = systemDescription
+        self.handshake = handshake
+    }
+
+    /// A fallback through the enrollment port that got an HTTP answer
+    /// refusing the credentials: no transport failure to wrap.
+    static func credentialsRejected(host: String, port: Int, note: String) -> TAKConnectionFailure {
+        TAKConnectionFailure(kind: .credentialsRejected, host: host, port: port,
+                             errorDomain: "OmniTAK.MissionSync", errorCode: 0,
+                             streamErrorDomain: nil, streamErrorCode: nil,
+                             systemDescription: note,
+                             handshake: TAKTLSHandshakeSnapshot(trustMode: "n/a"))
+    }
 
     init(error: Error, host: String, port: Int, handshake: TAKTLSHandshakeSnapshot) {
         let nsError = error as NSError
@@ -149,9 +178,24 @@ struct TAKConnectionFailure: Error, Equatable {
         }
     }
 
+    /// Whether trying the enrollment port with a username and password could
+    /// help: anything the certificate port did at the TLS or TCP layer, not
+    /// a host that cannot be resolved or a network that is down.
+    var allowsCredentialFallback: Bool {
+        switch kind {
+        case .hostNotFound, .timedOut, .offline, .cancelled, .other, .credentialsRejected: return false
+        default: return true
+        }
+    }
+
     /// One sentence or two for the server row. Names the endpoint and what
-    /// to do about it.
+    /// to do about it, plus what the credential route said if it was tried.
     var summary: String {
+        guard let fallbackNote else { return baseSummary }
+        return baseSummary + " Username and password did not work either (\(fallbackNote))."
+    }
+
+    private var baseSummary: String {
         switch kind {
         case .clientCertificateMissing:
             return "\(endpoint) requires a client certificate and this server has none. Enroll with your username and password, or import a .p12."
@@ -185,6 +229,8 @@ struct TAKConnectionFailure: Error, Equatable {
             return "The request to \(endpoint) was cancelled."
         case .other:
             return "\(endpoint): \(systemDescription)"
+        case .credentialsRejected:
+            return "\(endpoint) did not accept the stored username and password (\(systemDescription)). Check them in the server settings."
         }
     }
 
@@ -198,6 +244,7 @@ struct TAKConnectionFailure: Error, Equatable {
             lines.append("Underlying: stream domain \(d) code \(c)\(Self.streamDomainName(d))")
         }
         lines.append(contentsOf: handshake.describedLines)
+        if let fallbackNote { lines.append("Fallback: \(fallbackNote)") }
         return lines.joined(separator: "\n")
     }
 

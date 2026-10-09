@@ -27,9 +27,19 @@ struct TAKAPIConfiguration {
     /// opt-in first, then the CA truststore, then system roots.
     var trustMode: TAKTLSTrustMode = .acceptUntrusted
     var timeout: TimeInterval = 30
+    /// Stored credentials and the enrollment port (8446 by convention): the
+    /// second route to the Marti API when the certificate port refuses the
+    /// handshake or the entry has no certificate (#169).
+    var username: String?
+    var password: String?
+    var enrollmentPort: Int = 8446
 
     var baseURL: String {
         "https://\(serverURL):\(secureAPIPort)"
+    }
+
+    var hasCredentials: Bool {
+        !(username ?? "").isEmpty && !(password ?? "").isEmpty
     }
 
     init(serverURL: String, secureAPIPort: Int = 8443, certificateId: UUID? = nil, certificateName: String? = nil) {
@@ -45,6 +55,9 @@ struct TAKAPIConfiguration {
         // conventional 8443 (servers saved before the field existed).
         self.secureAPIPort = Int(server.secureAPIPort ?? 8443)
         self.certificateName = server.certificateName
+        self.username = server.username
+        self.password = server.password
+        self.enrollmentPort = Int(server.enrollmentPort ?? 8446)
         if let certName = server.certificateName,
            let cert = CertificateManager.shared.certificates.first(where: { $0.name == certName }) {
             self.certificateId = cert.id
@@ -283,6 +296,48 @@ extension TAKAPIError {
     }
 }
 
+extension TAKServer {
+    /// A username and password are stored for this server (enrollment keeps
+    /// them). They are the second route to the Marti API (#169).
+    var hasStoredCredentials: Bool {
+        !(username ?? "").isEmpty && !(password ?? "").isEmpty
+    }
+}
+
+// MARK: - Auth mode
+
+/// How the REST session authenticates to the Marti API (#169).
+enum TAKRestAuthMode: Equatable {
+    /// Mutual TLS on the certificate port (8443 by convention).
+    case clientCertificate
+    /// OAuth2 password grant on the enrollment port; TAK Server 5.x serves
+    /// the Marti API there with `Authorization: Bearer`.
+    case bearerToken(port: Int)
+    /// HTTP Basic on the enrollment port (OpenTAKServer, taky).
+    case basic(port: Int)
+
+    var label: String {
+        switch self {
+        case .clientCertificate: return "client certificate"
+        case .bearerToken(let port), .basic(let port): return "username and password (\(port))"
+        }
+    }
+
+    var usesCredentials: Bool { self != .clientCertificate }
+
+    func authorizationHeader(username: String?, password: String?, token: String?) -> String? {
+        switch self {
+        case .clientCertificate:
+            return nil
+        case .bearerToken:
+            return token.map { "Bearer \($0)" }
+        case .basic:
+            guard let username, let password else { return nil }
+            return "Basic " + Data("\(username):\(password)".utf8).base64EncodedString()
+        }
+    }
+}
+
 // MARK: - TAK REST API Client
 
 @MainActor
@@ -293,6 +348,13 @@ class TAKRestAPIClient: ObservableObject {
     @Published var lastError: String?
     /// The last request that never got an HTTP answer, explained (#169).
     @Published var lastFailure: TAKConnectionFailure?
+    /// Which route the session is on; `connect(to:)` may move it off the
+    /// certificate port (#169).
+    @Published private(set) var authMode: TAKRestAuthMode = .clientCertificate
+    /// What the username/password route said the last time it was tried
+    /// and did not work (#169).
+    private(set) var lastFallbackNote: String?
+    private var bearerToken: String?
 
     private var urlSession: URLSession?
     private var configuration: TAKAPIConfiguration?
@@ -318,6 +380,9 @@ class TAKRestAPIClient: ObservableObject {
         )
         urlSession = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
         tlsDelegate = delegate
+        authMode = .clientCertificate
+        bearerToken = nil
+        lastFallbackNote = nil
 
         isConnected = true
         lastError = nil
@@ -334,7 +399,188 @@ class TAKRestAPIClient: ObservableObject {
         urlSession = nil
         tlsDelegate = nil
         configuration = nil
+        authMode = .clientCertificate
+        bearerToken = nil
         isConnected = false
+    }
+
+    // MARK: - Connecting, with the credential fallback (#169)
+
+    /// Configure for `server` and prove the Marti API answers. The
+    /// certificate port is tried first when the entry has a certificate.
+    /// When that is refused for certificate or handshake reasons and the
+    /// entry has a username and password, the enrollment port is tried with
+    /// those: an OAuth password grant first (TAK Server 5.x), HTTP Basic
+    /// second (OpenTAKServer). An entry with credentials and no certificate
+    /// goes straight to them. Throws the certificate-port failure, annotated
+    /// with what the fallback said, when nothing works.
+    @discardableResult
+    func connect(to server: TAKServer) async throws -> TAKRestAuthMode {
+        configure(from: server)
+        guard let config = configuration else { throw TAKAPIError.invalidConfiguration }
+
+        var certificateFailure: TAKConnectionFailure?
+        if server.certificateName != nil {
+            do {
+                try await checkReachability()
+                return authMode
+            } catch let error as TAKAPIError {
+                guard let failure = error.connectionFailure,
+                      failure.allowsCredentialFallback, config.hasCredentials else {
+                    throw error
+                }
+                certificateFailure = failure
+            }
+        } else if !config.hasCredentials {
+            throw TAKAPIError.certificateNotFound
+        }
+
+        if let mode = await fallBackToCredentials(config: config) {
+            return mode
+        }
+        let note = lastFallbackNote ?? "username and password did not work"
+        if var failure = certificateFailure {
+            failure.fallbackNote = note
+            lastFailure = failure
+            lastError = failure.summary
+            throw TAKAPIError.connectionFailed(failure)
+        }
+        let failure = TAKConnectionFailure.credentialsRejected(host: config.serverURL, port: config.enrollmentPort, note: note)
+        lastFailure = failure
+        lastError = failure.summary
+        throw TAKAPIError.connectionFailed(failure)
+    }
+
+    /// The enrollment port with the stored credentials. Returns the mode
+    /// that reached the API, or nil with `lastFallbackNote` explaining why
+    /// not. Leaves the session on the certificate route on failure.
+    private func fallBackToCredentials(config: TAKAPIConfiguration) async -> TAKRestAuthMode? {
+        let port = config.enrollmentPort
+        let endpoint = "\(config.serverURL):\(port)"
+        lastFallbackNote = nil
+        Logger.takNetwork.info("REST fallback: trying username/password on \(endpoint, privacy: .public)")
+        var notes: [String] = []
+
+        // 1. OAuth password grant (TAK Server 5.x).
+        switch await requestBearerToken(config: config) {
+        case .token(let token):
+            bearerToken = token
+            authMode = .bearerToken(port: port)
+            if let why = await probeCurrentRoute() {
+                notes.append("OAuth token from \(endpoint) accepted but the API answered: \(why)")
+            } else {
+                Logger.takNetwork.notice("REST fallback: \(endpoint, privacy: .public) reached with an OAuth token")
+                return authMode
+            }
+        case .unavailable(let why):
+            notes.append("no OAuth on \(endpoint) (\(why))")
+        case .rejected(let why):
+            // Wrong credentials; Basic would not do better.
+            notes.append("\(endpoint) rejected the username and password (\(why))")
+            return endFallback(notes)
+        }
+
+        // 2. HTTP Basic (OpenTAKServer, taky).
+        bearerToken = nil
+        authMode = .basic(port: port)
+        if let why = await probeCurrentRoute() {
+            notes.append("Basic auth on \(endpoint): \(why)")
+            return endFallback(notes)
+        }
+        Logger.takNetwork.notice("REST fallback: \(endpoint, privacy: .public) reached with Basic auth")
+        return authMode
+    }
+
+    private func endFallback(_ notes: [String]) -> TAKRestAuthMode? {
+        authMode = .clientCertificate
+        bearerToken = nil
+        let note = notes.joined(separator: "; ")
+        lastFallbackNote = note
+        Logger.takNetwork.error("REST fallback failed: \(note, privacy: .public)")
+        return nil
+    }
+
+    /// nil when the API answered 200 on the current route; otherwise why not.
+    private func probeCurrentRoute() async -> String? {
+        do {
+            _ = try await checkReachability()
+            return nil
+        } catch let error as TAKAPIError {
+            if let failure = error.connectionFailure { return failure.summary }
+            return error.errorDescription ?? String(describing: error)
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private enum TokenResult {
+        case token(String)
+        case unavailable(String)
+        case rejected(String)
+    }
+
+    /// `POST /oauth/token?grant_type=password` on the enrollment port. TAK
+    /// Server answers 200 with `access_token`; a server without OAuth
+    /// answers 404 (OpenTAKServer); wrong credentials get 400/401/403.
+    private func requestBearerToken(config: TAKAPIConfiguration) async -> TokenResult {
+        guard let session = urlSession, let username = config.username, let password = config.password else {
+            return .unavailable("no credentials")
+        }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = config.serverURL
+        components.port = config.enrollmentPort
+        components.path = "/oauth/token"
+        components.queryItems = [
+            URLQueryItem(name: "grant_type", value: "password"),
+            URLQueryItem(name: "username", value: username),
+            URLQueryItem(name: "password", value: password)
+        ]
+        guard let url = components.url else { return .unavailable("could not build the token URL") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return .unavailable("no HTTP response") }
+            switch http.statusCode {
+            case 200:
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let token = json["access_token"] as? String, !token.isEmpty {
+                    return .token(token)
+                }
+                return .unavailable("HTTP 200 without an access_token")
+            case 400, 401, 403:
+                return .rejected("HTTP \(http.statusCode)")
+            default:
+                return .unavailable("HTTP \(http.statusCode)")
+            }
+        } catch {
+            let handshake = tlsDelegate?.report.snapshot() ?? TAKTLSHandshakeSnapshot(trustMode: config.trustMode.label)
+            let failure = TAKConnectionFailure(error: error, host: config.serverURL, port: config.enrollmentPort, handshake: handshake)
+            Logger.takNetwork.error("REST fallback: token request failed: \(failure.details, privacy: .public)")
+            return .unavailable(failure.summary)
+        }
+    }
+
+    /// Base URL for the current route: the certificate port, or the
+    /// enrollment port once the session fell back to credentials.
+    private func baseURL(_ config: TAKAPIConfiguration) -> String {
+        "https://\(config.serverURL):\(currentPort(config))"
+    }
+
+    private func currentPort(_ config: TAKAPIConfiguration) -> Int {
+        switch authMode {
+        case .clientCertificate: return config.secureAPIPort
+        case .bearerToken(let port), .basic(let port): return port
+        }
+    }
+
+    private func apply(auth request: inout URLRequest) {
+        guard let config = configuration,
+              let header = authMode.authorizationHeader(username: config.username, password: config.password, token: bearerToken) else { return }
+        request.setValue(header, forHTTPHeaderField: "Authorization")
     }
 
     // MARK: - Missions API
@@ -457,7 +703,7 @@ class TAKRestAPIClient: ObservableObject {
         }
 
         let endpoint = "/Marti/sync/content?hash=\(hash)"
-        let urlString = config.baseURL + endpoint
+        let urlString = baseURL(config) + endpoint
 
         guard let url = URL(string: urlString) else {
             throw TAKAPIError.invalidConfiguration
@@ -470,6 +716,7 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
+        apply(auth: &request)
         let download: (URL, URLResponse)
         do {
             download = try await session.download(for: request)
@@ -511,7 +758,7 @@ class TAKRestAPIClient: ObservableObject {
         }
 
         let endpoint = "/Marti/sync/missionupload?creatorUid=\(creatorUid)&name=\(name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? name)"
-        let urlString = config.baseURL + endpoint
+        let urlString = baseURL(config) + endpoint
 
         guard let url = URL(string: urlString) else {
             throw TAKAPIError.invalidConfiguration
@@ -539,6 +786,7 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
+        apply(auth: &request)
         let response: URLResponse
         do {
             (_, response) = try await session.data(for: request)
@@ -588,7 +836,7 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
-        let urlString = config.baseURL + endpoint
+        let urlString = baseURL(config) + endpoint
         guard let url = URL(string: urlString) else {
             throw TAKAPIError.invalidConfiguration
         }
@@ -602,6 +850,7 @@ class TAKRestAPIClient: ObservableObject {
             }
         }
 
+        apply(auth: &request)
         return try await performRequest(request)
     }
 
@@ -610,7 +859,7 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
-        let urlString = config.baseURL + endpoint
+        let urlString = baseURL(config) + endpoint
         guard let url = URL(string: urlString) else {
             throw TAKAPIError.invalidConfiguration
         }
@@ -629,6 +878,7 @@ class TAKRestAPIClient: ObservableObject {
             request.httpBody = body
         }
 
+        apply(auth: &request)
         return try await performRequest(request)
     }
 
@@ -637,7 +887,7 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
-        let urlString = config.baseURL + endpoint
+        let urlString = baseURL(config) + endpoint
         guard let url = URL(string: urlString) else {
             throw TAKAPIError.invalidConfiguration
         }
@@ -651,6 +901,7 @@ class TAKRestAPIClient: ObservableObject {
             request.httpBody = body
         }
 
+        apply(auth: &request)
         return try await performRequest(request)
     }
 
@@ -659,7 +910,7 @@ class TAKRestAPIClient: ObservableObject {
             throw TAKAPIError.invalidConfiguration
         }
 
-        let urlString = config.baseURL + endpoint
+        let urlString = baseURL(config) + endpoint
         guard let url = URL(string: urlString) else {
             throw TAKAPIError.invalidConfiguration
         }
@@ -668,6 +919,7 @@ class TAKRestAPIClient: ObservableObject {
         request.httpMethod = "DELETE"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        apply(auth: &request)
         return try await performRequest(request)
     }
 
@@ -705,7 +957,7 @@ class TAKRestAPIClient: ObservableObject {
         let failure = TAKConnectionFailure(
             error: error,
             host: configuration?.serverURL ?? "?",
-            port: configuration?.secureAPIPort ?? 0,
+            port: configuration.map(currentPort) ?? 0,
             handshake: handshake
         )
         lastError = failure.summary

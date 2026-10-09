@@ -115,8 +115,10 @@ struct MissionCreationSheet: View {
 
         Task { @MainActor in
             let client = TAKRestAPIClient()
-            client.configure(from: server)
             do {
+                // Same route choice as Mission Sync: certificate port, then
+                // username/password on the enrollment port (#169).
+                try await client.connect(to: server)
                 _ = try await client.createMission(
                     name: missionName,
                     description: desc.isEmpty ? nil : desc,
