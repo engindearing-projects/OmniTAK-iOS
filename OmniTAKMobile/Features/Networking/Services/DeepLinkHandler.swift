@@ -133,6 +133,10 @@ struct EnrollmentDeepLink {
     let enrollmentPort: Int?  // CSR enrollment port — from &enrollmentport=
     var apiPort: Int? = nil   // Marti/Mission REST port — from &apiport= (#126)
 
+    /// `apiPort` as the port a server record stores: nil when the link gave none, or a
+    /// number that is not a port (`apiport=70000`; `UInt16(70000)` would trap).
+    var secureAPIPort: UInt16? { apiPort.flatMap { UInt16(exactly: $0) } }
+
     static func parse(url: URL) -> EnrollmentDeepLink? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return nil
@@ -197,6 +201,10 @@ struct PasswordEnrollmentDeepLink {
     var apiPort: Int? = nil   // Marti/Mission REST port, default 8443 (#126)
     let trustSelfSigned: Bool // default true (accepts any cert during enrollment)
     let name: String?
+
+    /// `apiPort` as the port a server record stores: nil when the link gave none, or a
+    /// number that is not a port (`apiport=70000`; `UInt16(70000)` would trap).
+    var secureAPIPort: UInt16? { apiPort.flatMap { UInt16(exactly: $0) } }
 
     static func parse(url: URL) -> PasswordEnrollmentDeepLink? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -310,32 +318,21 @@ class DeepLinkHandler: ObservableObject {
             username: link.username,
             password: link.password,
             useSSL: true,
-            trustSelfSignedCerts: link.trustSelfSigned
+            trustSelfSignedCerts: link.trustSelfSigned,
+            secureAPIPort: link.secureAPIPort  // #126
         )
 
         do {
-            // enrollWithCSR performs the full CSR flow and registers the
-            // server with ServerManager. We then connect using the stored cert.
-            var enrolled = try await csrEnrollmentService.enrollWithCSR(config: config)
-            if let apiPort = link.apiPort { enrolled.secureAPIPort = UInt16(apiPort) }  // #126
-            let server = enrolled
+            // enrollWithCSR performs the full CSR flow, saves the server (or updates
+            // the record already saved for that address), makes it the active one
+            // and dials it once, pinned to the CA chain it enrolled so the server
+            // certificate is validated, not blindly accepted. A server that was
+            // already saved is dialed again with its new certificate. Nothing is
+            // dialed here: the older TAKService.connect() opened a second connection
+            // to the same server (#156).
+            let server = try await csrEnrollmentService.enrollWithCSR(config: config)
 
             await MainActor.run {
-                if link.apiPort != nil { ServerManager.shared.updateServer(server) }
-                ServerManager.shared.setActiveServer(server)
-                TAKService.shared.connect(
-                    host: server.host,
-                    port: server.port,
-                    protocolType: server.protocolType,
-                    useTLS: server.useTLS,
-                    certificateName: server.certificateName,
-                    certificatePassword: server.certificatePassword,
-                    // Pin the stream to the CA chain enrolled above so the
-                    // server certificate is validated, not blindly accepted.
-                    caCertificateName: server.caCertificateName,
-                    caCertificatePassword: server.caCertificatePassword,
-                    allowUntrustedTLS: server.allowUntrustedTLS
-                )
                 isProcessing = false
                 enrolledServerName = server.name
                 showEnrollmentSuccess = true
@@ -420,8 +417,8 @@ class DeepLinkHandler: ObservableObject {
     // MARK: - Token-Based Enrollment (standard ATAK enrollment QR)
     //
     // tak://com.atakmap.app/enroll?host=&username=&token= → drive the SAME
-    // CSREnrollmentService used by the manual "Quick Connect" form, then add
-    // the server and connect exactly like SimpleEnrollView does on success.
+    // CSREnrollmentService used by the manual "Quick Connect" form, which saves
+    // the server and dials it once, exactly as SimpleEnrollView relies on.
     // The one-time `token` is supplied as the Basic-auth password to the
     // signClient endpoint (this is how ATAK / TAK Server enroll).
 
@@ -453,31 +450,19 @@ class DeepLinkHandler: ObservableObject {
             // Bootstrap trust from the server during enrollment so both
             // self-signed and publicly-trusted (Let's Encrypt) endpoints work;
             // the resulting stream is still pinned to the enrolled CA chain.
-            trustSelfSignedCerts: true
+            trustSelfSignedCerts: true,
+            secureAPIPort: enrollment.secureAPIPort  // #126
         )
 
         do {
-            // enrollWithCSR runs the full CSR flow and registers the server
-            // with ServerManager. We then connect using the stored cert,
-            // validating against the CA chain it enrolled.
-            var enrolled = try await csrEnrollmentService.enrollWithCSR(config: config)
-            if let apiPort = enrollment.apiPort { enrolled.secureAPIPort = UInt16(apiPort) }  // #126
-            let server = enrolled
+            // enrollWithCSR runs the full CSR flow, saves the server (or updates
+            // the record already saved for that address), makes it the active one
+            // and dials it once, validating against the CA chain it enrolled. A
+            // server that was already saved is dialed again with its new
+            // certificate. Nothing is dialed here (#156).
+            let server = try await csrEnrollmentService.enrollWithCSR(config: config)
 
             await MainActor.run {
-                if enrollment.apiPort != nil { ServerManager.shared.updateServer(server) }
-                ServerManager.shared.setActiveServer(server)
-                TAKService.shared.connect(
-                    host: server.host,
-                    port: server.port,
-                    protocolType: server.protocolType,
-                    useTLS: server.useTLS,
-                    certificateName: server.certificateName,
-                    certificatePassword: server.certificatePassword,
-                    caCertificateName: server.caCertificateName,
-                    caCertificatePassword: server.caCertificatePassword,
-                    allowUntrustedTLS: server.allowUntrustedTLS
-                )
                 isProcessing = false
                 enrolledServerName = server.name
                 showEnrollmentSuccess = true

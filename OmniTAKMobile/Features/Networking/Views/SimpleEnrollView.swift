@@ -717,19 +717,30 @@ struct SimpleEnrollView: View {
             let port = Int(streamingPort) ?? 8089
             let enrollPort = Int(enrollmentPort) ?? 8446
 
-            var enrolled = try await csrService.enroll(
+            // enroll() saves the server (or updates the record already saved for
+            // this address), makes it the active one and dials it once. The stream
+            // is pinned to the CA chain just enrolled, so the server certificate is
+            // validated rather than blindly accepted. A server that was already
+            // saved is dialed again with its new certificate. This view dials
+            // nothing itself: the older TAKService.connect() opened a second
+            // connection to the same server (#156).
+            //
+            // #126: the Marti/Mission REST port belongs to setup, not only to
+            // Edit Server; the REST client reads it per server. A port typed here
+            // is saved with the server. Left at the default 8443 it is not given:
+            // a server that was already saved keeps the port it has (Edit Server
+            // may have set it), and a new one saves none, which the REST client
+            // and Edit Server both read as 8443.
+            let typedAPIPort = UInt16(martiAPIPort).flatMap { $0 == 8443 ? nil : $0 }
+            _ = try await csrService.enroll(
                 server: serverHost,
                 port: port,
                 enrollmentPort: enrollPort,
                 username: username,
                 password: password,
-                trustSelfSignedCerts: trustSelfSignedCerts
+                trustSelfSignedCerts: trustSelfSignedCerts,
+                apiPort: typedAPIPort
             )
-            // #126: the Marti/Mission REST port belongs to setup, not only to
-            // Edit Server. Store the parsed value the way Edit Server does
-            // (8443 when left blank); the REST client reads it per server.
-            enrolled.secureAPIPort = UInt16(martiAPIPort) ?? 8443
-            let server = enrolled
 
             await MainActor.run { enrollmentState = .storingCertificate }
             try await Task.sleep(nanoseconds: 200_000_000)
@@ -737,28 +748,7 @@ struct SimpleEnrollView: View {
             await MainActor.run { enrollmentState = .creatingServer }
             try await Task.sleep(nanoseconds: 200_000_000)
 
-            // Set as active server and connect
-            await MainActor.run {
-                ServerManager.shared.updateServer(server)  // persists the Marti port (#126)
-                ServerManager.shared.setActiveServer(server)
-
-                // Actually connect to the server. Pin the stream to the CA
-                // chain we just enrolled against so the server certificate is
-                // validated rather than blindly accepted.
-                TAKService.shared.connect(
-                    host: server.host,
-                    port: server.port,
-                    protocolType: server.protocolType,
-                    useTLS: server.useTLS,
-                    certificateName: server.certificateName,
-                    certificatePassword: server.certificatePassword,
-                    caCertificateName: server.caCertificateName,
-                    caCertificatePassword: server.caCertificatePassword,
-                    allowUntrustedTLS: server.allowUntrustedTLS
-                )
-
-                enrollmentState = .success
-            }
+            await MainActor.run { enrollmentState = .success }
 
             print("[SimpleEnroll] Enrollment successful for \(serverHost)")
 

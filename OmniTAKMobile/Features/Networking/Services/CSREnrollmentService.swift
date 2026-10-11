@@ -158,6 +158,10 @@ struct CSREnrollmentConfiguration {
     let password: String
     let useSSL: Bool
     let trustSelfSignedCerts: Bool      // When false, use system CA validation (for Let's Encrypt, etc.)
+    /// The Marti/Mission REST port (#126) the link or the form gave, nil when it gave none.
+    /// It is not part of the enrollment request: `enrollWithCSR` hands it to
+    /// `ServerManager.adoptEnrolledServer`, which saves it on the server record.
+    var secureAPIPort: UInt16? = nil
 
     // Paths (TAK standard endpoints)
     let configPath: String = "/Marti/api/tls/config"
@@ -327,8 +331,14 @@ class CSREnrollmentService {
     // MARK: - Main Enrollment Method
 
     /// Enroll with TAK server using CSR-based authentication
+    ///
+    /// On success the certificate is in the keychain and the server is saved, active and
+    /// dialed once: `ServerManager.adoptEnrolledServer` adds a new endpoint, or merges the
+    /// enrollment into the record already saved for it and dials that record again with the
+    /// new certificate (#156). Callers dial nothing themselves.
     /// - Parameter config: Enrollment configuration with server and credentials
-    /// - Returns: TAKServer configuration with enrolled certificates
+    /// - Returns: the server record as it is saved now. For an endpoint that was already
+    ///   saved this is the saved record (its own id and name), not a new one.
     func enrollWithCSR(config: CSREnrollmentConfiguration) async throws -> TAKServer {
         Logger.authEnrollment.info("Starting CSR enrollment for user: \(config.username, privacy: .private)")
         Logger.authEnrollment.debug("Trust self-signed certs: \(config.trustSelfSignedCerts, privacy: .public)")
@@ -397,13 +407,14 @@ class CSREnrollmentService {
         // host (no scheme/port/path), so the stream dials a real hostname (#138).
         let serverInstance = config.makeServer()
 
-        // Add server to manager (must be on main thread for @Published properties)
-        await MainActor.run {
-            ServerManager.shared.addServer(serverInstance)
+        // Save it and leave exactly one live link to it (#156). Must be on the main
+        // thread: it changes @Published properties and dials.
+        let adoption = await MainActor.run {
+            ServerManager.shared.adoptEnrolledServer(serverInstance, apiPort: config.secureAPIPort)
         }
 
-        print("[CSREnroll] Enrollment completed successfully")
-        return serverInstance
+        print("[CSREnroll] Enrollment completed successfully (\(adoption.isNew ? "new server" : "saved server updated"))")
+        return adoption.server
     }
 
     // MARK: - CA Configuration Retrieval
@@ -943,13 +954,16 @@ extension CSREnrollmentService {
     ///   - password: Password for authentication
     ///   - trustSelfSignedCerts: When true (default), accepts self-signed certificates.
     ///                           Set to false for servers with Let's Encrypt or other trusted CA certificates.
+    ///   - apiPort: Marti/Mission REST port to save on the server record (#126); nil keeps
+    ///              the record's own (unset for a new server).
     func enroll(
         server: String,
         port: Int = 8089,
         enrollmentPort: Int = 8446,
         username: String,
         password: String,
-        trustSelfSignedCerts: Bool = true
+        trustSelfSignedCerts: Bool = true,
+        apiPort: UInt16? = nil
     ) async throws -> TAKServer {
         let config = CSREnrollmentConfiguration(
             serverHost: server,
@@ -958,7 +972,8 @@ extension CSREnrollmentService {
             username: username,
             password: password,
             useSSL: true,
-            trustSelfSignedCerts: trustSelfSignedCerts
+            trustSelfSignedCerts: trustSelfSignedCerts,
+            secureAPIPort: apiPort
         )
 
         return try await enrollWithCSR(config: config)
