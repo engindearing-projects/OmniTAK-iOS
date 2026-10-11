@@ -105,6 +105,8 @@
 "settings.marker.milstd" = "MIL-STD Symbol";
 "settings.marker.bullseye" = "Bullseye (Legacy)";
 "settings.marker.arrow" = "Arrow (Heading)";
+"settings.showMyMarker" = "Show my marker";
+"settings.showMyMarker.desc" = "Turn off to hide your marker on this map only. Does not change whether you report your position.";
 "settings.color.cyan" = "Cyan";
 "settings.color.green" = "Green";
 "settings.color.orange" = "Orange";

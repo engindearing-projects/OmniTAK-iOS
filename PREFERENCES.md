@@ -88,6 +88,7 @@ Backed by `UserDefaults`. Same ATAK-side aliases honoured.
 | `mgrsGridDensity` | string (`100km`, `10km`, `1km`) | `1km` |, |
 | `showMGRSLabels` | boolean | `true` |, |
 | `coordinateDisplayFormat` | string (`DD`, `DM`, `DMS`, `MGRS`, `UTM`, `BNG`) | `MGRS` | `coordFormat`, `coord_display_format` |
+| `selfMarkerVisible` | boolean | `true` |, |
 | `breadcrumbTrailsEnabled` | boolean | `true` |, |
 | `trailMaxLength` | int (10–500) | `100` |, |
 | `trailColorName` | string (`cyan`, `green`, `orange`, `red`, `blue`) | `cyan` |, |

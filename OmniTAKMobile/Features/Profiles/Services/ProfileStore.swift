@@ -74,6 +74,8 @@ class ProfileStore: ObservableObject {
             breadcrumbTrailsEnabled: ud.object(forKey: "breadcrumbTrailsEnabled") != nil
                 ? ud.bool(forKey: "breadcrumbTrailsEnabled") : nil,
             selfMarkerStyle: ud.string(forKey: "selfMarkerStyle"),
+            selfMarkerVisible: ud.object(forKey: SelfMarkerVisibility.defaultsKey) != nil
+                ? ud.bool(forKey: SelfMarkerVisibility.defaultsKey) : nil,
             remoteIdScanEnabled: ud.object(forKey: "remoteIdScanEnabled") != nil
                 ? ud.bool(forKey: "remoteIdScanEnabled") : nil,
             gybDetectorEnabled: ud.object(forKey: "gybDetectorEnabled") != nil
@@ -98,6 +100,7 @@ class ProfileStore: ObservableObject {
         if let v = profile.showMGRSLabels       { ud.set(v, forKey: "showMGRSLabels") }
         if let v = profile.breadcrumbTrailsEnabled { ud.set(v, forKey: "breadcrumbTrailsEnabled") }
         if let v = profile.selfMarkerStyle      { ud.set(v, forKey: "selfMarkerStyle") }
+        if let v = profile.selfMarkerVisible    { ud.set(v, forKey: SelfMarkerVisibility.defaultsKey) }
         if let v = profile.remoteIdScanEnabled  { ud.set(v, forKey: "remoteIdScanEnabled") }
         if let v = profile.gybDetectorEnabled   { ud.set(v, forKey: "gybDetectorEnabled") }
         if let v = profile.selectedMeshFramework { ud.set(v, forKey: "selectedMeshFramework") }

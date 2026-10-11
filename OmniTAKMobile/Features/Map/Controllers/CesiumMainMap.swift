@@ -192,6 +192,11 @@ struct CesiumMainMap: UIViewRepresentable {
     /// back to the friendly canvas disc + center dot (the bullseye analog
     /// in the HTML's `_billboard` path).
     var selfMarkerStyle: String = "milstd"
+    /// #134: "Show my marker". False leaves the `__self__` entity out of the
+    /// entity list, which removes it from the globe (the scene's `setEntities`
+    /// drops any uid missing from the list). "Center on me" and follow mode read
+    /// `selfLocation` directly, so they keep working with the marker hidden.
+    var selfMarkerVisible: Bool = SelfMarkerVisibility.defaultVisible
     // Phase 3b — measurement sessions to mirror as dashed polylines with
     // per-segment distance labels. Sourced from `MeasurementManager`.
     let measurements: [Measurement]
@@ -912,10 +917,11 @@ struct CesiumMainMap: UIViewRepresentable {
         return "data:image/png;base64,\(png.base64EncodedString())"
     }
 
-    private func buildEntityJSON() -> String {
+    // Internal (not private) so tests can check what reaches the globe.
+    func buildEntityJSON() -> String {
         var all: [BridgeEntity] = []
 
-        if let loc = selfLocation {
+        if selfMarkerVisible, let loc = selfLocation {
             // Issue #66 — supply GPS course as heading when the arrow style is
             // active (non-negative course = valid heading from CoreLocation).
             // The HTML billboard rotates the entity icon by `heading` degrees
