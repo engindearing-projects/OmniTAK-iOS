@@ -202,14 +202,16 @@ final class WriteRig {
     /// What the radio sends in a config download, for the parts a test names, and
     /// what the simulated radio holds from then on. With `started` false the
     /// download never started, which is what a radio that has not sent a my_info
-    /// looks like.
+    /// looks like. A radio has no LoRa config unless a test gives it one.
     func download(
         started: Bool = true,
         device: ProtoFixture? = RadioFixtures.deviceConfig(),
         position: ProtoFixture? = RadioFixtures.positionConfig(),
-        channels: [Int: ProtoFixture] = RadioFixtures.channelSlots()
+        channels: [Int: ProtoFixture] = RadioFixtures.channelSlots(),
+        lora: ProtoFixture? = nil
     ) {
         radio.set(device: device, position: position, channels: channels)
+        radio.set(lora: lora)
         if started { manager.handleSettingsEvent(.downloadStarted(nodeNum: radio.nodeNum)) }
         for index in channels.keys.sorted() {
             manager.handleSettingsEvent(.channel(index: index, body: channels[index]!.data))
@@ -219,6 +221,9 @@ final class WriteRig {
         }
         if let position {
             manager.handleSettingsEvent(.config(variant: RadioProto.Config.position, body: position.data))
+        }
+        if let lora {
+            manager.handleSettingsEvent(.config(variant: RadioProto.Config.lora, body: lora.data))
         }
     }
 

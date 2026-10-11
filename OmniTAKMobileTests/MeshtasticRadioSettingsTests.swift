@@ -256,14 +256,19 @@ final class MeshtasticRadioSettingsTests: XCTestCase {
         XCTAssertTrue(settings.hasPositionConfig)
     }
 
-    func testOnlyTheConfigsTheAppCanWriteAreKept() {
+    func testOnlyTheConfigsTheAppUsesAreKept() {
         let settings = settings(afterDownloading: downloadFrames())
         // The security config holds the radio's private key and the network
         // config holds the WiFi password. Nothing writes them, so they are not
-        // kept.
-        XCTAssertEqual(Set(settings.configs.keys), [RadioProto.Config.device, RadioProto.Config.position])
+        // kept. The LoRa config is kept, to be read and not written: whether the
+        // radio's position channel is its default channel depends on its preset
+        // (#153).
+        XCTAssertEqual(Set(settings.configs.keys),
+                       [RadioProto.Config.device, RadioProto.Config.position, RadioProto.Config.lora])
+        XCTAssertEqual(settings.config(variant: RadioProto.Config.lora),
+                       ProtoFixture().bool(RadioProto.LoRa.usePreset, true).varint(RadioProto.LoRa.region, 1).data)
         for variant in [RadioProto.Config.power, RadioProto.Config.network, RadioProto.Config.display,
-                        RadioProto.Config.lora, RadioProto.Config.bluetooth, RadioProto.Config.security, 9, 10] {
+                        RadioProto.Config.bluetooth, RadioProto.Config.security, 9, 10] {
             XCTAssertNil(settings.config(variant: variant), "variant \(variant)")
         }
     }
