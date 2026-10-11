@@ -152,6 +152,7 @@
 		4D79A80257F61BFC0854BEAE /* VideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 676590F7AFD402DEBBC6868D /* VideoPlayerView.swift */; };
 		4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */; };
 		09C8955531A6B50898A67E4E /* TAKServiceDialTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99C7692B114514DA7A673F3C /* TAKServiceDialTests.swift */; };
+		BC7BCD7AF1B8467284787827 /* EnrolledServerAdoptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A34ACCD5DEEC4960B23A15B1 /* EnrolledServerAdoptionTests.swift */; };
 		8B87F1A5E70226E862F1504B /* TAKSenderLivenessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC1476E6721C8394E5D45232 /* TAKSenderLivenessTests.swift */; };
 		65EE987908BE6701909F19E3 /* TAKRedialBackoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F590CDA1E77CD684054AD4B0 /* TAKRedialBackoffTests.swift */; };
 		E3A71A2E344F9BB61504F9E2 /* TAKLinkLivenessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30B0139F9C139175DD076278 /* TAKLinkLivenessTests.swift */; };
@@ -704,6 +705,7 @@
 		8CE9342858430C8B11A6138F /* ToolbarAddPalette.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Core/App/ToolbarAddPalette.swift; sourceTree = "<group>"; };
 		8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKServiceTests.swift; path = OmniTAKMobileTests/TAKServiceTests.swift; sourceTree = "<group>"; };
 		99C7692B114514DA7A673F3C /* TAKServiceDialTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKServiceDialTests.swift; path = OmniTAKMobileTests/TAKServiceDialTests.swift; sourceTree = "<group>"; };
+		A34ACCD5DEEC4960B23A15B1 /* EnrolledServerAdoptionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EnrolledServerAdoptionTests.swift; path = OmniTAKMobileTests/EnrolledServerAdoptionTests.swift; sourceTree = "<group>"; };
 		EC1476E6721C8394E5D45232 /* TAKSenderLivenessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKSenderLivenessTests.swift; path = OmniTAKMobileTests/TAKSenderLivenessTests.swift; sourceTree = "<group>"; };
 		F590CDA1E77CD684054AD4B0 /* TAKRedialBackoffTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKRedialBackoffTests.swift; path = OmniTAKMobileTests/TAKRedialBackoffTests.swift; sourceTree = "<group>"; };
 		30B0139F9C139175DD076278 /* TAKLinkLivenessTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKLinkLivenessTests.swift; path = OmniTAKMobileTests/TAKLinkLivenessTests.swift; sourceTree = "<group>"; };
@@ -1219,6 +1221,7 @@
 				8C519123F2BD19CC900B7DE5 /* MeshRoleSplitTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
 				99C7692B114514DA7A673F3C /* TAKServiceDialTests.swift */,
+				A34ACCD5DEEC4960B23A15B1 /* EnrolledServerAdoptionTests.swift */,
 				EC1476E6721C8394E5D45232 /* TAKSenderLivenessTests.swift */,
 				F590CDA1E77CD684054AD4B0 /* TAKRedialBackoffTests.swift */,
 				30B0139F9C139175DD076278 /* TAKLinkLivenessTests.swift */,
@@ -2935,6 +2938,7 @@
 				F2859752F90F4173967D575C /* MeshRoleSplitTests.swift in Sources */,
 				4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */,
 				09C8955531A6B50898A67E4E /* TAKServiceDialTests.swift in Sources */,
+				BC7BCD7AF1B8467284787827 /* EnrolledServerAdoptionTests.swift in Sources */,
 				8B87F1A5E70226E862F1504B /* TAKSenderLivenessTests.swift in Sources */,
 				65EE987908BE6701909F19E3 /* TAKRedialBackoffTests.swift in Sources */,
 				E3A71A2E344F9BB61504F9E2 /* TAKLinkLivenessTests.swift in Sources */,
