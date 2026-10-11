@@ -80,6 +80,10 @@ final class SimulatedRadioModel: @unchecked Sendable {
     private var _device: Data
     private var _position: Data
     private var _channels: [Int: Data]
+    // The LoRa config. No test writes it; a radio that has one sends it in the
+    // download, after the position config as the firmware does. Nil: the download
+    // has none, which is what every test did before the position floor (#153).
+    private var _lora: Data?
     // What was saved: what the radio comes back with after a restart.
     private var _savedDevice: Data
     private var _savedPosition: Data
@@ -250,6 +254,11 @@ final class SimulatedRadioModel: @unchecked Sendable {
         if let position { _position = position.data; _savedPosition = position.data }
         if let channels { _channels = channels.mapValues { $0.data }; _savedChannels = _channels }
         lock.unlock()
+    }
+
+    /// Give the radio a LoRa config, which its download then carries.
+    func set(lora: ProtoFixture?) {
+        lock.lock(); _lora = lora?.data; lock.unlock()
     }
 
     /// Put one channel slot in a state, saved.
@@ -500,10 +509,11 @@ final class SimulatedRadioModel: @unchecked Sendable {
     // MARK: - The download
 
     /// The FromRadio frames of a config download: my_info, the channels, the
-    /// device and position configs and config_complete_id.
+    /// device and position configs, the LoRa config when the radio has one, and
+    /// config_complete_id.
     func downloadFrames(configID: UInt64 = 1) -> [Data] {
         lock.lock()
-        let device = _device, position = _position, slots = _channels
+        let device = _device, position = _position, slots = _channels, lora = _lora
         lock.unlock()
         var frames: [Data] = []
         frames.append(RadioFixtures.myInfoFrame(nodeNum: nodeNum))
@@ -512,6 +522,9 @@ final class SimulatedRadioModel: @unchecked Sendable {
         }
         frames.append(RadioFixtures.configFrame(variant: RadioProto.Config.device, body: ProtoFixture(device)))
         frames.append(RadioFixtures.configFrame(variant: RadioProto.Config.position, body: ProtoFixture(position)))
+        if let lora {
+            frames.append(RadioFixtures.configFrame(variant: RadioProto.Config.lora, body: ProtoFixture(lora)))
+        }
         frames.append(ProtoFixture().varint(RadioProto.FromRadio.configCompleteId, configID).data)
         return frames
     }
