@@ -104,6 +104,8 @@
 "settings.marker.milstd" = "Символ MIL-STD";
 "settings.marker.bullseye" = "Мішень (застарілий)";
 "settings.marker.arrow" = "Стрілка (напрям)";
+"settings.showMyMarker" = "Показувати мій маркер";
+"settings.showMyMarker.desc" = "Вимкніть, щоб сховати свій маркер лише на цій карті. Не впливає на те, чи передається ваша позиція.";
 "settings.color.cyan" = "Блакитний";
 "settings.color.green" = "Зелений";
 "settings.color.orange" = "Помаранчевий";

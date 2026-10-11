@@ -105,6 +105,8 @@
 "settings.marker.milstd" = "MIL-STD 符號";
 "settings.marker.bullseye" = "靶心（舊版）";
 "settings.marker.arrow" = "箭頭（方向）";
+"settings.showMyMarker" = "顯示我的標記";
+"settings.showMyMarker.desc" = "關閉後僅在此地圖上隱藏你的標記，不影響位置共享。";
 "settings.color.cyan" = "青色";
 "settings.color.green" = "綠色";
 "settings.color.orange" = "橘色";

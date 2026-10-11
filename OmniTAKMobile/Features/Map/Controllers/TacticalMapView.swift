@@ -48,6 +48,11 @@ struct TacticalMapView: UIViewRepresentable {
     let pointMarkers: [PointMarker]
     let aircraft: [Aircraft]
     let showsUserLocation: Bool
+    /// #134: draw the operator's own marker (the location puck). False hides
+    /// it and nothing else: follow-me, heading and position reporting all run
+    /// off the same GPS fix. Gated by the Settings "Show my marker" toggle.
+    /// Defaulted so other call sites are unchanged.
+    var selfMarkerVisible: Bool = SelfMarkerVisibility.defaultVisible
     @ObservedObject var drawingStore: DrawingStore
     @ObservedObject var drawingManager: DrawingToolsManager
     @ObservedObject var radialMenuCoordinator: RadialMenuMapCoordinator
@@ -111,11 +116,13 @@ struct TacticalMapView: UIViewRepresentable {
         // Native user-location puck, styled per the Settings "Self-position
         // marker" picker (selfMarkerStyle). Previously the picker persisted
         // a value nothing read and the puck was always the default dot.
-        mapView.location.options.puckType = TacticalMapView.selfPuckType()
+        // #134: no puck at all while the operator has their marker hidden.
+        mapView.location.options.puckType = TacticalMapView.puckType(
+            showsUserLocation: showsUserLocation, selfMarkerVisible: selfMarkerVisible)
         TacticalMapView.applyPuckBearing(to: mapView)
         context.coordinator.lastSelfMarkerStyle =
             UserDefaults.standard.string(forKey: "selfMarkerStyle") ?? "milstd"
-        if !showsUserLocation { mapView.location.options.puckType = nil }
+        context.coordinator.lastSelfMarkerVisible = selfMarkerVisible
 
         // Sane defaults for tactical use — let the operator pan, zoom,
         // pitch, and rotate freely. Mapbox enables all of these by
@@ -315,14 +322,19 @@ struct TacticalMapView: UIViewRepresentable {
             }
         }
 
-        // Self-position puck style (Settings → "Self-position marker").
-        // Re-apply when the persisted style changes so the picker takes
-        // effect live, without rebuilding the map view.
+        // Self-position puck (Settings: "Self-position marker" and "Show my
+        // marker"). Re-apply when the persisted style or the visibility changes
+        // so both take effect live, without rebuilding the map view. #134: while
+        // hidden the puck is removed; the style still tracks the picker, so
+        // switching the marker back on shows the current style.
         if showsUserLocation {
             let style = UserDefaults.standard.string(forKey: "selfMarkerStyle") ?? "milstd"
-            if context.coordinator.lastSelfMarkerStyle != style {
+            if context.coordinator.lastSelfMarkerStyle != style
+                || context.coordinator.lastSelfMarkerVisible != selfMarkerVisible {
                 context.coordinator.lastSelfMarkerStyle = style
-                mapView.location.options.puckType = TacticalMapView.selfPuckType()
+                context.coordinator.lastSelfMarkerVisible = selfMarkerVisible
+                mapView.location.options.puckType = TacticalMapView.puckType(
+                    showsUserLocation: showsUserLocation, selfMarkerVisible: selfMarkerVisible)
                 // Issue #66 — also update the bearing mode so the arrow puck
                 // rotates with device heading when the user switches to it.
                 TacticalMapView.applyPuckBearing(to: mapView)
@@ -362,6 +374,15 @@ struct TacticalMapView: UIViewRepresentable {
         var config = Puck2DConfiguration(topImage: image)
         config.showsAccuracyRing = true
         return .puck2D(config)
+    }
+
+    /// The puck to install for the current settings: the styled self puck, or
+    /// `nil` (no puck at all, accuracy ring included) when location display is
+    /// off or the operator hid their marker (#134).
+    static func puckType(showsUserLocation: Bool, selfMarkerVisible: Bool) -> PuckType? {
+        SelfMarkerVisibility.showsPuck(
+            showsUserLocation: showsUserLocation, selfMarkerVisible: selfMarkerVisible)
+            ? selfPuckType() : nil
     }
 
     /// Apply the bearing-tracking option that pairs with the chosen puck style.
@@ -437,6 +458,8 @@ struct TacticalMapView: UIViewRepresentable {
         /// Last applied self-puck style ("milstd" | "bullseye") so
         /// updateUIView only re-pushes the puck config on change.
         var lastSelfMarkerStyle: String = "milstd"
+        /// #134: last applied "Show my marker" state, same purpose.
+        var lastSelfMarkerVisible: Bool = SelfMarkerVisibility.defaultVisible
 
         // Camera feedback-loop guards
         var isUserInteracting = false
@@ -1718,8 +1741,12 @@ struct TacticalMapView: UIViewRepresentable {
             // Issue #65 — tap the self-position puck to open the manual
             // position edit sheet. The puck center is the GPS coordinate
             // projected to screen; we use a 28pt hit radius (larger than
-            // the smallest puck image so it's easy to tap).
-            if !parent.drawingManager.isDrawingActive && !parent.measurementManager.isActive {
+            // the smallest puck image so it's easy to tap). #134: not while
+            // the marker is hidden, there is nothing drawn there to tap.
+            if !parent.drawingManager.isDrawingActive && !parent.measurementManager.isActive
+                && SelfMarkerVisibility.showsPuck(
+                    showsUserLocation: parent.showsUserLocation,
+                    selfMarkerVisible: parent.selfMarkerVisible) {
                 if let gpsCoord = mapView.location.latestLocation?.coordinate {
                     let puckScreenPoint = mapView.mapboxMap.point(for: gpsCoord)
                     let dx = point.x - puckScreenPoint.x

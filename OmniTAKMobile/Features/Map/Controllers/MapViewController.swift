@@ -117,6 +117,11 @@ struct ATAKMapView: View {
     // tactical bullseye. Consumed by both engines: the Mapbox puck image
     // and the Cesium self-pip billboard.
     @AppStorage("selfMarkerStyle") private var selfMarkerStyle = "milstd"
+    // #134: "Show my marker" (Settings, Map Overlays). Off hides the
+    // operator's own marker on whichever engine is active. UI only: position
+    // reporting, follow-me and heading are untouched. Passed to both engines.
+    @AppStorage(SelfMarkerVisibility.defaultsKey)
+    private var selfMarkerVisible = SelfMarkerVisibility.defaultVisible
     // #178 — on-map staleness overlay (Settings → "Show point age on map").
     // When on, contact pins fade by age bucket and gain a compact age label.
     @AppStorage("stalenessOverlayEnabled") private var stalenessOverlayEnabled = false
@@ -287,6 +292,7 @@ struct ATAKMapView: View {
             pointMarkers: pointDropperService.markers,
             aircraft: adsbService.settings.isEnabled ? adsbService.aircraft : [],
             showsUserLocation: true,
+            selfMarkerVisible: selfMarkerVisible,
             drawingStore: drawingStore,
             drawingManager: drawingManager,
             radialMenuCoordinator: radialMenuCoordinator,
@@ -1284,6 +1290,8 @@ struct ATAKMapView: View {
                 // Self-pip style parity with the Mapbox puck (Settings →
                 // Self-position marker).
                 selfMarkerStyle: selfMarkerStyle,
+                // #134: "Show my marker": off drops the `__self__` pip.
+                selfMarkerVisible: selfMarkerVisible,
                 // Phase 3b — saved distance / area measurements mirrored
                 // through the Cesium bridge as dashed polylines + segment
                 // labels.

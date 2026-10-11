@@ -40,6 +40,10 @@ struct SettingsView: View {
     // Mapbox puck (TacticalMapView.selfPuckType) and the Cesium self-pip
     // billboard (CesiumMainMap.selfMarkerStyle).
     @AppStorage("selfMarkerStyle") private var selfMarkerStyle = "milstd"
+    // #134: hide my own marker on the map. UI only: position reporting is not
+    // touched. Read by MapViewController and passed to both engines.
+    @AppStorage(SelfMarkerVisibility.defaultsKey)
+    private var selfMarkerVisible = SelfMarkerVisibility.defaultVisible
     // Phase 2 of the gy6 plan — toggles the CoreBluetooth FAA Remote ID
     // scanner. Default off because BLE scanning has a battery cost.
     @AppStorage("remoteIdScanEnabled") private var remoteIdScanEnabled = false
@@ -312,6 +316,16 @@ struct SettingsView: View {
                         // triangle always points in the device's heading direction.
                         Text(loc.t("settings.marker.arrow")).tag("arrow")
                     }
+
+                    // #134: hide my own marker on the map. The style above is kept
+                    // for when it is shown again. Android has the same switch (its
+                    // "My marker" row in the map layers). Nothing here touches
+                    // position reporting.
+                    Toggle(loc.t("settings.showMyMarker"), isOn: $selfMarkerVisible)
+
+                    Text(loc.t("settings.showMyMarker.desc"))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
 
                     // #178 — point-age / staleness overlay. Mirrors the Android
                     // "Show point age on map" toggle (same thresholds + copy).

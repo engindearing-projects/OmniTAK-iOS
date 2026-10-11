@@ -104,6 +104,8 @@
 "settings.marker.milstd" = "Symbole MIL-STD";
 "settings.marker.bullseye" = "Cible (ancien)";
 "settings.marker.arrow" = "Flèche (cap)";
+"settings.showMyMarker" = "Afficher mon marqueur";
+"settings.showMyMarker.desc" = "Désactivez pour masquer votre marqueur sur cette carte uniquement. Cela ne change pas le partage de votre position.";
 "settings.color.cyan" = "Cyan";
 "settings.color.green" = "Vert";
 "settings.color.orange" = "Orange";
