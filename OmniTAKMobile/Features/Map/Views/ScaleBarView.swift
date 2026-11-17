@@ -8,18 +8,27 @@ import CoreLocation
 // screen point); the 1/2/5 rounding and the unit live in `MapScale`.
 
 struct ScaleBarView: View {
-    /// Ground metres per screen point at the middle of the map, from whichever
-    /// engine is showing. nil while the engine has no ground to measure (the
-    /// globe's horizon, space): no bar is drawn then rather than a wrong one.
-    /// When the map is tilted the scale also changes up and down the screen, so
-    /// the bar is exact for ground at the middle and reads long for the nearer
-    /// ground it is drawn over.
+    /// Ground metres per screen point AT THE BAR, from whichever engine is
+    /// showing: the ground distance between the two screen points 50 pt either side
+    /// of `onAnchorChange`'s anchor on the bar line's row, over the distance between
+    /// them. nil while the engine has no ground to measure there (above the globe's
+    /// horizon, space): no bar is drawn then rather than a wrong one.
+    /// This is deliberately not the scale at the middle of the screen. On a tilted
+    /// map the ground the bar lies on is nearer the camera than the ground at the
+    /// centre, so a line measured across the middle of the screen will not match the
+    /// bar. Do not move the sample back to the centre.
     let metersPerPoint: Double?
     let isVisible: Bool
     /// #182 — compact landscape layout. The portrait bottom offset (225, tuned
     /// to sit above the GPS cluster + full-width bar) lifts the scale bar near
     /// the top on the short landscape canvas, so shrink the reservation.
     var compact: Bool = false
+    /// Called with the scale anchor, in the map view's own coordinate space,
+    /// whenever the bar's place on screen changes: the middle of its maximum width,
+    /// on its line's row. It is read from the bar's own frame, so it stays right in
+    /// portrait, landscape, the compact layout and on an iPad. nil when the bar is
+    /// not on screen.
+    var onAnchorChange: (CGPoint?) -> Void = { _ in }
 
     /// Same key `UnitPreferences` stores, read here so the bar redraws the
     /// moment the operator changes Settings > Units.
@@ -30,52 +39,109 @@ struct ScaleBarView: View {
     /// Room either side of the bar so the end ticks and their outline are not clipped.
     private static let tickInset: CGFloat = 3
     private static let barHeight: CGFloat = 9
+    /// The bar line is drawn this far above the bottom of its row.
+    static let baselineInset: CGFloat = 1
+    /// The row the bar line is drawn in. As wide as the longest bar, so where it is
+    /// (and so the scale anchor) does not depend on how long the bar is right now,
+    /// and it stays in place while the bar is hidden.
+    private static let rowWidth: CGFloat = maxBarWidth + 2 * tickInset
 
     var body: some View {
-        if isVisible,
-           let bar = MapScale.bar(metersPerPoint: metersPerPoint, maxWidth: Self.maxBarWidth, unitSystem: unitSystem) {
-            VStack {
-                Spacer()
-                HStack {
-                    scaleBar(width: bar.width, label: bar.label)
+        Group {
+            if isVisible {
+                VStack {
                     Spacer()
+                    HStack {
+                        scaleBar(MapScale.bar(metersPerPoint: metersPerPoint, maxWidth: Self.maxBarWidth, unitSystem: unitSystem))
+                        Spacer()
+                    }
+                    .padding(.leading, 16)
+                    .padding(.bottom, compact ? 110 : 225)
                 }
-                .padding(.leading, 16)
-                .padding(.bottom, compact ? 110 : 225)
+                .allowsHitTesting(false)
+                // The map fills the whole screen, safe areas included. Its frame is
+                // measured next to the bar's so the anchor is in the map's own space.
+                .background(
+                    GeometryReader { map in
+                        Color.clear.preference(key: ScaleBarPlacementKey.self,
+                                               value: ScaleBarPlacement(map: map.frame(in: .global)))
+                    }
+                    .ignoresSafeArea()
+                )
             }
-            .allowsHitTesting(false)
+        }
+        .onPreferenceChange(ScaleBarPlacementKey.self) { placement in
+            onAnchorChange(placement.anchor)
         }
     }
 
     /// Label above, then a baseline with a tick at each end. The ticks are
     /// centred `width` points apart, so that gap is the labelled distance.
-    private func scaleBar(width: CGFloat, label: String) -> some View {
+    /// The row the line is drawn in is always there, bar or no bar.
+    private func scaleBar(_ bar: (width: CGFloat, label: String)?) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label)
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
-                .mapLabelOutline()
-                .padding(.leading, Self.tickInset)
-
-            Canvas { context, size in
-                let left = Self.tickInset
-                let right = Self.tickInset + width
-                var line = Path()
-                line.move(to: CGPoint(x: left, y: 0))
-                line.addLine(to: CGPoint(x: left, y: size.height))
-                line.move(to: CGPoint(x: left, y: size.height - 1))
-                line.addLine(to: CGPoint(x: right, y: size.height - 1))
-                line.move(to: CGPoint(x: right, y: 0))
-                line.addLine(to: CGPoint(x: right, y: size.height))
-                // A dark outline under a white stroke reads on satellite and on the light street style
-                context.stroke(line, with: .color(.black.opacity(0.7)), style: StrokeStyle(lineWidth: 4))
-                context.stroke(line, with: .color(.white), style: StrokeStyle(lineWidth: 2))
+            if let bar {
+                Text(bar.label)
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+                    .mapLabelOutline()
+                    .padding(.leading, Self.tickInset)
             }
-            .frame(width: width + 2 * Self.tickInset, height: Self.barHeight)
+
+            ZStack(alignment: .leading) {
+                if let bar {
+                    Canvas { context, size in
+                        let left = Self.tickInset
+                        let right = Self.tickInset + bar.width
+                        var line = Path()
+                        line.move(to: CGPoint(x: left, y: 0))
+                        line.addLine(to: CGPoint(x: left, y: size.height))
+                        line.move(to: CGPoint(x: left, y: size.height - Self.baselineInset))
+                        line.addLine(to: CGPoint(x: right, y: size.height - Self.baselineInset))
+                        line.move(to: CGPoint(x: right, y: 0))
+                        line.addLine(to: CGPoint(x: right, y: size.height))
+                        // A dark outline under a white stroke reads on satellite and on the light street style
+                        context.stroke(line, with: .color(.black.opacity(0.7)), style: StrokeStyle(lineWidth: 4))
+                        context.stroke(line, with: .color(.white), style: StrokeStyle(lineWidth: 2))
+                    }
+                    .frame(width: bar.width + 2 * Self.tickInset, height: Self.barHeight)
+                }
+            }
+            .frame(width: Self.rowWidth, height: Self.barHeight, alignment: .leading)
+            .background(
+                GeometryReader { row in
+                    Color.clear.preference(key: ScaleBarPlacementKey.self,
+                                           value: ScaleBarPlacement(row: row.frame(in: .global)))
+                }
+            )
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Map scale")
-        .accessibilityValue(label)
+        .accessibilityValue(bar?.label ?? "")
+        .accessibilityHidden(bar == nil)
+    }
+}
+
+/// The bar's row and the map's frame, both in the global space, so one can be
+/// read in the other whatever the global space's origin is.
+private struct ScaleBarPlacement: Equatable {
+    var row: CGRect?
+    var map: CGRect?
+
+    /// The scale anchor in the map's own space; nil until both frames are known.
+    var anchor: CGPoint? {
+        guard let row, let map else { return nil }
+        return MapScale.anchor(barRow: row, in: map, baselineInset: ScaleBarView.baselineInset)
+    }
+}
+
+private struct ScaleBarPlacementKey: PreferenceKey {
+    static var defaultValue = ScaleBarPlacement()
+
+    static func reduce(value: inout ScaleBarPlacement, nextValue: () -> ScaleBarPlacement) {
+        let next = nextValue()
+        if let row = next.row { value.row = row }
+        if let map = next.map { value.map = map }
     }
 }
 

@@ -28,7 +28,7 @@
 <script src="https://unpkg.com/milsymbol@2.2.0/dist/milsymbol.js"></script>
 <script>
   Cesium.Ion.defaultAccessToken='__CESIUM_ION_TOKEN__';
-  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},move:{enabled:false,dragging:false,last:null},vertexEdit:{enabled:false,dragging:false,handles:[]},northLocked:false,northSnapping:false};
+  const _state={ready:false,viewer:null,entities:new Map(),drawings:new Map(),measurements:new Map(),tempDrawings:new Map(),trails:new Map(),leaders:new Map(),photoreal:null,billboardCache:new Map(),lasso:{enabled:false,dragging:false,pts:[],handler:null},move:{enabled:false,dragging:false,last:null},vertexEdit:{enabled:false,dragging:false,handles:[]},northLocked:false,northSnapping:false,scaleAnchor:null};
   // Lasso multi-select drag (issue #16, 3D parity). Camera pan is
   // disabled while the lasso is enabled; the freehand path is drawn on
   // a 2D overlay canvas and the screen points are picked to lat/lon on
@@ -136,14 +136,24 @@
   function _pickedUid(viewer,pos){const p=viewer.scene.pick(pos);return(p&&p.id&&typeof p.id.id==='string')?p.id.id:null}
   function _cartoFor(viewer,pos){let c=viewer.scene.pickPosition(pos);if(!Cesium.defined(c))c=viewer.camera.pickEllipsoid(pos,viewer.scene.globe.ellipsoid);if(!Cesium.defined(c))return null;const cc=Cesium.Cartographic.fromCartesian(c);return{lat:Cesium.Math.toDegrees(cc.latitude),lon:Cesium.Math.toDegrees(cc.longitude),hae:cc.height}}
   function _zoomFromHeight(h,latRad){const c=Math.max(Math.cos(latRad||0),0.01),mpp=(h*256)/1000.0,z=Math.log2(40075017*c/Math.max(mpp,1));return Math.max(0,Math.min(22,z))}
-  // Scale bar truth: ground metres per CSS px at the screen center. The surface
-  // distance (EllipsoidGeodesic) between the globe points 50 px left and 50 px right of
-  // the center, over 100. Measured on the globe, so tilt and terrain are included.
-  // null when either point misses the globe (horizon, space): the bar is then hidden.
-  function _metersPerPoint(v){try{const cv=v.scene.canvas,cx=cv.clientWidth/2,cy=cv.clientHeight/2;
-    const a=_cartoFor(v,new Cesium.Cartesian2(cx-50,cy)),b=_cartoFor(v,new Cesium.Cartesian2(cx+50,cy));if(!a||!b)return null;
+  // Scale bar truth: ground metres per CSS px AT THE SCALE BAR. The surface distance
+  // (EllipsoidGeodesic) between the globe points 50 px left and 50 px right of the scale
+  // anchor (setScaleAnchor: the native bar's place, on its line's row), over the real
+  // distance between those points. Measured on the globe, so tilt and terrain are included.
+  // The screen center is used until native has set an anchor. null when either point
+  // misses the globe (horizon, space): the bar is then hidden. On a tilted view this is
+  // NOT the scale at the screen center, by design: the bar must be true for the ground
+  // it is drawn over, which is nearer the camera than the ground at the center.
+  // SCALE-SAMPLE-BEGIN (MapScaleTests runs this function against MapScale.sample)
+  function _scaleSample(a,w,h){if(!(w>0&&h>0))return null;
+    const px=a?a.x:w/2,py=a?a.y:h/2;if(!isFinite(px)||!isFinite(py))return null;
+    const x=Math.min(Math.max(px,0),w),y=Math.min(Math.max(py,0),h),x0=Math.max(x-50,0),x1=Math.min(x+50,w);
+    return x1>x0?{x0:x0,x1:x1,y:y}:null}
+  // SCALE-SAMPLE-END
+  function _metersPerPoint(v){try{const cv=v.scene.canvas,s=_scaleSample(_state.scaleAnchor,cv.clientWidth,cv.clientHeight);if(!s)return null;
+    const a=_cartoFor(v,new Cesium.Cartesian2(s.x0,s.y)),b=_cartoFor(v,new Cesium.Cartesian2(s.x1,s.y));if(!a||!b)return null;
     const d=new Cesium.EllipsoidGeodesic(Cesium.Cartographic.fromDegrees(a.lon,a.lat),Cesium.Cartographic.fromDegrees(b.lon,b.lat)).surfaceDistance;
-    return(isFinite(d)&&d>0)?d/100:null}catch(e){return null}}
+    return(isFinite(d)&&d>0)?d/(s.x1-s.x0):null}catch(e){return null}}
   function _postCameraChanged(v){const cam=v.camera,carto=cam.positionCartographic;if(!carto)return;
     // Issue #72 — north-up lock guarantee. If the heading drifted off north
     // (e.g. a two-finger twist, which Cesium folds into the rotate gesture and
@@ -302,6 +312,14 @@
       ctrl.enableLook=!on; // free-look changes heading with no other effect — safe to disable
       if(on)this.setHeading({heading:0});
       v.scene.requestRender();
+    },
+    // The native scale bar's place on the screen, in CSS px (= points) of this canvas:
+    // the middle of its maximum width, on its line's row. _metersPerPoint measures the
+    // ground scale there. null/NaN clears it (the screen center is used again). The camera is
+    // re-posted so the bar is right now, not at the next camera move: on the next frame, after the
+    // page has taken a resize that came with the move (a rotation), so it is measured at the new size.
+    setScaleAnchor(x,y){const ok=typeof x==='number'&&typeof y==='number'&&isFinite(x)&&isFinite(y);
+      _state.scaleAnchor=ok?{x:x,y:y}:null;const v=_state.viewer;if(v)requestAnimationFrame(function(){_postCameraChanged(v)});
     },
     // Lasso multi-select mode. While on, the overlay canvas captures
     // the single-finger drag (DOM touch events) and intercepts it so
