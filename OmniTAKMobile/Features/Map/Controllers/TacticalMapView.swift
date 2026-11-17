@@ -18,6 +18,11 @@ import UIKit
 extension Notification.Name {
     /// Posted by ATAKMapView to snap the Mapbox camera heading to 0° (north).
     static let mapboxResetNorth = Notification.Name("mapboxResetNorth")
+    /// Moves the 2D map's camera to a place and a zoom, keeping its tilt and bearing (the first fix of
+    /// a first launch). userInfo: "lat", "lon", "zoom": Double. Sent to the camera itself because the
+    /// region binding alone is skipped while the map is settling and then written over by its own
+    /// camera events.
+    static let mapboxMoveCamera = Notification.Name("mapboxMoveCamera")
     /// Issue #65 — posted when the operator taps their own self-position puck
     /// (either the Mapbox 2D puck or the Cesium 3D `__self__` entity). The
     /// MapViewController observes this and presents `SelfPositionEditSheet`.
@@ -287,6 +292,24 @@ struct TacticalMapView: UIViewRepresentable {
             ))
         }
 
+        coord.moveCameraObserver = NotificationCenter.default.addObserver(
+            forName: .mapboxMoveCamera, object: nil, queue: .main
+        ) { [weak coord, weak mapView] note in
+            guard let coord = coord, let mapView = mapView,
+                  let lat = note.userInfo?["lat"] as? Double,
+                  let lon = note.userInfo?["lon"] as? Double,
+                  let zoom = note.userInfo?["zoom"] as? Double else { return }
+            let state = mapView.mapboxMap.cameraState
+            coord.isProgrammaticUpdate = true
+            mapView.mapboxMap.setCamera(to: CameraOptions(
+                center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                zoom: zoom,
+                bearing: state.bearing,
+                pitch: state.pitch
+            ))
+            coord.isProgrammaticUpdate = false
+        }
+
         // Issue #57 — reload the custom tile layer whenever Settings
         // persists a new URL, without requiring a full style reload.
         coord.customTileObserver = NotificationCenter.default.addObserver(
@@ -534,6 +557,8 @@ struct TacticalMapView: UIViewRepresentable {
 
         // Issue #72/#73 — reset-north observer (removes itself on dealloc)
         var resetNorthObserver: NSObjectProtocol?
+        // The first fix's camera move (see .mapboxMoveCamera)
+        var moveCameraObserver: NSObjectProtocol?
         // Issue #57 — custom tile URL change observer
         var customTileObserver: NSObjectProtocol?
 
@@ -613,6 +638,7 @@ struct TacticalMapView: UIViewRepresentable {
 
         deinit {
             NotificationCenter.default.removeObserver(self)
+            if let moveCameraObserver { NotificationCenter.default.removeObserver(moveCameraObserver) }
         }
 
         @objc private func handleMemoryWarning() {

@@ -1833,6 +1833,13 @@ struct ATAKMapView: View {
                 guard mapEngine == .mapbox2D, let location else { return }
                 let usable = FirstFixCamera.isUsable(location, now: Date())
                 guard FirstFixState.shared.claimMove(engineIsGlobe: false, fixIsUsable: usable) else { return }
+                // The camera is moved itself: the region alone is skipped while the map is still
+                // settling at launch, and then written over by the map's own camera events.
+                NotificationCenter.default.post(name: .mapboxMoveCamera, object: nil, userInfo: [
+                    "lat": location.coordinate.latitude,
+                    "lon": location.coordinate.longitude,
+                    "zoom": FirstFixCamera.mapZoom,
+                ])
                 mapRegion = FirstFixCamera.mapRegion(centre: location.coordinate)
             }
     }
