@@ -29,11 +29,19 @@ final class TAKTLSClientCertificateRequiredTests: XCTestCase {
     }
 
     private func serverIdentity() throws -> SecIdentity {
-        let data = try XCTUnwrap(Data(base64Encoded: Self.serverP12Base64))
+        try Self.importServerIdentity()
+    }
+
+    /// The loopback server identity, shared with the other TLS test servers.
+    static func importServerIdentity() throws -> SecIdentity {
+        let data = try XCTUnwrap(Data(base64Encoded: serverP12Base64))
         var items: CFArray?
-        let options = [kSecImportExportPassphrase as String: Self.serverP12Password] as CFDictionary
+        let options = [kSecImportExportPassphrase as String: serverP12Password] as CFDictionary
         let status = SecPKCS12Import(data as CFData, options, &items)
-        XCTAssertEqual(status, errSecSuccess, "p12 import status \(status)")
+        guard status == errSecSuccess else {
+            throw NSError(domain: "TAKTLSClientCertificateRequiredTests", code: Int(status),
+                          userInfo: [NSLocalizedDescriptionKey: "p12 import status \(status)"])
+        }
         let first = try XCTUnwrap((items as? [[String: Any]])?.first)
         let identity = try XCTUnwrap(first[kSecImportItemIdentity as String])
         return identity as! SecIdentity
