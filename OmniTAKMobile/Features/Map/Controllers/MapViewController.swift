@@ -125,6 +125,10 @@ struct ATAKMapView: View {
     // the overlay is off, so the default render path is untouched.
     @State private var stalenessTick = 0
     private let stalenessTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
+    // #137: contact max age. The contacts it has hidden (not heard from for the
+    // Settings "Hide teammates not heard from for" time) are left out of the map
+    // below. The contact list reads the same object, so both agree.
+    @ObservedObject private var contactMaxAge = ContactMaxAgeMonitor.shared
     @State private var showLineOfSight = false
     @State private var showEchelonHierarchy = false
     @State private var showMissionSync = false
@@ -208,7 +212,13 @@ struct ATAKMapView: View {
 
     // Computed CoT markers from TAK service - filtered by overlay settings
     private var cotMarkers: [CoTMarker] {
-        takService.cotEvents.compactMap { event in
+        let hiddenByMaxAge = contactMaxAge.hidden
+        return takService.cotEvents.compactMap { event in
+            // #137: a teammate not heard from for the contact max age is off the
+            // map (still in the store and in the contact list's "not heard from"
+            // section). Only contacts the rule governs are ever in this set.
+            if hiddenByMaxAge[event.uid] != nil { return nil }
+
             // Air-dimension tracks (a-?-A-…, e.g. Remote ID / gyb drones,
             // ADS-B) carry their HAE so the 3D globe floats them at altitude
             // with a TAK leader line; ground units stay clamped (hae nil).

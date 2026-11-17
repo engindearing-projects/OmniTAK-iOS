@@ -73,6 +73,8 @@ class CoTEventHandler: ObservableObject {
 
         let cutoffDate = Date().addingTimeInterval(-staleEventThreshold)
         let originalCount = service.cotEvents.count
+        let maxAgeMinutes = ContactMaxAge.currentMinutes()
+        let selfUID = PositionBroadcastService.shared.userUID
 
         service.cotEvents.removeAll { event in
             // Exempt locally-dropped / shared tactical point markers
@@ -81,8 +83,14 @@ class CoTEventHandler: ObservableObject {
             // must not ghost-expire just because no fresh position update for it
             // arrives within the stale window the way a live EUD's PPLI does.
             // Markers are removed explicitly via removeEvent(uid:) instead.
-            guard !event.uid.isDroppedPointMarkerUID else { return false }
-            return event.time < cutoffDate
+            //
+            // #137: while the contact max age is on, the contacts it governs
+            // (other operators' own position reports) are left to it, so a max
+            // age of 1 h or 2 h is not cut short by this hour. With Never this is
+            // unchanged. The rule is in ContactMaxAge.hourlySweepRemoves.
+            return ContactMaxAge.hourlySweepRemoves(
+                event, cutoff: cutoffDate, maxAgeMinutes: maxAgeMinutes, selfUID: selfUID
+            )
         }
 
         let removedCount = originalCount - service.cotEvents.count
@@ -195,6 +203,11 @@ class CoTEventHandler: ObservableObject {
             #if DEBUG
             print("   📊 cotEvents now contains \(service.cotEvents.count) unique events")
             #endif
+
+            // #137: a new report makes the contact fresh at once: back on the
+            // map and out of the "not heard from" section, without waiting for
+            // the monitor's next pass.
+            ContactMaxAgeMonitor.shared.reportReceived(uid: event.uid)
         }
 
         // Feed ChatManager.participants from incoming PPLI/CoT so the
@@ -241,12 +254,17 @@ class CoTEventHandler: ObservableObject {
             // to re-parse it with ChatXMLParser (the two parsers shared no
             // model). The presence XML never carried an endpoint, so a
             // direct mapping is equivalent.
+            // #137: remember that this contact was saved from another operator's own
+            // position report. That is what lets the contact max age age a saved
+            // contact after the app restarts and the event store is empty
+            // (ContactMaxAge.appliesTo(_ participant:)).
             let participant = ChatParticipant(
                 id: event.uid,
                 callsign: event.detail.callsign,
                 lastSeen: event.time,
                 isOnline: true,
-                serverId: serverId
+                serverId: serverId,
+                fromPositionReport: ContactMaxAge.appliesTo(event, selfUID: selfUID) ? true : nil
             )
             chatManager?.updateParticipant(participant)
             chatManager?.updateParticipantLastSeen(id: participant.id)
