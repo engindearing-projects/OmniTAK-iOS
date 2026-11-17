@@ -13,14 +13,25 @@ class GeofenceManager: ObservableObject {
 
     @Published var geofences: [Geofence] = []
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
     private let storageKey = "com.omnitak.geofences.all"
 
-    private init() {
+    /// Set once the clean-up of geofences that never had a real position has run.
+    static let placeholderCleanupKey = "com.omnitak.geofences.placeholderCleanupDone"
+
+    /// Where every circle made by versions up to 2.44.0 was put, wherever the operator
+    /// was: the form never read the map. Nothing is at this exact point on purpose.
+    static let placeholderCenter = CLLocationCoordinate2D(latitude: 38.8977, longitude: -77.0365)
+
+    /// - Parameter defaults: where geofences are kept; the app's own defaults unless a
+    ///   test passes an isolated suite.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         loadGeofences()
+        removeGeofencesThatNeverHadARealPosition()
     }
 
     // MARK: - Load/Save
@@ -34,6 +45,34 @@ class GeofenceManager: ObservableObject {
         if let data = try? encoder.encode(geofences) {
             defaults.set(data, forKey: storageKey)
         }
+    }
+
+    // MARK: - One-time clean-up
+
+    /// Whether this geofence is one the old form could only have made without a position:
+    /// a circle exactly at the placeholder point, or a polygon with fewer than three corners
+    /// (the form never gave a polygon any). They never covered anywhere real.
+    static func neverHadARealPosition(_ geofence: Geofence) -> Bool {
+        switch geofence.type {
+        case .circle:
+            guard let center = geofence.center else { return false }
+            return abs(center.latitude - placeholderCenter.latitude) < 1e-9
+                && abs(center.longitude - placeholderCenter.longitude) < 1e-9
+        case .polygon:
+            return (geofence.polygonCoordinates?.count ?? 0) < 3
+        }
+    }
+
+    /// Removes those geofences, once. The flag is set on this first load even when there was
+    /// nothing to remove, so a geofence made later at that exact point (the 2D map opens
+    /// centered on it) is never taken for a leftover.
+    private func removeGeofencesThatNeverHadARealPosition() {
+        guard !defaults.bool(forKey: Self.placeholderCleanupKey) else { return }
+        defaults.set(true, forKey: Self.placeholderCleanupKey)
+        let kept = geofences.filter { !Self.neverHadARealPosition($0) }
+        guard kept.count != geofences.count else { return }
+        geofences = kept
+        saveGeofences()
     }
 
     // MARK: - CRUD Operations
@@ -60,34 +99,6 @@ class GeofenceManager: ObservableObject {
             geofences[index].isActive.toggle()
             saveGeofences()
         }
-    }
-
-    // MARK: - State Updates
-
-    func updateGeofenceEntryState(_ id: UUID, isInside: Bool) {
-        guard let index = geofences.firstIndex(where: { $0.id == id }) else { return }
-
-        if isInside && !geofences[index].userInsideGeofence {
-            // Entering geofence
-            geofences[index].userInsideGeofence = true
-            geofences[index].entryTime = Date()
-        } else if !isInside && geofences[index].userInsideGeofence {
-            // Exiting geofence
-            if let entryTime = geofences[index].entryTime {
-                let dwellDuration = Date().timeIntervalSince(entryTime)
-                geofences[index].totalDwellTime += dwellDuration
-            }
-            geofences[index].userInsideGeofence = false
-            geofences[index].entryTime = nil
-        }
-
-        saveGeofences()
-    }
-
-    func updateLastTriggered(_ id: UUID) {
-        guard let index = geofences.firstIndex(where: { $0.id == id }) else { return }
-        geofences[index].lastTriggeredAt = Date()
-        saveGeofences()
     }
 
     // MARK: - Queries

@@ -241,57 +241,6 @@ struct GPSErrorAlert: View {
     }
 }
 
-// MARK: - Geofence Alert Notification
-
-struct GeofenceAlertNotification: View {
-    let geofenceName: String
-    let action: String // "Entered" or "Exited"
-    let callsign: String
-    @Binding var isPresented: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
-                Image(systemName: "map.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(.red)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Geo Fence \(action)")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.red)
-
-                    Text("Drawing Circle 1, (You) \(callsign)")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white)
-                }
-
-                Spacer()
-
-                Button(action: { isPresented = false }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.7))
-                }
-            }
-            .padding()
-            .background(Color.black.opacity(0.9))
-            .cornerRadius(12)
-            .shadow(color: .black.opacity(0.5), radius: 10, x: 0, y: 5)
-        }
-        .padding(.horizontal)
-        .transition(.move(edge: .top).combined(with: .opacity))
-        .onAppear {
-            // Auto-dismiss after 5 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                withAnimation {
-                    isPresented = false
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Callsign Display with Coordinates
 // ATAK-style bottom-right status widget
 
@@ -406,20 +355,6 @@ struct ATAKLoadingScreen_Previews: PreviewProvider {
                     GPSStatusIndicator(accuracy: 25.0, isAvailable: true, showError: false)
                     GPSStatusIndicator(accuracy: nil, isAvailable: false, showError: true)
                 }
-            }
-
-            ZStack {
-                Color.gray.ignoresSafeArea()
-                VStack {
-                    GeofenceAlertNotification(
-                        geofenceName: "Circle 1",
-                        action: "Entered",
-                        callsign: "MURK",
-                        isPresented: .constant(true)
-                    )
-                    Spacer()
-                }
-                .padding(.top, 60)
             }
 
             ZStack {

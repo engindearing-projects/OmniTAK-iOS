@@ -133,7 +133,9 @@
     try{if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.omniMapEvent)window.webkit.messageHandlers.omniMapEvent.postMessage(j)}catch(e){}
     try{if(window.OmniBridgeNative&&window.OmniBridgeNative.onMapEvent)window.OmniBridgeNative.onMapEvent(j)}catch(e){}
   }
-  function _pickedUid(viewer,pos){const p=viewer.scene.pick(pos);return(p&&p.id&&typeof p.id.id==='string')?p.id.id:null}
+  // The entity under a tap, front to back, skipping geofences: they are zones drawn on the ground, not things to
+  // select, and a tap that lands on one is a tap on the map (so the tools under it still get it).
+  function _pickedUid(viewer,pos){for(const p of viewer.scene.drillPick(pos,4)){if(p&&p.id&&typeof p.id.id==='string'&&p.id.id.indexOf('geofence-')!==0)return p.id.id}return null}
   function _cartoFor(viewer,pos){let c=viewer.scene.pickPosition(pos);if(!Cesium.defined(c))c=viewer.camera.pickEllipsoid(pos,viewer.scene.globe.ellipsoid);if(!Cesium.defined(c))return null;const cc=Cesium.Cartographic.fromCartesian(c);return{lat:Cesium.Math.toDegrees(cc.latitude),lon:Cesium.Math.toDegrees(cc.longitude),hae:cc.height}}
   function _zoomFromHeight(h,latRad){const c=Math.max(Math.cos(latRad||0),0.01),mpp=(h*256)/1000.0,z=Math.log2(40075017*c/Math.max(mpp,1));return Math.max(0,Math.min(22,z))}
   // Scale bar truth: ground metres per CSS px AT THE SCALE BAR. The surface distance
@@ -150,6 +152,16 @@
     const x=Math.min(Math.max(px,0),w),y=Math.min(Math.max(py,0),h),x0=Math.max(x-50,0),x1=Math.min(x+50,w);
     return x1>x0?{x0:x0,x1:x1,y:y}:null}
   // SCALE-SAMPLE-END
+  // How high above the ground the camera must be, looking straight down, to see `width` metres across the screen.
+  // The frustum's own numbers are used: its field of view is the vertical one on a portrait screen and the
+  // horizontal one on a landscape screen, and the half-width it sees is aspect * tan(fovy / 2) either way.
+  // LOOKDOWN-BEGIN (GeofenceTests runs these functions in JavaScriptCore)
+  function _lookDownAgl(width,aspect,fovy){const half=aspect*Math.tan(fovy/2);return(width>0&&half>0)?width/2/half:null}
+  // A ground height worth flying to, in metres above the ellipsoid: a real one, or sea level. The globe's own answer
+  // for a place far from the camera came back as -39,874 m (with the camera over New York and the place in Spokane),
+  // and a camera sent 37 km under the ground ends up lying on it.
+  function _lookDownGround(h){return(typeof h==='number'&&isFinite(h)&&h>-1000&&h<10000)?h:0}
+  // LOOKDOWN-END
   function _metersPerPoint(v){try{const cv=v.scene.canvas,s=_scaleSample(_state.scaleAnchor,cv.clientWidth,cv.clientHeight);if(!s)return null;
     const a=_cartoFor(v,new Cesium.Cartesian2(s.x0,s.y)),b=_cartoFor(v,new Cesium.Cartesian2(s.x1,s.y));if(!a||!b)return null;
     const d=new Cesium.EllipsoidGeodesic(Cesium.Cartographic.fromDegrees(a.lon,a.lat),Cesium.Cartographic.fromDegrees(b.lon,b.lat)).surfaceDistance;
@@ -233,6 +245,21 @@
     flyTo(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
       v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,(typeof e.range==='number')?e.range:5000),
         orientation:{heading:Cesium.Math.toRadians(e.heading||0),pitch:Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-30),roll:0},duration:1.2});
+    },
+    // Straight down over {lat, lon}, north up, from high enough to see {width} metres across the screen ("Show on
+    // map" for a geofence). The height is measured from the ground there, so a place in the hills is framed the same
+    // as one at sea level. The ground's height is asked of the terrain service: the globe's own answer
+    // (globe.getHeight) is only good where the camera already is. The service gets 2 s; with no answer the
+    // ground is taken as sea level and the globe is still flown there.
+    lookDown(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
+      const f=v.camera.frustum,agl=_lookDownAgl(typeof e.width==='number'?e.width:600,f.aspectRatio,f.fovy);if(agl===null)return;
+      let flown=false;
+      const go=function(ground){if(flown)return;flown=true;
+        v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,_lookDownGround(ground)+agl),orientation:{heading:0,pitch:-Math.PI/2,roll:0},duration:1.2})};
+      if(v.terrainProvider&&Cesium.sampleTerrainMostDetailed){
+        Cesium.sampleTerrainMostDetailed(v.terrainProvider,[Cesium.Cartographic.fromDegrees(e.lon,e.lat)]).then(function(r){go(r[0]&&r[0].height)},function(){go(null)});
+        setTimeout(function(){go(null)},2000);return}
+      go(null);
     },
     // Issue #62/#78 — instant camera placement (no animation) for engine-switch
     // seeding from the 2D Mapbox camera. Accepts {lat, lon, height, heading,
@@ -441,7 +468,7 @@
     },
     ping(){return _state.ready?'pong':'loading'},
     upsertDrawing(arg){const d=_parse(arg);if(!d||!d.uid||!d.kind||!Array.isArray(d.coords)||d.coords.length===0)return;const v=_state.viewer;if(!v)return;
-      const color=_drawColor(d.color,0.85),fillC=_drawColor(d.color,0.25),width=typeof d.width==='number'?d.width:3;
+      const color=_drawColor(d.color,0.85),fillC=_drawColor(d.color,typeof d.fillAlpha==='number'?d.fillAlpha:0.25),width=typeof d.width==='number'?d.width:3;
       const useGround=!(typeof d.hae==='number'&&isFinite(d.hae)&&d.hae>0),hae=useGround?0:d.hae,heightRef=useGround?Cesium.HeightReference.CLAMP_TO_GROUND:Cesium.HeightReference.NONE;
       const prior=_state.drawings.get(d.uid);if(prior)v.entities.remove(prior);
       const opts={id:d.uid};
@@ -454,7 +481,14 @@
         // so that ring is a closed polyline instead.
         if(d.filled===false){opts.polyline={positions:_circleLoop(center,radius,hae),width:width,material:color,clampToGround:useGround};}
         else{opts.position=Cesium.Cartesian3.fromDegrees(center[0],center[1],hae);
-          opts.ellipse={semiMajorAxis:radius,semiMinorAxis:radius,material:fillC,outline:true,outlineColor:color,outlineWidth:width,heightReference:heightRef};}}
+          opts.ellipse={semiMajorAxis:radius,semiMinorAxis:radius,material:fillC,outline:true,outlineColor:color,outlineWidth:width,heightReference:heightRef};
+          // outlined:true (geofences) = the ring too, as a closed line, for the same reason as above.
+          if(d.outlined===true)opts.polyline={positions:_circleLoop(center,radius,hae),width:width,material:color,clampToGround:useGround};}}
+      // A name written at one point, over the ground (geofences: the north edge of a circle, the middle of a polygon).
+      // Its own entity, because an entity has one position and a circle's ellipse is placed by it.
+      else if(d.kind==='label'){const at=d.coords[0];if(typeof d.label!=='string'||!d.label||!Array.isArray(at)||at.length<2)return;
+        opts.position=Cesium.Cartesian3.fromDegrees(at[0],at[1],hae);
+        opts.label={text:d.label,font:'bold 13px -apple-system, sans-serif',fillColor:Cesium.Color.WHITE,outlineColor:Cesium.Color.BLACK,outlineWidth:3,style:Cesium.LabelStyle.FILL_AND_OUTLINE,verticalOrigin:Cesium.VerticalOrigin.BOTTOM,pixelOffset:new Cesium.Cartesian2(0,-2),heightReference:heightRef,disableDepthTestDistance:Number.POSITIVE_INFINITY};}
       else return;
       _state.drawings.set(d.uid,v.entities.add(opts));
     },

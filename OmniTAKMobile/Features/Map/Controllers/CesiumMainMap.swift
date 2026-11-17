@@ -256,6 +256,9 @@ struct CesiumMainMap: UIViewRepresentable {
     /// the ground scale there (`setScaleAnchor`). nil until the bar has been laid out;
     /// the page then measures at the screen center.
     var scaleAnchor: CGPoint? = nil
+    /// Every geofence. The ones switched on and with a shape are drawn as drawings of their own
+    /// (`geofence-<uuid>`): a light fill, an outline in their color and their name.
+    var geofences: [Geofence] = []
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -304,10 +307,21 @@ struct CesiumMainMap: UIViewRepresentable {
             guard let coordinator, coordinator.isReady, let wv = coordinator.webView else { return }
             guard let lat = note.userInfo?["lat"] as? Double,
                   let lon = note.userInfo?["lon"] as? Double else { return }
-            wv.evaluateJavaScript(
-                "window.OmniBridge.flyTo({lat:\(lat),lon:\(lon),range:5000});",
-                completionHandler: nil
-            )
+            // A caller that wants the place in view (a geofence) says how much ground to show,
+            // in metres across the screen, and the globe looks straight down on it. Without that
+            // the camera goes 5 km up and looks 30 degrees below the horizon, so the place is
+            // under it, below the bottom edge of the screen.
+            if let width = note.userInfo?["viewWidth"] as? Double {
+                wv.evaluateJavaScript(
+                    "window.OmniBridge.lookDown({lat:\(lat),lon:\(lon),width:\(width)});",
+                    completionHandler: nil
+                )
+            } else {
+                wv.evaluateJavaScript(
+                    "window.OmniBridge.flyTo({lat:\(lat),lon:\(lon),range:5000});",
+                    completionHandler: nil
+                )
+            }
         }
 
         // Issue #72/#73 — snap the globe heading to north (0°). Preserves the
@@ -760,6 +774,12 @@ struct CesiumMainMap: UIViewRepresentable {
         let width: Double
         /// false = outline only (range rings). nil = the shape's usual look.
         var filled: Bool? = nil
+        /// Opacity of the fill, 0 to 1. nil = the usual 25 %.
+        var fillAlpha: Double? = nil
+        /// true = a filled circle also gets its outline drawn (a ground-clamped ellipse cannot).
+        var outlined: Bool? = nil
+        /// The name a "label" drawing writes at its one coordinate.
+        var label: String? = nil
     }
 
     func buildDrawingJSON() -> String {
@@ -841,6 +861,46 @@ struct CesiumMainMap: UIViewRepresentable {
                 color: CesiumMainMap.hex(forUIColor: ring.color),
                 width: 2,
                 filled: false
+            ))
+        }
+
+        // Geofences last, so they lie over the operator's own drawings, as they do on the 2D map: a
+        // geofence made from a drawing is on exactly the same ground, and must not be hidden by it.
+        // A tap never finds a geofence (the page skips them), so the order does not decide a tap.
+        // Each is its shape and, as a drawing of its own, its name.
+        for shape in GeofenceMapShape.shapes(from: geofences) {
+            switch shape.geometry {
+            case .circle(let center, let radius):
+                let edge = CesiumMainMap.edgePoint(from: center, eastMetres: radius)
+                all.append(BridgeDrawing(
+                    uid: shape.id,
+                    kind: "circle",
+                    coords: [
+                        [center.longitude, center.latitude],
+                        [edge.longitude, edge.latitude],
+                    ],
+                    color: shape.color.tintHex,
+                    width: 3,
+                    fillAlpha: GeofenceMapShape.fillAlpha,
+                    outlined: true
+                ))
+            case .polygon(let corners):
+                all.append(BridgeDrawing(
+                    uid: shape.id,
+                    kind: "polygon",
+                    coords: corners.map { [$0.longitude, $0.latitude] },
+                    color: shape.color.tintHex,
+                    width: 3,
+                    fillAlpha: GeofenceMapShape.fillAlpha
+                ))
+            }
+            all.append(BridgeDrawing(
+                uid: shape.id + "-label",
+                kind: "label",
+                coords: [[shape.labelCoordinate.longitude, shape.labelCoordinate.latitude]],
+                color: shape.color.tintHex,
+                width: 3,
+                label: shape.name
             ))
         }
 
