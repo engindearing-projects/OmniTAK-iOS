@@ -61,6 +61,10 @@ struct CesiumMapEvent {
         let heading: Double     // degrees CW from north
         let pitch: Double       // degrees (negative = looking down)
         let zoom: Double        // Mapbox-style zoom, derived from height
+        /// Ground metres per screen point at the screen center, measured on the
+        /// globe between two points 100 CSS px apart (tilt included). nil when a
+        /// sample point misses the globe. Feeds the scale bar.
+        var metersPerPoint: Double? = nil
     }
 }
 
@@ -655,7 +659,7 @@ struct CesiumMainMap: UIViewRepresentable {
                 if kind == .cameraChanged,
                    let h = payload.height, let hd = payload.heading,
                    let pt = payload.pitch, let zm = payload.zoom {
-                    cameraState = .init(height: h, heading: hd, pitch: pt, zoom: zm)
+                    cameraState = .init(height: h, heading: hd, pitch: pt, zoom: zm, metersPerPoint: payload.mpp)
                 } else {
                     cameraState = nil
                 }
@@ -694,7 +698,7 @@ struct CesiumMainMap: UIViewRepresentable {
         /// screenX, screenY, uid?}`). `hae` is accepted but unused on the
         /// Swift side — the radial menu / contact lookup only needs the
         /// 2D coordinate.
-        private struct MapEventPayload: Decodable {
+        struct MapEventPayload: Decodable {
             let event: String
             let lat: Double
             let lon: Double
@@ -711,6 +715,10 @@ struct CesiumMainMap: UIViewRepresentable {
             // camerachanged — the correct point-drop / region center.
             let centerLat: Double?
             let centerLon: Double?
+            // Ground metres per screen point at the screen center, measured on
+            // the globe (see _postCameraChanged). null when a sample point
+            // missed the globe; the scale bar is then hidden.
+            let mpp: Double?
             // Freehand lasso polygon as [[lat,lon],...] for a 'lasso' event.
             let polygon: [[Double]]?
             // Drag origin (previous frame globe point) for a 'move' event

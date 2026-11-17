@@ -131,6 +131,14 @@
   function _pickedUid(viewer,pos){const p=viewer.scene.pick(pos);return(p&&p.id&&typeof p.id.id==='string')?p.id.id:null}
   function _cartoFor(viewer,pos){let c=viewer.scene.pickPosition(pos);if(!Cesium.defined(c))c=viewer.camera.pickEllipsoid(pos,viewer.scene.globe.ellipsoid);if(!Cesium.defined(c))return null;const cc=Cesium.Cartographic.fromCartesian(c);return{lat:Cesium.Math.toDegrees(cc.latitude),lon:Cesium.Math.toDegrees(cc.longitude),hae:cc.height}}
   function _zoomFromHeight(h,latRad){const c=Math.max(Math.cos(latRad||0),0.01),mpp=(h*256)/1000.0,z=Math.log2(40075017*c/Math.max(mpp,1));return Math.max(0,Math.min(22,z))}
+  // Scale bar truth: ground metres per CSS px at the screen center. The surface
+  // distance (EllipsoidGeodesic) between the globe points 50 px left and 50 px right of
+  // the center, over 100. Measured on the globe, so tilt and terrain are included.
+  // null when either point misses the globe (horizon, space): the bar is then hidden.
+  function _metersPerPoint(v){try{const cv=v.scene.canvas,cx=cv.clientWidth/2,cy=cv.clientHeight/2;
+    const a=_cartoFor(v,new Cesium.Cartesian2(cx-50,cy)),b=_cartoFor(v,new Cesium.Cartesian2(cx+50,cy));if(!a||!b)return null;
+    const d=new Cesium.EllipsoidGeodesic(Cesium.Cartographic.fromDegrees(a.lon,a.lat),Cesium.Cartographic.fromDegrees(b.lon,b.lat)).surfaceDistance;
+    return(isFinite(d)&&d>0)?d/100:null}catch(e){return null}}
   function _postCameraChanged(v){const cam=v.camera,carto=cam.positionCartographic;if(!carto)return;
     // Issue #72 — north-up lock guarantee. If the heading drifted off north
     // (e.g. a two-finger twist, which Cesium folds into the rotate gesture and
@@ -149,9 +157,9 @@
     const r=cam.computeViewRectangle(v.scene.globe.ellipsoid);
     // The point under the SCREEN CENTER (where the aim crosshair sits)
     // — distinct from the camera's sub-point when tilted. Used as the
-    // point-drop coordinate and the scale-bar / region center.
+    // point-drop coordinate and the region center.
     const cv=v.scene.canvas;const ctr=_cartoFor(v,new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2));
-    _postMapEvent({event:'camerachanged',lat:Cesium.Math.toDegrees(carto.latitude),lon:Cesium.Math.toDegrees(carto.longitude),height:carto.height,heading:Cesium.Math.toDegrees(cam.heading),pitch:Cesium.Math.toDegrees(cam.pitch),zoom:_zoomFromHeight(carto.height,carto.latitude),centerLat:ctr?ctr.lat:null,centerLon:ctr?ctr.lon:null,bounds:r?{north:Cesium.Math.toDegrees(r.north),south:Cesium.Math.toDegrees(r.south),east:Cesium.Math.toDegrees(r.east),west:Cesium.Math.toDegrees(r.west)}:null})}
+    _postMapEvent({event:'camerachanged',lat:Cesium.Math.toDegrees(carto.latitude),lon:Cesium.Math.toDegrees(carto.longitude),height:carto.height,heading:Cesium.Math.toDegrees(cam.heading),pitch:Cesium.Math.toDegrees(cam.pitch),zoom:_zoomFromHeight(carto.height,carto.latitude),centerLat:ctr?ctr.lat:null,centerLon:ctr?ctr.lon:null,mpp:_metersPerPoint(v),bounds:r?{north:Cesium.Math.toDegrees(r.north),south:Cesium.Math.toDegrees(r.south),east:Cesium.Math.toDegrees(r.east),west:Cesium.Math.toDegrees(r.west)}:null})}
   function _installInputHandlers(viewer){
     viewer.camera.moveEnd.addEventListener(function(){_postCameraChanged(viewer)});
     // Fire during continuous gestures (pinch-zoom / drag) too, so the
