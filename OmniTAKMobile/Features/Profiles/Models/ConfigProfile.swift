@@ -136,6 +136,7 @@ struct ConfigProfile: Codable, Identifiable, Equatable {
     var showMGRSLabels: Bool?
     var breadcrumbTrailsEnabled: Bool?
     var selfMarkerStyle: String?    // "milstd" | "bullseye"
+    var selfMarkerVisible: Bool?    // #134: false = hide my own marker on the map
 
     // Drone detection
     var remoteIdScanEnabled: Bool?
@@ -163,6 +164,7 @@ struct ConfigProfile: Codable, Identifiable, Equatable {
         showMGRSLabels: Bool? = nil,
         breadcrumbTrailsEnabled: Bool? = nil,
         selfMarkerStyle: String? = nil,
+        selfMarkerVisible: Bool? = nil,
         remoteIdScanEnabled: Bool? = nil,
         gybDetectorEnabled: Bool? = nil,
         selectedMeshFramework: String? = nil
@@ -182,6 +184,7 @@ struct ConfigProfile: Codable, Identifiable, Equatable {
         self.showMGRSLabels = showMGRSLabels
         self.breadcrumbTrailsEnabled = breadcrumbTrailsEnabled
         self.selfMarkerStyle = selfMarkerStyle
+        self.selfMarkerVisible = selfMarkerVisible
         self.remoteIdScanEnabled = remoteIdScanEnabled
         self.gybDetectorEnabled = gybDetectorEnabled
         self.selectedMeshFramework = selectedMeshFramework

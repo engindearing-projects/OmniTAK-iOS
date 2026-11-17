@@ -104,6 +104,8 @@
 "settings.marker.milstd" = "Símbolo MIL-STD";
 "settings.marker.bullseye" = "Diana (heredado)";
 "settings.marker.arrow" = "Flecha (rumbo)";
+"settings.showMyMarker" = "Mostrar mi marcador";
+"settings.showMyMarker.desc" = "Desactívalo para ocultar tu marcador solo en este mapa. No cambia si compartes tu posición.";
 "settings.color.cyan" = "Cian";
 "settings.color.green" = "Verde";
 "settings.color.orange" = "Naranja";
