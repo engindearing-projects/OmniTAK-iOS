@@ -34,6 +34,9 @@ struct SettingsView: View {
     // #137: hide a teammate not heard from for this many minutes, remove them at
     // twice that. 0 = Never. Read by ContactMaxAgeMonitor and the map.
     @AppStorage(ContactMaxAge.defaultsKey) private var contactMaxAgeMinutes = ContactMaxAge.defaultMinutes
+    // #135: Label size: names under markers and the position box, as a whole
+    // percent (80 to 160, default 100). Read by ATAKMapView, which redraws at once.
+    @AppStorage(LabelSize.storageKey) private var labelScalePercent = LabelSize.defaultPercent
     @AppStorage("coordinateDisplayFormat") private var coordinateFormatString = "MGRS"
     @AppStorage("breadcrumbTrailsEnabled") private var breadcrumbTrailsEnabled = true
     @AppStorage("trailMaxLength") private var trailMaxLength = 100
@@ -340,6 +343,21 @@ struct SettingsView: View {
                     Text(ContactMaxAge.settingHelp)
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                    // #135: Label size. Plain English like "Show point age on map"
+                    // above. One stored percent; the map reads it and redraws at once.
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Label size")
+                        Picker("Label size", selection: LabelSize.choiceBinding(for: $labelScalePercent)) {
+                            ForEach(LabelSize.choices, id: \.self) { percent in
+                                Text("\(percent)%").tag(percent)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Names under markers and the position box on the map. " +
+                             "For all other text, use your phone's font size setting.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 Section(loc.t("settings.section.droneDetection")) {
