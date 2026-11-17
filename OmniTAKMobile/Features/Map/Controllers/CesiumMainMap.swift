@@ -736,9 +736,11 @@ struct CesiumMainMap: UIViewRepresentable {
         let coords: [[Double]]
         let color: String
         let width: Double
+        /// false = outline only (range rings). nil = the shape's usual look.
+        var filled: Bool? = nil
     }
 
-    private func buildDrawingJSON() -> String {
+    func buildDrawingJSON() -> String {
         var all: [BridgeDrawing] = []
 
         for line in lineDrawings where !line.coordinates.isEmpty {
@@ -815,7 +817,8 @@ struct CesiumMainMap: UIViewRepresentable {
                     [edge.longitude, edge.latitude],
                 ],
                 color: CesiumMainMap.hex(forUIColor: ring.color),
-                width: 2
+                width: 2,
+                filled: false
             ))
         }
 

@@ -67,6 +67,11 @@
   function _vertexTouchEnd(e){if(!_state.vertexEdit.enabled)return;e.preventDefault();_state.vertexEdit.dragging=false;_postMapEvent({event:'vertexdragend',lat:0,lon:0});}
   function _drawColor(hex,a){try{const c=Cesium.Color.fromCssColorString(hex||'#4ADE80');return a!==undefined?c.withAlpha(a):c}catch(e){return Cesium.Color.CYAN}}
   function _havDist(a,b){const R=6371000,lat1=a[1]*Math.PI/180,lat2=b[1]*Math.PI/180,dLat=(b[1]-a[1])*Math.PI/180,dLon=(b[0]-a[0])*Math.PI/180;const s=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.min(1,Math.sqrt(s)))}
+  // A circle of `radius` metres around [lon,lat] as a closed ring of points (haversine, matching _havDist).
+  function _circleLoop(c,radius,hae){const R=6371000,lat=c[1]*Math.PI/180,lon=c[0]*Math.PI/180,dd=radius/R,pts=[];
+    for(let i=0;i<=72;i++){const b=i/72*2*Math.PI,la=Math.asin(Math.sin(lat)*Math.cos(dd)+Math.cos(lat)*Math.sin(dd)*Math.cos(b)),
+      lo=lon+Math.atan2(Math.sin(b)*Math.sin(dd)*Math.cos(lat),Math.cos(dd)-Math.sin(lat)*Math.sin(la));pts.push(Cesium.Cartesian3.fromRadians(lo,la,hae));}
+    return pts}
   function _fitViewport(){
     const w=window.innerWidth,h=window.innerHeight;
     document.body.style.width=w+'px';document.body.style.height=h+'px';
@@ -427,8 +432,11 @@
         opts.polygon={hierarchy:new Cesium.PolygonHierarchy(positions),material:(d.filled===false)?undefined:fillC,outline:true,outlineColor:color,outlineWidth:width,heightReference:heightRef};
         if(useGround){opts.polyline={positions:[...positions,positions[0]],width:width,material:color,clampToGround:true};opts.polygon.outline=false;}}
       else if(d.kind==='circle'){if(d.coords.length<2)return;const center=d.coords[0],edge=d.coords[1],radius=_havDist(center,edge);
-        opts.position=Cesium.Cartesian3.fromDegrees(center[0],center[1],hae);
-        opts.ellipse={semiMajorAxis:radius,semiMinorAxis:radius,material:fillC,outline:true,outlineColor:color,outlineWidth:width,heightReference:heightRef};}
+        // filled:false (range rings) = an outline only. A ground-clamped ellipse cannot draw its outline (only its fill),
+        // so that ring is a closed polyline instead.
+        if(d.filled===false){opts.polyline={positions:_circleLoop(center,radius,hae),width:width,material:color,clampToGround:useGround};}
+        else{opts.position=Cesium.Cartesian3.fromDegrees(center[0],center[1],hae);
+          opts.ellipse={semiMajorAxis:radius,semiMinorAxis:radius,material:fillC,outline:true,outlineColor:color,outlineWidth:width,heightReference:heightRef};}}
       else return;
       _state.drawings.set(d.uid,v.entities.add(opts));
     },

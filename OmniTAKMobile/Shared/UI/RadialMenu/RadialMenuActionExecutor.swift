@@ -75,6 +75,8 @@ class RadialMenuActionExecutor {
             return executeCopyCoordinates(context: context)
         case .setRangeRings:
             return executeSetRangeRings(context: context, services: services)
+        case .clearRangeRings:
+            return executeClearRangeRings(services: services)
         case .centerMap:
             return executeCenterMap(context: context)
         case .quickChat:
@@ -595,6 +597,13 @@ class RadialMenuActionExecutor {
             userInfo: ["center": context.mapCoordinate]
         )
 
+        return true
+    }
+
+    private static func executeClearRangeRings(services: RadialMenuServices) -> Bool {
+        guard let measurementManager = services.measurementManager else { return false }
+
+        measurementManager.clearAllRangeRings()
         return true
     }
 

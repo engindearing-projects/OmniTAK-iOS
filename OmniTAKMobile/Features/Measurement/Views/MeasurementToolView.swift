@@ -702,6 +702,34 @@ struct CompactMeasurementOverlay: View {
                             .cornerRadius(8)
                         }
                     }
+
+                    // Rings already on the map can be taken off right here, under the tool list
+                    if !manager.rangeRings.isEmpty {
+                        Button(action: { manager.clearAllRangeRings() }) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "circle.slash")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(Color(hex: "#FF4444"))
+                                    .frame(width: 30)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(RangeRingMenu.clearLabel)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white)
+
+                                    Text(rangeRingCountText)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.white.opacity(0.7))
+                                }
+
+                                Spacer()
+                            }
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 12)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(8)
+                        }
+                    }
                 }
                 .padding(16)
                 .frame(width: 280)
@@ -734,6 +762,19 @@ struct CompactMeasurementOverlay: View {
             .padding(.vertical, 8)
             .background(Color.black.opacity(0.8))
             .cornerRadius(8)
+
+            // Placing another set while rings are already down: the way to clear them is right here
+            if manager.currentMeasurementType == .rangeRing && !manager.rangeRings.isEmpty {
+                Button(action: { manager.clearAllRangeRings() }) {
+                    Text(RangeRingMenu.clearLabel)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color(hex: "#FF4444"))
+                        .cornerRadius(8)
+                }
+            }
 
             Spacer()
 
@@ -918,6 +959,11 @@ struct CompactMeasurementOverlay: View {
 
     // MARK: - Helper Properties
 
+    private var rangeRingCountText: String {
+        let count = manager.rangeRings.count
+        return "\(count) ring\(count == 1 ? "" : "s") on the map"
+    }
+
     private var hasResults: Bool {
         switch manager.currentMeasurementType {
         case .distance:
@@ -931,6 +977,58 @@ struct CompactMeasurementOverlay: View {
         case .none:
             return false
         }
+    }
+}
+
+// MARK: - Range Ring Placed Banner
+
+/// "Range rings placed  Remove  Keep": a small banner shown for a few seconds
+/// after rings are put down by any route (the Measure tool, the radial menu),
+/// so they can be taken straight back from the map. Styled like the
+/// reposition / vertex-edit HUD banners.
+struct RangeRingPlacedBanner: View {
+    let onRemove: () -> Void
+    let onKeep: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("Range rings placed")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+                .lineLimit(1)
+
+            // The padding after the capsule is a bigger touch target (about 43 pt tall), not a bigger look.
+            Button(action: onRemove) {
+                Text("Remove")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Color.white.opacity(0.15))
+                    .clipShape(Capsule())
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Remove the range rings just placed")
+
+            Button(action: onKeep) {
+                Text("Keep")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Color(hex: "#FFFC00"))
+                    .clipShape(Capsule())
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Keep the range rings")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial)
+        .background(Color.black.opacity(0.55))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

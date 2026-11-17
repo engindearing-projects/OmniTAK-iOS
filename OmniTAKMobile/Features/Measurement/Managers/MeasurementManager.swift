@@ -12,6 +12,13 @@ import Combine
 
 // MARK: - Measurement Manager
 
+/// One set of range rings placed together: the ids of its rings, so "Remove" on
+/// the banner can take back exactly that set and no other.
+struct RangeRingPlacement: Equatable, Identifiable {
+    let id: UUID
+    let ringIDs: [UUID]
+}
+
 class MeasurementManager: ObservableObject {
     // MARK: - Published Properties
 
@@ -23,17 +30,89 @@ class MeasurementManager: ObservableObject {
     @Published var rangeRings: [RangeRing] = []
     @Published var rangeRingConfiguration: RangeRingConfiguration = .defaultConfiguration()
     @Published var liveResult: MeasurementResult = .empty()
+    /// The set of rings placed last, while its "Range rings placed" banner is up.
+    /// nil once the operator picks Remove or Keep, the banner times out, or the
+    /// rings are cleared.
+    @Published private(set) var lastRangeRingPlacement: RangeRingPlacement?
 
     // MARK: - Private Properties
 
     private let persistenceKey = "saved_measurements"
     private let rangeRingsKey = "saved_range_rings"
     private let configurationKey = "range_ring_configuration"
+    private let defaults: UserDefaults
+    private let scheduleAfter: (TimeInterval, @escaping () -> Void) -> Void
+
+    /// How long the banner stays up on its own after rings are placed.
+    static let placementBannerSeconds: TimeInterval = 8
 
     // MARK: - Initialization
 
-    init() {
+    /// - Parameters:
+    ///   - defaults: where measurements, rings and the ring configuration are
+    ///     kept. The app uses the standard store; tests pass an isolated suite.
+    ///   - scheduleAfter: runs the banner's time-out. Tests capture it to fire by hand.
+    init(
+        defaults: UserDefaults = .standard,
+        scheduleAfter: @escaping (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    ) {
+        self.defaults = defaults
+        self.scheduleAfter = scheduleAfter
         loadSavedData()
+    }
+
+    // MARK: - Range ring placement
+
+    /// Puts down one set of rings, one per configured distance, around `center`.
+    /// The set is remembered in `lastRangeRingPlacement` so the banner can take
+    /// it back, and the banner hides itself after `placementBannerSeconds`.
+    /// Every way of placing rings (the Measure tool's tap, the radial "Rings"
+    /// item) comes through here.
+    /// - Returns: the set, or nil when no distances are configured.
+    @discardableResult
+    func placeRangeRings(at center: CLLocationCoordinate2D) -> RangeRingPlacement? {
+        let config = rangeRingConfiguration
+        let rings = config.distances.map { distance in
+            RangeRing(
+                center: center,
+                radiusMeters: distance,
+                color: config.color,
+                label: formatRangeRingLabel(distance)
+            )
+        }
+        guard !rings.isEmpty else { return nil }
+
+        rangeRings.append(contentsOf: rings)
+        saveRangeRings()
+
+        let placement = RangeRingPlacement(id: UUID(), ringIDs: rings.map(\.id))
+        lastRangeRingPlacement = placement
+        scheduleAfter(Self.placementBannerSeconds) { [weak self] in
+            self?.acknowledgeRangeRingPlacement(placement)
+        }
+        return placement
+    }
+
+    /// Takes back one set of rings and nothing else: the banner's "Remove".
+    /// Rings placed earlier, even at the same spot, stay. Saved either way.
+    func removeRangeRings(of placement: RangeRingPlacement) {
+        let doomed = Set(placement.ringIDs)
+        if rangeRings.contains(where: { doomed.contains($0.id) }) {
+            rangeRings.removeAll { doomed.contains($0.id) }
+            saveRangeRings()
+        }
+        acknowledgeRangeRingPlacement(placement)
+    }
+
+    /// Hides the banner for `placement` and keeps its rings: "Keep", or the
+    /// time-out. Does nothing if a newer set has replaced it, so an older
+    /// timer cannot hide a newer banner.
+    func acknowledgeRangeRingPlacement(_ placement: RangeRingPlacement) {
+        if lastRangeRingPlacement == placement {
+            lastRangeRingPlacement = nil
+        }
     }
 
     // MARK: - Start Measurement
@@ -78,7 +157,8 @@ class MeasurementManager: ObservableObject {
         case .rangeRing:
             if temporaryPoints.isEmpty {
                 temporaryPoints = [coordinate]
-                createRangeRings(at: coordinate)
+                placeRangeRings(at: coordinate)
+                cancelMeasurement()
                 print("Range ring center set")
             }
         }
@@ -89,25 +169,6 @@ class MeasurementManager: ObservableObject {
     private func updateLiveResult() {
         guard let type = currentMeasurementType else { return }
         liveResult = MeasurementCalculator.calculate(type: type, points: temporaryPoints)
-    }
-
-    // MARK: - Create Range Rings
-
-    private func createRangeRings(at center: CLLocationCoordinate2D) {
-        let config = rangeRingConfiguration
-
-        for distance in config.distances {
-            let ring = RangeRing(
-                center: center,
-                radiusMeters: distance,
-                color: config.color,
-                label: formatRangeRingLabel(distance)
-            )
-            rangeRings.append(ring)
-        }
-
-        saveRangeRings()
-        cancelMeasurement()
     }
 
     private func formatRangeRingLabel(_ meters: Double) -> String {
@@ -192,6 +253,7 @@ class MeasurementManager: ObservableObject {
 
     func clearAllRangeRings() {
         rangeRings.removeAll()
+        lastRangeRingPlacement = nil
         saveRangeRings()
         print("Cleared all range rings")
     }
@@ -352,37 +414,37 @@ class MeasurementManager: ObservableObject {
 
     private func saveMeasurements() {
         if let encoded = try? JSONEncoder().encode(savedMeasurements) {
-            UserDefaults.standard.set(encoded, forKey: persistenceKey)
+            defaults.set(encoded, forKey: persistenceKey)
         }
     }
 
     private func saveRangeRings() {
         if let encoded = try? JSONEncoder().encode(rangeRings) {
-            UserDefaults.standard.set(encoded, forKey: rangeRingsKey)
+            defaults.set(encoded, forKey: rangeRingsKey)
         }
     }
 
     private func saveConfiguration() {
         if let encoded = try? JSONEncoder().encode(rangeRingConfiguration) {
-            UserDefaults.standard.set(encoded, forKey: configurationKey)
+            defaults.set(encoded, forKey: configurationKey)
         }
     }
 
     private func loadSavedData() {
         // Load measurements
-        if let data = UserDefaults.standard.data(forKey: persistenceKey),
+        if let data = defaults.data(forKey: persistenceKey),
            let measurements = try? JSONDecoder().decode([Measurement].self, from: data) {
             savedMeasurements = measurements
         }
 
         // Load range rings
-        if let data = UserDefaults.standard.data(forKey: rangeRingsKey),
+        if let data = defaults.data(forKey: rangeRingsKey),
            let rings = try? JSONDecoder().decode([RangeRing].self, from: data) {
             rangeRings = rings
         }
 
         // Load configuration
-        if let data = UserDefaults.standard.data(forKey: configurationKey),
+        if let data = defaults.data(forKey: configurationKey),
            let config = try? JSONDecoder().decode(RangeRingConfiguration.self, from: data) {
             rangeRingConfiguration = config
         }

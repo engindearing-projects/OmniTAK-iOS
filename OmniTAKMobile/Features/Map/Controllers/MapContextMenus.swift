@@ -11,6 +11,35 @@ import SwiftUI
 import CoreLocation
 import MapKit
 
+// MARK: - Range ring entries
+
+/// What the map's radial menus say about range rings.
+enum RangeRingMenu {
+    static let clearLabel = "Clear Rings"
+
+    /// "Clear Rings" is offered only while there is something to clear.
+    static func offersClear(rangeRingCount: Int) -> Bool {
+        rangeRingCount > 0
+    }
+}
+
+extension RadialMenuConfiguration {
+    /// This menu plus "Clear Rings" when rings exist. "Rings" is left as it is,
+    /// so a second set can still be placed.
+    func offeringClearRings(rangeRingCount: Int) -> RadialMenuConfiguration {
+        guard RangeRingMenu.offersClear(rangeRingCount: rangeRingCount),
+              !items.contains(where: { $0.action == .clearRangeRings }) else { return self }
+        var copy = self
+        copy.items.append(RadialMenuItem(
+            icon: "circle.slash",
+            label: RangeRingMenu.clearLabel,
+            color: Self.atakPurple,
+            action: .clearRangeRings
+        ))
+        return copy
+    }
+}
+
 // MARK: - Map Context Menu Configurations
 
 extension RadialMenuConfiguration {

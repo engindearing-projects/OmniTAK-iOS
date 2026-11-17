@@ -129,8 +129,13 @@ class RadialMenuMapCoordinator: ObservableObject {
 
     // MARK: - Menu Configuration
 
+    /// This menu plus "Clear Rings" while the measurement manager holds rings.
+    func offeringClearRings(_ config: RadialMenuConfiguration) -> RadialMenuConfiguration {
+        config.offeringClearRings(rangeRingCount: services.measurementManager?.rangeRings.count ?? 0)
+    }
+
     private func configureMapMenu(at coordinate: CLLocationCoordinate2D) {
-        var config = RadialMenuConfiguration.mapContextMenu(at: coordinate)
+        var config = offeringClearRings(RadialMenuConfiguration.mapContextMenu(at: coordinate))
         // Plugin SDK — append every registered plugin radial action to the
         // empty-map menu. Appended BEFORE the caller's filteringDisabledPlugins()
         // pass so a disabled plugin's entry is still dropped.
@@ -139,7 +144,7 @@ class RadialMenuMapCoordinator: ObservableObject {
     }
 
     private func configureMarkerMenu(for marker: PointMarker) {
-        menuConfiguration = .markerContextMenu(for: marker)
+        menuConfiguration = offeringClearRings(.markerContextMenu(for: marker))
     }
 
     private func configureWaypointMenu(for waypoint: Waypoint) {
@@ -147,7 +152,7 @@ class RadialMenuMapCoordinator: ObservableObject {
     }
 
     private func configureUnitMenu(for annotation: MKAnnotation) {
-        menuConfiguration = .unitContextMenu(for: annotation)
+        menuConfiguration = offeringClearRings(.unitContextMenu(for: annotation))
     }
 
     // MARK: - Action Execution

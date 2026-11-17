@@ -505,7 +505,7 @@ struct TacticalMapView: UIViewRepresentable {
         private var rangeBearingLineManager: PolylineAnnotationManager?
         private var rangeBearingLabelManager: PointAnnotationManager?
         private var breadcrumbLineManager: PolylineAnnotationManager?
-        private var rangeRingManager: PolygonAnnotationManager?
+        private var rangeRingManager: PolylineAnnotationManager?
         private var lassoSelectionRingManager: PolygonAnnotationManager?
 
         // Annotation signature cache — `refreshAll()` runs on every
@@ -1564,13 +1564,13 @@ struct TacticalMapView: UIViewRepresentable {
                 }
             }
             for ring in mm.rangeRings {
+                sigHasher.combine(ring.id)
                 sigHasher.combine(ring.center.latitude); sigHasher.combine(ring.center.longitude)
                 sigHasher.combine(ring.radiusMeters); sigHasher.combine(ring.isVisible)
             }
             guard shouldPublish(layer: "measurement", signature: sigHasher.finalize()) else { return }
 
             var lines: [PolylineAnnotation] = []
-            var rings: [PolygonAnnotation] = []
             var verts: [PointAnnotation] = []
 
             if mm.isActive {
@@ -1589,20 +1589,35 @@ struct TacticalMapView: UIViewRepresentable {
                 }
             }
 
-            // Range rings — meter-radius circles approximated as
-            // polygons so they scale with map zoom.
-            for ring in mm.rangeRings {
-                let coords = Self.circleCoordinates(center: ring.center, radiusMeters: ring.radiusMeters, segments: 64)
-                let polygon = Polygon(outerRing: Ring(coordinates: coords))
-                var p = PolygonAnnotation(id: "rangering-\(ring.center.latitude)-\(ring.center.longitude)-\(ring.radiusMeters)", polygon: polygon)
-                p.fillColor = StyleColor(UIColor.systemOrange.withAlphaComponent(0.1))
-                p.fillOutlineColor = StyleColor(UIColor.systemOrange)
-                rings.append(p)
-            }
-
             lineManager.annotations = lines
             ensureMeasurementVertexManager()?.annotations = verts
-            ensureRangeRingManager()?.annotations = rings
+            ensureRangeRingManager()?.annotations = Self.rangeRingLines(for: mm.rangeRings)
+        }
+
+        /// Range rings as outlines, never filled: one closed line per visible ring
+        /// in the ring's own colour (the default is yellow), each over a darker,
+        /// wider casing so it still reads on the light street style as well as on
+        /// imagery. Metre-radius circles approximated as lines so they scale with
+        /// map zoom. Ids are the ring's own, so two sets placed at the same spot
+        /// never collide. Casings come first so the colour sits on top.
+        static func rangeRingLines(for rings: [RangeRing]) -> [PolylineAnnotation] {
+            let visible = rings.filter(\.isVisible)
+            func loop(_ ring: RangeRing, id: String, color: UIColor, width: Double) -> PolylineAnnotation {
+                var line = PolylineAnnotation(
+                    id: id,
+                    lineCoordinates: circleCoordinates(center: ring.center, radiusMeters: ring.radiusMeters, segments: 64)
+                )
+                line.lineColor = StyleColor(color)
+                line.lineWidth = width
+                return line
+            }
+            let casings = visible.map {
+                loop($0, id: "rangering-casing-\($0.id.uuidString)", color: UIColor.black.withAlphaComponent(0.5), width: 5)
+            }
+            let colored = visible.map {
+                loop($0, id: "rangering-\($0.id.uuidString)", color: $0.color, width: 2)
+            }
+            return casings + colored
         }
 
         private func ensureMeasurementVertexManager() -> PointAnnotationManager? {
@@ -1671,10 +1686,10 @@ struct TacticalMapView: UIViewRepresentable {
             vertexHandleManager = m
             return m
         }
-        private func ensureRangeRingManager() -> PolygonAnnotationManager? {
+        private func ensureRangeRingManager() -> PolylineAnnotationManager? {
             if let m = rangeRingManager { return m }
             guard let mapView = mapView else { return nil }
-            let m = mapView.annotations.makePolygonAnnotationManager(id: "range-rings")
+            let m = mapView.annotations.makePolylineAnnotationManager(id: "range-rings")
             rangeRingManager = m
             return m
         }
@@ -2201,7 +2216,7 @@ extension RadialMenuMapCoordinator {
             pressedDrawingType: nil,
             contextType: .pointMarker
         )
-        menuConfiguration = .markerContextMenu(for: marker).filteringDisabledPlugins()
+        menuConfiguration = offeringClearRings(.markerContextMenu(for: marker)).filteringDisabledPlugins()
         currentContext = context
         menuCenterPoint = adjustMenuPositionForMapbox(screenPoint, menuRadius: menuConfiguration.radius)
         RadialMenuHaptic.menuAppear.trigger()
