@@ -292,17 +292,7 @@ struct TacticalMapView: UIViewRepresentable {
             ))
         }
 
-        coord.moveCameraObserver = NotificationCenter.default.addObserver(
-            forName: .mapboxMoveCamera, object: nil, queue: .main
-        ) { [weak coord, weak mapView] note in
-            guard let coord = coord, let mapView = mapView,
-                  let lat = note.userInfo?["lat"] as? Double,
-                  let lon = note.userInfo?["lon"] as? Double,
-                  let zoom = note.userInfo?["zoom"] as? Double else { return }
-            coord.isProgrammaticUpdate = true
-            TacticalMapView.moveCamera(of: mapView, to: CLLocationCoordinate2D(latitude: lat, longitude: lon), zoom: zoom)
-            coord.isProgrammaticUpdate = false
-        }
+        coord.installMoveCameraObserver(on: mapView)
 
         // Issue #57 — reload the custom tile layer whenever Settings
         // persists a new URL, without requiring a full style reload.
@@ -643,6 +633,23 @@ struct TacticalMapView: UIViewRepresentable {
 
         @objc private func handleMemoryWarning() {
             symbolImageCache.removeAll(keepingCapacity: false)
+        }
+
+        /// Listens for `.mapboxMoveCamera` and moves `mapView`'s camera as it says, whatever the map
+        /// is doing: while it is still settling at launch the region binding alone is skipped
+        /// (`isUserInteracting`) and then written over by the map's own camera events.
+        func installMoveCameraObserver(on mapView: MapView) {
+            moveCameraObserver = NotificationCenter.default.addObserver(
+                forName: .mapboxMoveCamera, object: nil, queue: .main
+            ) { [weak self, weak mapView] note in
+                guard let self = self, let mapView = mapView,
+                      let lat = note.userInfo?["lat"] as? Double,
+                      let lon = note.userInfo?["lon"] as? Double,
+                      let zoom = note.userInfo?["zoom"] as? Double else { return }
+                self.isProgrammaticUpdate = true
+                TacticalMapView.moveCamera(of: mapView, to: CLLocationCoordinate2D(latitude: lat, longitude: lon), zoom: zoom)
+                self.isProgrammaticUpdate = false
+            }
         }
 
         // MARK: - GestureManagerDelegate

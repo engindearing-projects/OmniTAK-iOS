@@ -100,3 +100,158 @@ final class NotificationPromptTests: XCTestCase {
         XCTAssertFalse(NotificationPrompt.shouldAsk(status: .ephemeral))
     }
 }
+
+// MARK: - The wiring: what the managers are actually asked, and when
+
+/// Stands in for CoreLocation's manager and records every read and request.
+final class RecordingLocationService: LocationService {
+    weak var delegate: CLLocationManagerDelegate?
+    var desiredAccuracy: CLLocationAccuracy = 0
+    var allowsBackgroundLocationUpdates = false
+    var pausesLocationUpdatesAutomatically = true
+    var showsBackgroundLocationIndicator = false
+    /// What the system would answer.
+    var status: CLAuthorizationStatus = .notDetermined
+    private(set) var statusReads = 0
+    private(set) var whenInUseRequests = 0
+    private(set) var alwaysRequests = 0
+    private(set) var locationStarts = 0
+    private(set) var headingStarts = 0
+
+    var authorizationStatus: CLAuthorizationStatus {
+        statusReads += 1
+        return status
+    }
+    func startUpdatingLocation() { locationStarts += 1 }
+    func stopUpdatingLocation() {}
+    func startUpdatingHeading() { headingStarts += 1 }
+    func stopUpdatingHeading() {}
+    func requestWhenInUseAuthorization() { whenInUseRequests += 1 }
+    func requestAlwaysAuthorization() { alwaysRequests += 1 }
+}
+
+final class LocationManagerWiringTests: XCTestCase {
+
+    private func settle() {
+        let done = expectation(description: "main queue turn")
+        DispatchQueue.main.async { done.fulfill() }
+        wait(for: [done], timeout: 2)
+    }
+
+    func testCreatingTheManagerReadsNoStatusAndAsksForNothing() {
+        // The old init read the permission (a call that waits for the system on the main thread, before the
+        // first frame: a blank white screen when the service is slow) and asked for it, "always" included.
+        let service = RecordingLocationService()
+        let manager = LocationManager(service: service)
+        XCTAssertEqual(service.statusReads, 0)
+        XCTAssertEqual(service.whenInUseRequests, 0)
+        XCTAssertEqual(service.alwaysRequests, 0)
+        XCTAssertEqual(service.locationStarts, 1, "updates start by themselves once the user has said yes")
+        XCTAssertEqual(service.headingStarts, 1)
+        XCTAssertFalse(manager.hasReportedAuthorization, "until the system says, the status is only the starting value")
+    }
+
+    func testNothingIsAskedAtLaunchWhoeverHasNotAnswered() {
+        let service = RecordingLocationService()
+        let manager = LocationManager(service: service)
+        manager.ask(at: .launch, onboardingCompleted: false)
+        manager.ask(at: .launch, onboardingCompleted: true)
+        XCTAssertEqual(service.whenInUseRequests, 0)
+        XCTAssertEqual(service.alwaysRequests, 0)
+    }
+
+    func testTheOnboardingPageAsksOnceAndTheMapWaitsForOnboardingToEnd() {
+        let service = RecordingLocationService()
+        let manager = LocationManager(service: service)
+        // the map screen is built under the onboarding cover
+        manager.ask(at: .mapAppeared, onboardingCompleted: false)
+        XCTAssertEqual(service.whenInUseRequests, 0)
+        manager.ask(at: .onboardingLocationPage, onboardingCompleted: false)
+        XCTAssertEqual(service.whenInUseRequests, 1)
+        XCTAssertEqual(service.alwaysRequests, 0, "always is not asked for at all")
+    }
+
+    func testTheStatusArrivesThroughTheDelegateAndAnAnswerIsNeverAskedAgain() {
+        for answer in [CLAuthorizationStatus.authorizedWhenInUse, .authorizedAlways, .denied, .restricted] {
+            let service = RecordingLocationService()
+            service.status = answer
+            let manager = LocationManager(service: service)
+            manager.locationManagerDidChangeAuthorization(CLLocationManager())
+            settle()
+            XCTAssertEqual(manager.authorizationStatus, answer)
+            XCTAssertTrue(manager.hasReportedAuthorization)
+            XCTAssertEqual(service.statusReads, 1, "one read, inside the system's own callback")
+            for moment in LocationPrompt.Moment.allCases {
+                manager.ask(at: moment, onboardingCompleted: true)
+                manager.ask(at: moment, onboardingCompleted: false)
+            }
+            XCTAssertEqual(service.whenInUseRequests, 0, "status \(answer.rawValue)")
+            XCTAssertEqual(service.alwaysRequests, 0, "someone who chose always keeps it and is never asked to change it")
+        }
+    }
+}
+
+// MARK: - Notifications: asked when the first one is about to be shown
+
+final class RecordingNotificationCenter: NotificationCentering {
+    var status: UNAuthorizationStatus = .notDetermined
+    var grants = true
+    private(set) var statusReads = 0
+    private(set) var requests = 0
+    private(set) var added: [UNNotificationRequest] = []
+
+    func authorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {
+        statusReads += 1
+        completion(status)
+    }
+    func requestAuthorization(options: UNAuthorizationOptions, _ completion: @escaping (Bool, Error?) -> Void) {
+        requests += 1
+        completion(grants, nil)
+    }
+    func add(_ request: UNNotificationRequest, _ completion: @escaping (Error?) -> Void) {
+        added.append(request)
+        completion(nil)
+    }
+}
+
+final class CoTNotificationWiringTests: XCTestCase {
+
+    private func request() -> UNNotificationRequest {
+        UNNotificationRequest(identifier: UUID().uuidString, content: UNMutableNotificationContent(), trigger: nil)
+    }
+
+    func testCreatingTheHandlerAsksNothing() {
+        // It used to put the notification question on top of the Welcome page, at launch.
+        let center = RecordingNotificationCenter()
+        _ = CoTEventHandler(notifications: center)
+        XCTAssertEqual(center.statusReads, 0)
+        XCTAssertEqual(center.requests, 0)
+    }
+
+    func testTheFirstNotificationAsksOnceThenShowsIt() {
+        let center = RecordingNotificationCenter()
+        let handler = CoTEventHandler(notifications: center)
+        let first = request()
+        handler.deliver(first, kind: "chat")
+        XCTAssertEqual(center.requests, 1)
+        XCTAssertEqual(center.added.map(\.identifier), [first.identifier])
+    }
+
+    func testANoIsRespectedAndNothingIsShown() {
+        let center = RecordingNotificationCenter()
+        center.grants = false
+        CoTEventHandler(notifications: center).deliver(request(), kind: "chat")
+        XCTAssertEqual(center.requests, 1)
+        XCTAssertTrue(center.added.isEmpty)
+    }
+
+    func testAnAnsweredQuestionIsNotAskedAgain() {
+        for status in [UNAuthorizationStatus.authorized, .denied, .provisional, .ephemeral] {
+            let center = RecordingNotificationCenter()
+            center.status = status
+            CoTEventHandler(notifications: center).deliver(request(), kind: "emergency")
+            XCTAssertEqual(center.requests, 0, "status \(status.rawValue)")
+            XCTAssertEqual(center.added.count, 1, "the system itself drops it for someone who said no")
+        }
+    }
+}

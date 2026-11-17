@@ -11,10 +11,30 @@ import CoreLocation
 
 // MARK: - Location Manager
 
+/// What LocationManager asks of CoreLocation's manager. A protocol so that a test can hand it a
+/// recording stand-in and check what it reads and asks for (and, above all, when).
+protocol LocationService: AnyObject {
+    var delegate: CLLocationManagerDelegate? { get set }
+    var desiredAccuracy: CLLocationAccuracy { get set }
+    var allowsBackgroundLocationUpdates: Bool { get set }
+    var pausesLocationUpdatesAutomatically: Bool { get set }
+    var showsBackgroundLocationIndicator: Bool { get set }
+    /// Reading this waits for the system on the calling thread.
+    var authorizationStatus: CLAuthorizationStatus { get }
+    func startUpdatingLocation()
+    func stopUpdatingLocation()
+    func startUpdatingHeading()
+    func stopUpdatingHeading()
+    func requestWhenInUseAuthorization()
+    func requestAlwaysAuthorization()
+}
+
+extension CLLocationManager: LocationService {}
+
 class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     static let shared = LocationManager()
 
-    private let manager = CLLocationManager()
+    private let manager: LocationService
     @Published var location: CLLocation?
     @Published var accuracy: Double = 0
     @Published var heading: CLHeading?
@@ -24,7 +44,12 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// `authorizationStatus` is only the starting value, and the system may be slow to answer.
     @Published private(set) var hasReportedAuthorization = false
 
-    override init() {
+    convenience override init() {
+        self.init(service: CLLocationManager())
+    }
+
+    init(service: LocationService) {
+        manager = service
         super.init()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
@@ -46,8 +71,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     /// Puts the location question to the user if `LocationPrompt` says this is the moment. Asked
     /// through one long-lived manager: a question put by a manager that goes away is withdrawn.
-    func ask(at moment: LocationPrompt.Moment) {
-        let done = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+    func ask(at moment: LocationPrompt.Moment,
+             onboardingCompleted done: Bool = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")) {
         if LocationPrompt.shouldAskWhenInUse(at: moment, status: authorizationStatus, onboardingCompleted: done) {
             manager.requestWhenInUseAuthorization()
         }
@@ -64,8 +89,9 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        // Read inside the system's own callback, where the answer is already here.
-        let status = manager.authorizationStatus
+        // Read inside the system's own callback, where the answer is already here. (`self.manager` is
+        // the service this was made with: the same object as the callback's, but a test's stand-in.)
+        let status = self.manager.authorizationStatus
         DispatchQueue.main.async {
             self.authorizationStatus = status
             self.hasReportedAuthorization = true

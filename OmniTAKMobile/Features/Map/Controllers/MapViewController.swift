@@ -2142,6 +2142,9 @@ struct ATAKMapView: View {
         switch event.kind {
         case .cameraChanged:
             guard let cam = event.camera else { return }
+            // The first camera event is about to overwrite the saved camera: have it read (once) first,
+            // whenever the app happened to ask for it before.
+            _ = FirstFixState.shared
             cesiumLastLat = event.coordinate.latitude
             cesiumLastLon = event.coordinate.longitude
             cesiumLastHeight = cam.height

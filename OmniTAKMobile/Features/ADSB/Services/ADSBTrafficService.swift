@@ -108,13 +108,19 @@ class ADSBTrafficService: ObservableObject {
 
     func startTracking() {
         stopTracking()
-        guard settings.isEnabled, hasBecomeActive else { return }
+        guard Self.mayTrack(isEnabled: settings.isEnabled, hasBecomeActive: hasBecomeActive) else { return }
 
         fetchAircraft()
 
         refreshTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(settings.refreshIntervalSeconds), repeats: true) { [weak self] _ in
             self?.fetchAircraft()
         }
+    }
+
+    /// Whether tracking may start: switched on, and the app has been active (it is not still starting,
+    /// before its first frame).
+    static func mayTrack(isEnabled: Bool, hasBecomeActive: Bool) -> Bool {
+        isEnabled && hasBecomeActive
     }
 
     func stopTracking() {

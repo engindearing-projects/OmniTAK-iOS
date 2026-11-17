@@ -12,6 +12,7 @@ import XCTest
 import MapKit
 import CoreLocation
 import JavaScriptCore
+import SwiftUI
 import MapboxMaps
 @testable import OmniTAK
 
@@ -291,6 +292,67 @@ final class FirstFixCameraTests: XCTestCase {
         XCTAssertEqual(state.zoom, FirstFixCamera.mapZoom, accuracy: 1e-6)
         XCTAssertEqual(state.bearing, 20, accuracy: 1e-6)
         XCTAssertEqual(state.pitch, 45, accuracy: 1e-6)
+    }
+
+    func testTrackingDoesNotStartWhileTheAppIsStillStarting() {
+        // started from the plugin's activation in App.init it fetched around the phone's position, which
+        // asked the location service before the first frame
+        XCTAssertFalse(ADSBTrafficService.mayTrack(isEnabled: true, hasBecomeActive: false))
+        XCTAssertTrue(ADSBTrafficService.mayTrack(isEnabled: true, hasBecomeActive: true))
+        XCTAssertFalse(ADSBTrafficService.mayTrack(isEnabled: false, hasBecomeActive: true))
+        XCTAssertFalse(ADSBTrafficService.mayTrack(isEnabled: false, hasBecomeActive: false))
+    }
+
+    // MARK: - The 2D map moves to the operator even while it is still settling
+
+    private func makeTacticalMapView(region: Binding<MKCoordinateRegion>) -> TacticalMapView {
+        let store = DrawingStore()
+        return TacticalMapView(
+            region: region, mapType: .constant(.standard), trackingMode: .constant(.none),
+            markers: [], pointMarkers: [], aircraft: [], showsUserLocation: false,
+            drawingStore: store, drawingManager: DrawingToolsManager(drawingStore: store),
+            radialMenuCoordinator: RadialMenuMapCoordinator(), overlayCoordinator: MapOverlayCoordinator(),
+            routeOverlayCoordinator: RouteOverlayCoordinator(), mapStateManager: MapStateManager(),
+            measurementManager: MeasurementManager(), drawingMoveSession: DrawingMoveSession(),
+            drawingVertexEditSession: DrawingVertexEditSession(), onMapTap: { _ in })
+    }
+
+    func testTheFirstFixReachesThe2DMapWhileItIsInteractingAndItsOwnCameraEventsDoNotUndoIt() {
+        // With the location already allowed the first fix arrives within a second of launch, while the map is
+        // handling its own first camera events (every one of them sets isUserInteracting, for 0.3 s) and its
+        // style load re-applies the 60 degree tilt. Writing the region binding alone was skipped then and then
+        // written over by the map's camera feedback: the map stayed over Washington.
+        let washington = CLLocationCoordinate2D(latitude: 38.8977, longitude: -77.0365)
+        var region = MKCoordinateRegion(center: washington, span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05))
+        let view = makeTacticalMapView(region: Binding(get: { region }, set: { region = $0 }))
+        let coordinator = view.makeCoordinator()
+        let mapView = MapView(
+            frame: CGRect(x: 0, y: 0, width: 402, height: 874),
+            mapInitOptions: MapInitOptions(cameraOptions: CameraOptions(center: washington, zoom: 11, bearing: 0, pitch: 0)))
+        coordinator.mapView = mapView
+        coordinator.installMoveCameraObserver(on: mapView)
+        coordinator.isUserInteracting = true
+
+        // what MapViewController posts for the first fix
+        NotificationCenter.default.post(name: .mapboxMoveCamera, object: nil, userInfo: [
+            "lat": spokane.latitude, "lon": spokane.longitude, "zoom": FirstFixCamera.mapZoom])
+        var state = mapView.mapboxMap.cameraState
+        XCTAssertEqual(state.center.latitude, spokane.latitude, accuracy: 1e-6, "moved although the map was interacting")
+        XCTAssertEqual(state.center.longitude, spokane.longitude, accuracy: 1e-6)
+        XCTAssertEqual(state.zoom, FirstFixCamera.mapZoom, accuracy: 1e-6)
+        XCTAssertFalse(coordinator.isProgrammaticUpdate)
+
+        // the style load's tilt, and the map's feedback into the region binding
+        mapView.mapboxMap.setCamera(to: CameraOptions(pitch: 60))
+        coordinator.handleCameraChanged(mapView: mapView)
+        let settled = expectation(description: "the region is written")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { settled.fulfill() }
+        wait(for: [settled], timeout: 2)
+        state = mapView.mapboxMap.cameraState
+        XCTAssertEqual(state.center.latitude, spokane.latitude, accuracy: 1e-6)
+        XCTAssertEqual(state.pitch, 60, accuracy: 1e-6)
+        XCTAssertEqual(region.center.latitude, spokane.latitude, accuracy: 1e-4, "the binding ends where the camera is")
+        XCTAssertEqual(region.center.longitude, spokane.longitude, accuracy: 1e-4)
     }
 
     // MARK: - The globe page's centring

@@ -54,9 +54,18 @@ class CoTEventHandler: ObservableObject {
 
     private var staleCleanupTimer: Timer?
 
+    private let notifications: NotificationCentering
+
     private init() {
+        notifications = SystemNotificationCenter()
         // No permission question here: it used to be put on top of the Welcome page at launch.
         // It is asked when the first notification is about to be shown (see `deliver`).
+        startStaleEventCleanup()
+    }
+
+    /// For a test: a handler that shows its notifications through `notifications`.
+    init(notifications: NotificationCentering) {
+        self.notifications = notifications
         startStaleEventCleanup()
     }
 
@@ -394,8 +403,8 @@ class CoTEventHandler: ObservableObject {
     /// Shows a local notification. The first time, with nobody having decided yet, the system asks
     /// for permission first: an incoming chat message or an emergency alert is the moment its
     /// answer matters. Asked once; a "no" is respected.
-    private func deliver(_ request: UNNotificationRequest, kind: String) {
-        let center = UNUserNotificationCenter.current()
+    func deliver(_ request: UNNotificationRequest, kind: String) {
+        let center = notifications
         let add = {
             center.add(request) { error in
                 if let error = error {
@@ -403,8 +412,8 @@ class CoTEventHandler: ObservableObject {
                 }
             }
         }
-        center.getNotificationSettings { settings in
-            guard NotificationPrompt.shouldAsk(status: settings.authorizationStatus) else {
+        center.authorizationStatus { status in
+            guard NotificationPrompt.shouldAsk(status: status) else {
                 add()
                 return
             }
@@ -468,4 +477,29 @@ struct CoTEventStatistics {
     let totalEventsReceived: Int
     let activeEmergencyCount: Int
     let lastEventTime: Date?
+}
+
+// MARK: - The notification centre, behind a protocol
+
+/// The notification centre as CoTEventHandler uses it. A protocol so that a test can record what is
+/// asked of it, and when.
+protocol NotificationCentering: AnyObject {
+    func authorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void)
+    func requestAuthorization(options: UNAuthorizationOptions, _ completion: @escaping (Bool, Error?) -> Void)
+    func add(_ request: UNNotificationRequest, _ completion: @escaping (Error?) -> Void)
+}
+
+/// The system's notification centre.
+final class SystemNotificationCenter: NotificationCentering {
+    func authorizationStatus(_ completion: @escaping (UNAuthorizationStatus) -> Void) {
+        UNUserNotificationCenter.current().getNotificationSettings { completion($0.authorizationStatus) }
+    }
+
+    func requestAuthorization(options: UNAuthorizationOptions, _ completion: @escaping (Bool, Error?) -> Void) {
+        UNUserNotificationCenter.current().requestAuthorization(options: options, completionHandler: completion)
+    }
+
+    func add(_ request: UNNotificationRequest, _ completion: @escaping (Error?) -> Void) {
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: completion)
+    }
 }
