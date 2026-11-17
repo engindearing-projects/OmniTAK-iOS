@@ -31,33 +31,22 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         manager.pausesLocationUpdatesAutomatically = false
         manager.showsBackgroundLocationIndicator = true
 
-        // Request authorization - start with when in use, then prompt for always
-        requestLocationAuthorization()
-
+        // Nothing is asked and nothing is read from the location service here. This runs while
+        // the app is still starting, and `manager.authorizationStatus` is a call that waits for
+        // the system on the main thread: when the system is slow to answer the app showed a blank
+        // white screen. The status arrives in `locationManagerDidChangeAuthorization`, which the
+        // system calls right after the manager is created. Updates start by themselves once the
+        // user has said yes.
         manager.startUpdatingLocation()
         manager.startUpdatingHeading()
     }
 
-    /// Request location authorization with escalation to Always
-    func requestLocationAuthorization() {
-        let status = manager.authorizationStatus
-        authorizationStatus = status
-
-        switch status {
-        case .notDetermined:
-            // First request when in use, then iOS will prompt for upgrade
+    /// Puts the location question to the user if `LocationPrompt` says this is the moment. Asked
+    /// through one long-lived manager: a question put by a manager that goes away is withdrawn.
+    func ask(at moment: LocationPrompt.Moment) {
+        let done = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+        if LocationPrompt.shouldAskWhenInUse(at: moment, status: authorizationStatus, onboardingCompleted: done) {
             manager.requestWhenInUseAuthorization()
-        case .authorizedWhenInUse:
-            // Request upgrade to Always for background operation
-            manager.requestAlwaysAuthorization()
-        case .authorizedAlways:
-            // Already have full access
-            break
-        case .denied, .restricted:
-            // User denied - they'll need to enable in Settings
-            print("[LocationManager] Location access denied or restricted")
-        @unknown default:
-            break
         }
     }
 
@@ -71,17 +60,11 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         manager.stopUpdatingHeading()
     }
 
-    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        // Read inside the system's own callback, where the answer is already here.
+        let status = manager.authorizationStatus
         DispatchQueue.main.async {
             self.authorizationStatus = status
-
-            // If user just granted when-in-use, request always
-            if status == .authorizedWhenInUse {
-                // Slight delay before requesting upgrade
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    manager.requestAlwaysAuthorization()
-                }
-            }
         }
     }
 

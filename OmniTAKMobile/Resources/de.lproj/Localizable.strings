@@ -16,6 +16,13 @@
 "onboarding.page1.feature3" = "Kartenbasierte Lageübersicht";
 "onboarding.page1.feature4" = "Plattformübergreifende Unterstützung";
 
+/* --- Onboarding: location (the page after Welcome) --- */
+"onboarding.location.title" = "Finde dich auf der Karte";
+"onboarding.location.desc" = "OmniTAK nutzt deinen Standort, um dir zu zeigen, wo du auf der Karte bist, und um deine Position mit deinem Team zu teilen, sobald du dich mit einem TAK-Server verbindest.";
+"onboarding.location.feature1" = "Deine Position auf der Karte";
+"onboarding.location.feature2" = "Mit deinem Team geteilt, sobald du verbunden bist";
+"onboarding.location.feature3" = "Jederzeit in den Einstellungen änderbar";
+
 /* --- Onboarding page 2: Secure & Certified --- */
 "onboarding.page2.title" = "Sicher & zertifiziert";
 "onboarding.page2.desc" = "OmniTAK unterstützt zertifikatsbasierte Authentifizierung für sichere Verbindungen zu TAK-Servern.";

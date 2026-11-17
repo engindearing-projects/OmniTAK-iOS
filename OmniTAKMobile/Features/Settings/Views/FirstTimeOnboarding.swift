@@ -47,6 +47,14 @@ struct FirstTimeOnboarding: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                // The location question is asked when the page that explains it comes up, not at
+                // launch. A moment first, so the explanation is on screen when the question is.
+                .onChange(of: currentPage) { page in
+                    guard pages.indices.contains(page), pages[page].asksForLocation else { return }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        LocationManager.shared.ask(at: .onboardingLocationPage)
+                    }
+                }
 
                 // Custom page indicator
                 pageIndicator
@@ -132,6 +140,8 @@ struct OnboardingPage {
     let descKey: String
     let color: Color
     let featureKeys: [String]
+    /// True for the page that explains why the app wants the location: coming to it asks.
+    var asksForLocation: Bool = false
 
     static let all: [OnboardingPage] = [
         OnboardingPage(
@@ -145,6 +155,18 @@ struct OnboardingPage {
                 "onboarding.page1.feature3",
                 "onboarding.page1.feature4"
             ]
+        ),
+        OnboardingPage(
+            icon: "location.fill",
+            titleKey: "onboarding.location.title",
+            descKey: "onboarding.location.desc",
+            color: Color(hex: "#5AC8FA"),
+            featureKeys: [
+                "onboarding.location.feature1",
+                "onboarding.location.feature2",
+                "onboarding.location.feature3"
+            ],
+            asksForLocation: true
         ),
         OnboardingPage(
             icon: "lock.shield.fill",
@@ -208,50 +230,61 @@ struct OnboardingPageView: View {
     @EnvironmentObject private var loc: LocalizationManager
 
     var body: some View {
-        VStack(spacing: 32) {
-            Spacer()
+        // The content is taller than the page on most phones (six 32 pt gaps alone are 192 pt), and
+        // a VStack that is short of room squeezes its text to one line with an ellipsis: the
+        // explanation on the location page could not be read. So the page scrolls when it does not
+        // fit, and when it does fit it looks as it always did (the content is centred in the page).
+        GeometryReader { geometry in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 32) {
+                    Spacer(minLength: 0)
 
-            // Icon
-            ZStack {
-                Circle()
-                    .fill(page.color.opacity(0.15))
-                    .frame(width: 140, height: 140)
+                    // Icon
+                    ZStack {
+                        Circle()
+                            .fill(page.color.opacity(0.15))
+                            .frame(width: 140, height: 140)
 
-                Circle()
-                    .fill(page.color.opacity(0.25))
-                    .frame(width: 100, height: 100)
+                        Circle()
+                            .fill(page.color.opacity(0.25))
+                            .frame(width: 100, height: 100)
 
-                Image(systemName: page.icon)
-                    .font(.system(size: 44, weight: .medium))
-                    .foregroundColor(page.color)
-            }
+                        Image(systemName: page.icon)
+                            .font(.system(size: 44, weight: .medium))
+                            .foregroundColor(page.color)
+                    }
 
-            // Title
-            Text(loc.t(page.titleKey))
-                .font(.system(size: 32, weight: .bold))
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                    // Title
+                    Text(loc.t(page.titleKey))
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 32)
 
-            // Description
-            Text(loc.t(page.descKey))
-                .font(.system(size: 17))
-                .foregroundColor(Color(hex: "#CCCCCC"))
-                .multilineTextAlignment(.center)
-                .lineSpacing(4)
-                .padding(.horizontal, 40)
+                    // Description
+                    Text(loc.t(page.descKey))
+                        .font(.system(size: 17))
+                        .foregroundColor(Color(hex: "#CCCCCC"))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 40)
 
-            // Features
-            VStack(spacing: 14) {
-                ForEach(page.featureKeys, id: \.self) { featureKey in
-                    FeatureRow(text: loc.t(featureKey), color: page.color)
+                    // Features
+                    VStack(spacing: 14) {
+                        ForEach(page.featureKeys, id: \.self) { featureKey in
+                            FeatureRow(text: loc.t(featureKey), color: page.color)
+                        }
+                    }
+                    .padding(.horizontal, 40)
+                    .padding(.top, 8)
+
+                    Spacer(minLength: 0)
+                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height)
             }
-            .padding(.horizontal, 40)
-            .padding(.top, 8)
-
-            Spacer()
-            Spacer()
         }
     }
 }
@@ -261,7 +294,7 @@ struct FeatureRow: View {
     let color: Color
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 20))
                 .foregroundColor(color)
@@ -269,6 +302,7 @@ struct FeatureRow: View {
             Text(text)
                 .font(.system(size: 15))
                 .foregroundColor(.white)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer()
         }

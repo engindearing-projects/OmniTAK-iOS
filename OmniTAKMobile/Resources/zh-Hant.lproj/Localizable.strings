@@ -17,6 +17,13 @@
 "onboarding.page1.feature3" = "地圖态势感知";
 "onboarding.page1.feature4" = "多平台支援";
 
+/* --- Onboarding: location (the page after Welcome) --- */
+"onboarding.location.title" = "在地圖上找到自己";
+"onboarding.location.desc" = "OmniTAK 會使用您的位置在地圖上顯示您的所在，並在您連線到 TAK 伺服器後，與您的團隊共享您的位置。";
+"onboarding.location.feature1" = "您在地圖上的位置";
+"onboarding.location.feature2" = "連線後與您的團隊共享";
+"onboarding.location.feature3" = "隨時可在「設定」中變更";
+
 /* --- Onboarding page 2: Secure & Certified --- */
 "onboarding.page2.title" = "安全與認證";
 "onboarding.page2.desc" = "OmniTAK 支援憑證式身份驗證，可安全連線至 TAK 伺服器。";

@@ -154,7 +154,6 @@ class BreadcrumbTrailService: NSObject, ObservableObject {
         locationManager.distanceFilter = kCLDistanceFilterNone
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = false
-        locationManager.requestWhenInUseAuthorization()
     }
 
     // MARK: - Configuration

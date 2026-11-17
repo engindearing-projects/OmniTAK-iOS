@@ -55,7 +55,8 @@ class CoTEventHandler: ObservableObject {
     private var staleCleanupTimer: Timer?
 
     private init() {
-        requestNotificationPermissions()
+        // No permission question here: it used to be put on top of the Welcome page at launch.
+        // It is asked when the first notification is about to be shown (see `deliver`).
         startStaleEventCleanup()
     }
 
@@ -390,12 +391,29 @@ class CoTEventHandler: ObservableObject {
 
     // MARK: - Notifications
 
-    private func requestNotificationPermissions() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            if granted {
-                print("CoTEventHandler: Notification permissions granted")
-            } else if let error = error {
-                print("CoTEventHandler: Notification permission error: \(error)")
+    /// Shows a local notification. The first time, with nobody having decided yet, the system asks
+    /// for permission first: an incoming chat message or an emergency alert is the moment its
+    /// answer matters. Asked once; a "no" is respected.
+    private func deliver(_ request: UNNotificationRequest, kind: String) {
+        let center = UNUserNotificationCenter.current()
+        let add = {
+            center.add(request) { error in
+                if let error = error {
+                    print("CoTEventHandler: Failed to show \(kind) notification: \(error)")
+                }
+            }
+        }
+        center.getNotificationSettings { settings in
+            guard NotificationPrompt.shouldAsk(status: settings.authorizationStatus) else {
+                add()
+                return
+            }
+            center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+                if granted {
+                    add()
+                } else if let error = error {
+                    print("CoTEventHandler: Notification permission error: \(error)")
+                }
             }
         }
     }
@@ -406,17 +424,7 @@ class CoTEventHandler: ObservableObject {
         content.body = message.messageText
         content.sound = .default
 
-        let request = UNNotificationRequest(
-            identifier: message.id,
-            content: content,
-            trigger: nil
-        )
-
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("CoTEventHandler: Failed to show chat notification: \(error)")
-            }
-        }
+        deliver(UNNotificationRequest(identifier: message.id, content: content, trigger: nil), kind: "chat")
     }
 
     private func showEmergencyNotification(_ alert: EmergencyAlert) {
@@ -429,17 +437,7 @@ class CoTEventHandler: ObservableObject {
         content.sound = .defaultCritical
         content.interruptionLevel = .critical
 
-        let request = UNNotificationRequest(
-            identifier: alert.id,
-            content: content,
-            trigger: nil
-        )
-
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("CoTEventHandler: Failed to show emergency notification: \(error)")
-            }
-        }
+        deliver(UNNotificationRequest(identifier: alert.id, content: content, trigger: nil), kind: "emergency")
     }
 
     // MARK: - Statistics

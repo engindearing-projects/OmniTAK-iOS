@@ -8,6 +8,7 @@
 import Foundation
 import CoreLocation
 import Combine
+import UIKit
 import os
 
 class ADSBTrafficService: ObservableObject {
@@ -48,6 +49,9 @@ class ADSBTrafficService: ObservableObject {
 
     private var refreshTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    /// False until the app first becomes active: nothing is fetched while it is still starting.
+    private var hasBecomeActive = false
+    private var firstFixCancellable: AnyCancellable?
     private let userDefaults = UserDefaults.standard
     private let settingsKey = "adsb_traffic_settings_v2"
 
@@ -69,7 +73,31 @@ class ADSBTrafficService: ObservableObject {
         savedSettings.migrateOldCredentials()
         self.settings = savedSettings
         self.currentProvider = savedSettings.activeProvider
-        if savedSettings.isEnabled {
+        // Nothing starts here. This runs while the app is starting (plugin activation), before
+        // the first frame, and a start fetches around the phone's position, which asks the
+        // location service. Tracking begins once the app is first active.
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.appBecameActive()
+        }
+        // The notification is missed if this is first created after the app is already active
+        // (nothing touched it at launch, because the plugin is off). Three seconds is long past
+        // the first frame.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.appBecameActive()
+        }
+    }
+
+    private func appBecameActive() {
+        guard !hasBecomeActive else { return }
+        hasBecomeActive = true
+        // The first fix fetches at once; otherwise the aircraft would wait for the next tick.
+        firstFixCancellable = LocationManager.shared.$location
+            .compactMap { $0 }
+            .first()
+            .sink { [weak self] _ in self?.fetchAircraft() }
+        if settings.isEnabled {
             startTracking()
         }
     }
@@ -78,7 +106,7 @@ class ADSBTrafficService: ObservableObject {
 
     func startTracking() {
         stopTracking()
-        guard settings.isEnabled else { return }
+        guard settings.isEnabled, hasBecomeActive else { return }
 
         fetchAircraft()
 
@@ -96,9 +124,11 @@ class ADSBTrafficService: ObservableObject {
     func fetchAircraft() {
         guard settings.isEnabled else { return }
 
-        let center = getSearchCenter()
-        guard let center = center else {
-            error = "Unable to determine location"
+        guard let center = getSearchCenter() else {
+            // Around the phone's own position with no fix yet there is nothing to search around,
+            // and nothing wrong: the first fix fetches (see appBecameActive). A custom position
+            // that was never filled in is a setting to fix, so that one says so.
+            if !settings.useCurrentLocation { error = "Unable to determine location" }
             return
         }
 
@@ -663,25 +693,13 @@ class ADSBTrafficService: ObservableObject {
 
     private func getSearchCenter() -> CLLocationCoordinate2D? {
         if settings.useCurrentLocation {
-            if let coord = LocationManager.shared.location?.coordinate {
-                return coord
-            }
-            // Bootstrap: pre-permission / pre-GPS-fix on first launch, fall
-            // back to KJFK so the user immediately sees busy airspace on the
-            // 3D globe instead of an empty map + "Unable to determine
-            // location" error. Switches to real GPS the moment a fix lands.
-            return CLLocationCoordinate2D(latitude: 40.6413, longitude: -73.7781)
+            // No fix, no centre. A stand-in position (this used to be New York) showed a new user
+            // aircraft thousands of kilometres away.
+            return LocationManager.shared.location?.coordinate
         } else if let lat = settings.customLatitude, let lon = settings.customLongitude {
             return CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }
         return nil
-    }
-
-    /// Public exposure of the ADSB search center for the Cesium 3D bridge
-    /// to align its camera with where aircraft are being fetched from —
-    /// keeps the pill count and the on-screen entities in sync.
-    func searchCenterForBridge() -> CLLocationCoordinate2D? {
-        getSearchCenter()
     }
 
     // MARK: - Settings Persistence

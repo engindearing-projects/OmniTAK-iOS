@@ -1222,6 +1222,7 @@ struct ATAKMapView: View {
         .background(modalSheets)
         .background(errorOverlays)
         .background(lifecycleHandlers)
+        .background(firstFixHandlers)
         // Marker radial Info / Share / Copy feedback (sheet + share sheet +
         // HUD toast). Bundled in a ViewModifier (type-checked independently)
         // and attached here so it covers BOTH engines.
@@ -1260,9 +1261,9 @@ struct ATAKMapView: View {
         // Issue #62 — capture the 2D camera seed on switch FROM Mapbox to Cesium
         // so the globe opens at the operator's current view. The seed is passed
         // into CesiumMainMap.cameraSeed; the bridge-ready handler converts the
-        // region to a Cesium setCamera call (instant, no flyTo animation).
-        // Switching 3D→2D clears the seed — the reverse direction already works
-        // via mapRegion mirroring from Cesium camera-changed events.
+        // region to a Cesium setCamera call (instant, and it cancels any flight).
+        // Switching 3D→2D clears the seed — that direction works via mapRegion
+        // mirroring from Cesium camera-changed events (CesiumCameraMath.region).
         .onChange(of: mapEngineRaw) { newValue in
             // The scale bar must never show the engine we just left.
             mapMetersPerPoint = nil
@@ -1824,9 +1825,24 @@ struct ATAKMapView: View {
             }
     }
 
+    /// The first fix of a first launch, for the 2D map (the globe takes its own: see CesiumMainMap).
+    /// On a sibling view so the already-long `lifecycleHandlers` chain does not grow.
+    private var firstFixHandlers: some View {
+        EmptyView()
+            .onChange(of: locationManager.location) { location in
+                guard mapEngine == .mapbox2D, let location else { return }
+                let usable = FirstFixCamera.isUsable(location, now: Date())
+                guard FirstFixState.shared.claimMove(engineIsGlobe: false, fixIsUsable: usable) else { return }
+                mapRegion = FirstFixCamera.mapRegion(centre: location.coordinate)
+            }
+    }
+
     private var lifecycleHandlers: some View {
         EmptyView()
             .onAppear {
+                // At a first launch this screen is built under the onboarding cover, so the rules hold
+                // the question until onboarding is over; someone who skipped it is asked as it closes.
+                LocationManager.shared.ask(at: .mapAppeared)
                 setupTAKConnection()
                 startLocationUpdates()
                 configureRadialServices()
@@ -2094,9 +2110,10 @@ struct ATAKMapView: View {
     // snapping to the hardcoded DC default. Defaults seed Washington DC
     // tilted 30°. Phase 4c will mirror these into the 2D Mapbox path's
     // mapRegion so cross-engine continuity is fully bidirectional.
-    // Defaults match the bootstrap flyTo (KJFK at 50km, -60° pitch) so an
-    // engine-toggle on first launch doesn't snap the camera somewhere
-    // unrelated. Updated on every Cesium camera-changed event.
+    // Updated on every Cesium camera-changed event. The defaults here are the pose every launch
+    // of an earlier version started at (New York, 50 km): they are never what a returning user's
+    // camera is restored from (see SavedGlobePose, which reads the keys itself and treats that
+    // pose as no camera at all).
     @AppStorage("cesium.lastLat")     private var cesiumLastLat: Double = 40.6413
     @AppStorage("cesium.lastLon")     private var cesiumLastLon: Double = -73.7781
     @AppStorage("cesium.lastHeight")  private var cesiumLastHeight: Double = 50000
@@ -2128,14 +2145,9 @@ struct ATAKMapView: View {
             // point-drop coordinate (MapCenterStore, fed from mapRegion) is
             // the globe point under the screen-center crosshair, not the
             // tilted camera's sub-point. Span approximated from camera height.
-            let regionCenter = event.centerCoordinate ?? event.coordinate
-            let lat = regionCenter.latitude
-            let metersVisible = max(50.0, 1.15 * cam.height)
-            let latDelta = min(metersVisible / 111_320.0, 90.0)
-            let lonDelta = min(latDelta / max(cos(lat * .pi / 180), 0.01), 180.0)
-            mapRegion = MKCoordinateRegion(
-                center: regionCenter,
-                span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
+            mapRegion = CesiumCameraMath.region(
+                centre: event.centerCoordinate ?? event.coordinate,
+                cameraHeight: cam.height
             )
         case .longpress:
             // A long-press landing on a dropped pin opens the same
@@ -2234,6 +2246,9 @@ struct ATAKMapView: View {
         case .vertexDragEnd:
             // Issue #84 — touch-up; release the grabbed vertex.
             endVertexDrag()
+        case .userMoved:
+            // The operator is moving the globe by hand: the first fix must not take it from them.
+            FirstFixState.shared.operatorMovedMap()
         }
     }
 
@@ -2635,6 +2650,7 @@ struct ATAKMapView: View {
     }
 
     private func centerOnUser() {
+        FirstFixState.shared.operatorMovedMap()
         // Toggle tracking mode
         if trackingMode == .follow {
             // Disable follow mode - allow free panning
@@ -2652,6 +2668,7 @@ struct ATAKMapView: View {
     }
 
     private func zoomIn() {
+        FirstFixState.shared.operatorMovedMap()
         // On the Cesium globe the camera is driven over the JS bridge, not by
         // mapRegion — push a zoom command instead. mapRegion is then refreshed
         // from the camera via handleCesiumMapEvent.
@@ -2664,6 +2681,7 @@ struct ATAKMapView: View {
     }
 
     private func zoomOut() {
+        FirstFixState.shared.operatorMovedMap()
         if mapEngine == .cesium3D {
             NotificationCenter.default.post(name: .cesiumZoom, object: nil, userInfo: ["factor": 2.0])
             return

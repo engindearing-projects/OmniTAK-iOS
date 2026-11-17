@@ -149,6 +149,9 @@ struct TacticalMapView: UIViewRepresentable {
         mapView.gestures.options.pinchEnabled = true
         mapView.gestures.options.doubleTapToZoomInEnabled = true
         mapView.gestures.options.doubleTouchToZoomOutEnabled = true
+        // The operator's own pan, pinch, rotate, tilt and double tap are told to the first-fix rule
+        // (see Coordinator.gestureManager): the first fix must not take the map out from under them.
+        mapView.gestures.delegate = context.coordinator
 
         // Hide Mapbox's built-in top-leading scale-bar ornament. OmniTAK draws
         // its own toggleable scale bar (ScaleBarView, bottom-left), so the
@@ -504,7 +507,7 @@ struct TacticalMapView: UIViewRepresentable {
     /// observation tokens, lasso layer, marker image cache. The
     /// SwiftUI struct above only forwards bindings and triggers
     /// refreshes — every actual Mapbox call goes through this class.
-    class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    class Coordinator: NSObject, UIGestureRecognizerDelegate, GestureManagerDelegate {
         var parent: TacticalMapView
         weak var mapView: MapView?
         /// The scale anchor the last report was measured at.
@@ -615,6 +618,18 @@ struct TacticalMapView: UIViewRepresentable {
         @objc private func handleMemoryWarning() {
             symbolImageCache.removeAll(keepingCapacity: false)
         }
+
+        // MARK: - GestureManagerDelegate
+
+        func gestureManager(_ gestureManager: GestureManager, didBegin gestureType: GestureType) {
+            // A tap on the map is not moving it.
+            guard gestureType != .singleTap else { return }
+            FirstFixState.shared.operatorMovedMap()
+        }
+
+        func gestureManager(_ gestureManager: GestureManager, didEnd gestureType: GestureType, willAnimate: Bool) {}
+
+        func gestureManager(_ gestureManager: GestureManager, didEndAnimatingFor gestureType: GestureType) {}
 
         // MARK: - Terrain / atmosphere
 

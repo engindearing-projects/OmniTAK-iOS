@@ -16,6 +16,13 @@
 "onboarding.page1.feature3" = "Ситуаційна обізнаність на карті";
 "onboarding.page1.feature4" = "Підтримка кількох платформ";
 
+/* --- Onboarding: location (the page after Welcome) --- */
+"onboarding.location.title" = "Знайдіть себе на карті";
+"onboarding.location.desc" = "OmniTAK використовує ваше місцезнаходження, щоб показати, де ви на карті, а після підключення до сервера TAK ділитися вашою позицією з командою.";
+"onboarding.location.feature1" = "Ваша позиція на карті";
+"onboarding.location.feature2" = "Передається команді після підключення";
+"onboarding.location.feature3" = "Змінити можна будь-коли в Налаштуваннях";
+
 /* --- Onboarding page 2: Secure & Certified --- */
 "onboarding.page2.title" = "Безпечно та сертифіковано";
 "onboarding.page2.desc" = "OmniTAK підтримує автентифікацію на основі сертифікатів для безпечного з'єднання з серверами TAK.";
