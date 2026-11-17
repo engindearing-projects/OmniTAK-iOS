@@ -104,6 +104,8 @@
 "settings.marker.milstd" = "Symbol MIL-STD";
 "settings.marker.bullseye" = "Tarcza (starszy)";
 "settings.marker.arrow" = "Strzałka (kierunek)";
+"settings.showMyMarker" = "Pokaż mój znacznik";
+"settings.showMyMarker.desc" = "Wyłącz, aby ukryć swój znacznik tylko na tej mapie. Nie zmienia tego, czy udostępniasz swoją pozycję.";
 "settings.color.cyan" = "Cyjan";
 "settings.color.green" = "Zielony";
 "settings.color.orange" = "Pomarańczowy";

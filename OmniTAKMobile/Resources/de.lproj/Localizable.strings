@@ -104,6 +104,8 @@
 "settings.marker.milstd" = "MIL-STD-Symbol";
 "settings.marker.bullseye" = "Zielscheibe (klassisch)";
 "settings.marker.arrow" = "Pfeil (Richtung)";
+"settings.showMyMarker" = "Eigenen Marker anzeigen";
+"settings.showMyMarker.desc" = "Ausschalten, um deinen Marker nur auf dieser Karte auszublenden. Ändert nichts daran, ob du deine Position meldest.";
 "settings.color.cyan" = "Cyan";
 "settings.color.green" = "Grün";
 "settings.color.orange" = "Orange";
