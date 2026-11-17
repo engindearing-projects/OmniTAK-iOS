@@ -670,27 +670,26 @@ struct CesiumMainMap: UIViewRepresentable {
                 // A page that reloads (the web view's process was killed) goes back to where the camera
                 // last was, not to a seed that is no longer true.
                 readyCount += 1
-                if readyCount > 1 {
+                let launchPose = FirstFixState.shared.launchGlobePose
+                switch GlobeStart.plan(isReload: readyCount > 1, hasSeed: parent.cameraSeed != nil,
+                                       hasSavedPose: launchPose != nil) {
+                case .seed:
+                    if let seed = parent.cameraSeed {
+                        webView?.evaluateJavaScript(
+                            CesiumCameraMath.seedJS(for: seed, bearing: parent.cameraSeedBearing),
+                            completionHandler: nil
+                        )
+                    }
+                case .savedPose:
+                    if let pose = launchPose {
+                        webView?.evaluateJavaScript(CesiumCameraMath.poseJS(for: pose), completionHandler: nil)
+                    }
+                case .currentPose:
                     if let pose = SavedGlobePose.load() {
                         webView?.evaluateJavaScript(CesiumCameraMath.poseJS(for: pose), completionHandler: nil)
                     }
-                } else {
-                    let launchPose = FirstFixState.shared.launchGlobePose
-                    switch GlobeStart.plan(hasSeed: parent.cameraSeed != nil, hasSavedPose: launchPose != nil) {
-                    case .seed:
-                        if let seed = parent.cameraSeed {
-                            webView?.evaluateJavaScript(
-                                CesiumCameraMath.seedJS(for: seed, bearing: parent.cameraSeedBearing),
-                                completionHandler: nil
-                            )
-                        }
-                    case .savedPose:
-                        if let pose = launchPose {
-                            webView?.evaluateJavaScript(CesiumCameraMath.poseJS(for: pose), completionHandler: nil)
-                        }
-                    case .startPose:
-                        break
-                    }
+                case .startPose:
+                    break
                 }
                 // A phone that already knows where it is does not wait for the next location update.
                 offerFirstFix(parent.selfLocation)

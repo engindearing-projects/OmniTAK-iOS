@@ -93,9 +93,11 @@ class ADSBTrafficService: ObservableObject {
         guard !hasBecomeActive else { return }
         hasBecomeActive = true
         // The first fix fetches at once; otherwise the aircraft would wait for the next tick.
+        // (`$location` publishes before the property is set, so wait a turn of the run loop.)
         firstFixCancellable = LocationManager.shared.$location
             .compactMap { $0 }
             .first()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.fetchAircraft() }
         if settings.isEnabled {
             startTracking()
@@ -692,10 +694,15 @@ class ADSBTrafficService: ObservableObject {
     }
 
     private func getSearchCenter() -> CLLocationCoordinate2D? {
+        Self.searchCenter(for: settings, fix: LocationManager.shared.location?.coordinate)
+    }
+
+    /// Where to look for aircraft: around the phone when it is set to, with no fix meaning no
+    /// centre (a stand-in position, this used to be New York, showed a new user aircraft thousands
+    /// of kilometres away), or around the position typed in.
+    static func searchCenter(for settings: ADSBTrafficSettings, fix: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
         if settings.useCurrentLocation {
-            // No fix, no centre. A stand-in position (this used to be New York) showed a new user
-            // aircraft thousands of kilometres away.
-            return LocationManager.shared.location?.coordinate
+            return fix
         } else if let lat = settings.customLatitude, let lon = settings.customLongitude {
             return CLLocationCoordinate2D(latitude: lat, longitude: lon)
         }

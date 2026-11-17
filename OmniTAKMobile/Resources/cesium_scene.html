@@ -162,13 +162,16 @@
   // looks down at `pitch` radians (negative is below the horizon): the height over the sine of the pitch, so it ends
   // that high whatever its tilt (straight down, the range is the height itself). A flat view is capped at ten times the
   // height. With no usable height the camera keeps the range it had.
-  // CENTER-RANGE-BEGIN (CesiumCameraSeedTests runs this function in JavaScriptCore)
+  // CENTER-RANGE-BEGIN (FirstFixCameraTests runs this function in JavaScriptCore)
   function _centerRange(range,height,pitch){return(typeof height==='number'&&isFinite(height)&&height>0)?height/Math.max(Math.sin(-pitch),0.1):range}
   // CENTER-RANGE-END
   // The ground's height under {lat, lon} in metres above the ellipsoid, handed to cb once: the globe's own answer
   // where its terrain is loaded (the camera is near), else the terrain service's (2 s at most, then sea level).
   // `precise` goes to the terrain service always: the globe's answer for a place far from the camera comes from a
   // coarse tile.
+  // Stops a flight and any centring still waiting for the terrain's height: called by every native camera command, so
+  // an older one cannot start after a newer one.
+  function _cancelCentering(v){_state.centerSeq=(_state.centerSeq||0)+1;v.camera.cancelFlight()}
   function _ground(v,lat,lon,cb,precise){let done=false;const go=function(h){if(done)return;done=true;cb(_lookDownGround(h))};
     const c=Cesium.Cartographic.fromDegrees(lon,lat),g=precise?undefined:v.scene.globe.getHeight(c);
     if(typeof g==='number'&&isFinite(g)){go(g);return}
@@ -211,12 +214,15 @@
     h.setInputAction(function(down){pressStart=down.position;if(pressTimer)clearTimeout(pressTimer);pressTimer=setTimeout(function(){if(!pressStart)return;const p=_cartoFor(viewer,pressStart);if(!p)return;_postMapEvent({event:'longpress',lat:p.lat,lon:p.lon,hae:p.hae,screenX:pressStart.x,screenY:pressStart.y,uid:_pickedUid(viewer,pressStart)});pressStart=null},500)},Cesium.ScreenSpaceEventType.LEFT_DOWN);
     h.setInputAction(function(){if(pressTimer){clearTimeout(pressTimer);pressTimer=null}pressStart=null},Cesium.ScreenSpaceEventType.LEFT_UP);
     h.setInputAction(function(m){if(!pressStart)return;const dx=m.endPosition.x-pressStart.x,dy=m.endPosition.y-pressStart.y;if(Math.hypot(dx,dy)>8&&pressTimer){clearTimeout(pressTimer);pressTimer=null;pressStart=null}},Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-    // The operator is moving the map by hand: one finger more than 8 px, or two fingers. Native is told once (the first fix
-    // of a first launch must never take the map out from under them), and any flight or centring native started stops.
-    const cv=viewer.scene.canvas;let umAt=null,umSent=false;
-    const umMoved=function(){_state.centerSeq=(_state.centerSeq||0)+1;viewer.camera.cancelFlight();if(umSent)return;umSent=true;_postMapEvent({event:'usermoved',lat:0,lon:0})};
-    cv.addEventListener('touchstart',function(e){if(e.touches.length>1){umMoved();return}umAt={x:e.touches[0].clientX,y:e.touches[0].clientY}},{passive:true});
-    cv.addEventListener('touchmove',function(e){if(e.touches.length>1){umMoved();return}if(umAt&&Math.hypot(e.touches[0].clientX-umAt.x,e.touches[0].clientY-umAt.y)>8)umMoved()},{passive:true});
+    // The operator is moving the map by hand: one pointer (a finger, a mouse, a trackpad) more than 8 px, or two. Native is
+    // told once (the first fix of a first launch must never take the map out from under them), and any flight or centring
+    // native started stops.
+    const cv=viewer.scene.canvas,down=new Map();let umSent=false;
+    const umMoved=function(){_cancelCentering(viewer);if(umSent)return;umSent=true;_postMapEvent({event:'usermoved',lat:0,lon:0})};
+    cv.addEventListener('pointerdown',function(e){down.set(e.pointerId,{x:e.clientX,y:e.clientY});if(down.size>1)umMoved()},{passive:true});
+    cv.addEventListener('pointermove',function(e){const d=down.get(e.pointerId);if(d&&Math.hypot(e.clientX-d.x,e.clientY-d.y)>8)umMoved()},{passive:true});
+    const umEnd=function(e){down.delete(e.pointerId)};
+    cv.addEventListener('pointerup',umEnd,{passive:true});cv.addEventListener('pointercancel',umEnd,{passive:true});
   }
   window.OmniBridge={
     upsertEntity(arg){const e=_parse(arg);if(!e||!e.uid||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
@@ -261,6 +267,7 @@
     removeEntity(uid){const v=_state.viewer;if(!v)return;const e=_state.entities.get(uid);if(e){v.entities.remove(e);_state.entities.delete(uid);}const lid=uid+':leader';const l=_state.leaders.get(lid);if(l){v.entities.remove(l);_state.leaders.delete(lid);}},
     removeAll(){const v=_state.viewer;if(!v)return;v.entities.removeAll();_state.entities.clear();_state.leaders.clear();},
     flyTo(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
+      _state.centerSeq=(_state.centerSeq||0)+1;
       v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,(typeof e.range==='number')?e.range:5000),
         orientation:{heading:Cesium.Math.toRadians(e.heading||0),pitch:Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-30),roll:0},duration:1.2});
     },
@@ -270,6 +277,7 @@
     // (globe.getHeight) is only good where the camera already is. The service gets 2 s; with no answer the
     // ground is taken as sea level and the globe is still flown there.
     lookDown(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
+      _state.centerSeq=(_state.centerSeq||0)+1;
       const f=v.camera.frustum,agl=_lookDownAgl(typeof e.width==='number'?e.width:600,f.aspectRatio,f.fovy);if(agl===null)return;
       let flown=false;
       const go=function(ground){if(flown)return;flown=true;
@@ -289,7 +297,7 @@
       const h=typeof e.height==='number'?Math.max(50,e.height):5000;
       const hd=Cesium.Math.toRadians(typeof e.heading==='number'?e.heading:0);
       const pt=Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-90);
-      v.camera.cancelFlight();
+      _cancelCentering(v);
       v.camera.setView({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,h),orientation:{heading:hd,pitch:pt,roll:0}});
       _hideLoading();v.scene.requestRender();_postCameraChanged(v);
     },
@@ -298,7 +306,7 @@
     // `heading` and `pitch` (degrees) default to the camera's own. fly:true flies there from wherever the camera is (the
     // first fix of a first launch, in from the whole earth); otherwise the camera jumps. A touch on the map stops it.
     centerOnSelf(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
-      const cam=v.camera;cam.cancelFlight();const seq=_state.centerSeq=(_state.centerSeq||0)+1;
+      const cam=v.camera;_cancelCentering(v);const seq=_state.centerSeq;
       const hd=typeof e.heading==='number'?Cesium.Math.toRadians(e.heading):cam.heading,pt=typeof e.pitch==='number'?Cesium.Math.toRadians(e.pitch):cam.pitch,fly=e.fly===true;
       const go=function(ground){if(seq!==_state.centerSeq)return;const target=Cesium.Cartesian3.fromDegrees(e.lon,e.lat,ground);
         let range=Cesium.Cartesian3.distance(cam.positionWC,target);if(!isFinite(range)||range<=0)range=cam.positionCartographic.height||5000;
@@ -314,7 +322,7 @@
     // current heading/pitch and the current camera-to-target distance
     // (so zoom/tilt are preserved and the marker stays centered).
     follow(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
-      v.camera.cancelFlight();
+      _cancelCentering(v);
       const target=Cesium.Cartesian3.fromDegrees(e.lon,e.lat,0);
       let range=Cesium.Cartesian3.distance(v.camera.positionWC,target);
       if(!isFinite(range)||range<=0)range=v.camera.positionCartographic.height||5000;
@@ -330,7 +338,7 @@
     zoomBy(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
       const f=(typeof e.factor==='number'&&e.factor>0)?e.factor:1;
       const h=v.camera.positionCartographic.height;const amount=Math.abs(h-h*f);
-      if(amount<1)return;
+      if(amount<1)return;_state.centerSeq=(_state.centerSeq||0)+1;
       if(f<1)v.camera.zoomIn(amount);else v.camera.zoomOut(amount);
     },
     // Issue #72/#73 — rotate the globe to the requested heading (degrees CW

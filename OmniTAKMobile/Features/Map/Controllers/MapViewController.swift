@@ -1492,7 +1492,13 @@ struct ATAKMapView: View {
     @ViewBuilder
     private var mapboxEngineView: some View {
         ZStack {
-            mainMapView
+            // See MapboxStart: the map is created once the location permission is known and decided.
+            if MapboxStart.mayCreate(reported: locationManager.hasReportedAuthorization,
+                                     status: locationManager.authorizationStatus) {
+                mainMapView
+            } else {
+                Color.black.ignoresSafeArea()
+            }
             gridOverlay
         }
     }
@@ -2126,6 +2132,8 @@ struct ATAKMapView: View {
     @AppStorage("cesium.lastHeight")  private var cesiumLastHeight: Double = 50000
     @AppStorage("cesium.lastHeading") private var cesiumLastHeading: Double = 0
     @AppStorage("cesium.lastPitch")   private var cesiumLastPitch: Double = -60
+    /// Tells a camera this version saved from one an earlier version did (see SavedGlobePose).
+    @AppStorage(SavedGlobePose.versionKey) private var cesiumPoseVersion: Int = 0
 
     private func handleCesiumMapEvent(_ event: CesiumMapEvent) {
         // A geofence is not a drawing, a contact or a marker: a tap or a long press that lands on
@@ -2139,6 +2147,7 @@ struct ATAKMapView: View {
             cesiumLastHeight = cam.height
             cesiumLastHeading = cam.heading
             cesiumLastPitch = cam.pitch
+            cesiumPoseVersion = SavedGlobePose.version
             // Issue #73 — mirror Cesium heading into mapBearing so the compass
             // overlay stays in sync with the 3D globe's rotation. When the lock
             // is engaged the JS side pins heading to 0° itself (setNorthLock),
@@ -2657,7 +2666,6 @@ struct ATAKMapView: View {
     }
 
     private func centerOnUser() {
-        FirstFixState.shared.operatorMovedMap()
         // Toggle tracking mode
         if trackingMode == .follow {
             // Disable follow mode - allow free panning
@@ -2665,6 +2673,9 @@ struct ATAKMapView: View {
         } else {
             // Enable follow mode and center on user
             if let location = locationManager.location {
+                // Only a press that moves the map counts as the operator moving it: with no fix yet
+                // nothing happens, and the first fix must still bring the map to them.
+                FirstFixState.shared.operatorMovedMap()
                 withAnimation {
                     mapRegion.center = location.coordinate
                     mapRegion.span = MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)

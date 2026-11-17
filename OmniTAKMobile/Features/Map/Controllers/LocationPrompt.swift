@@ -47,3 +47,15 @@ enum NotificationPrompt {
         status == .notDetermined
     }
 }
+
+enum MapboxStart {
+
+    /// Whether the 2D map may be created yet. The Mapbox map reads the location permission itself,
+    /// on the main thread and waiting for the system, when it is created, and asks the location
+    /// question itself if nobody has answered it. Both are wrong for this app: a slow location
+    /// service left a blank white screen, and the question belongs to `LocationPrompt`. So the map
+    /// is created once the system has reported the status and it is an answer.
+    static func mayCreate(reported: Bool, status: CLAuthorizationStatus) -> Bool {
+        reported && status != .notDetermined
+    }
+}

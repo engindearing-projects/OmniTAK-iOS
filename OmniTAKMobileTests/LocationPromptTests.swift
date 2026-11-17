@@ -65,6 +65,31 @@ final class LocationPromptTests: XCTestCase {
     }
 }
 
+final class MapboxStartTests: XCTestCase {
+
+    private let everyStatus: [CLAuthorizationStatus] =
+        [.notDetermined, .restricted, .denied, .authorizedAlways, .authorizedWhenInUse]
+
+    func testTheMapIsNotCreatedUntilTheSystemHasReportedTheStatus() {
+        // the Mapbox map reads the permission synchronously when it is created: with a slow location
+        // service that is a blank white screen at launch
+        for status in everyStatus {
+            XCTAssertFalse(MapboxStart.mayCreate(reported: false, status: status), "status \(status.rawValue)")
+        }
+    }
+
+    func testTheMapIsNotCreatedWhileNobodyHasAnsweredTheLocationQuestion() {
+        // the map would put the question itself, outside the rules in LocationPrompt
+        XCTAssertFalse(MapboxStart.mayCreate(reported: true, status: .notDetermined))
+    }
+
+    func testTheMapIsCreatedOnceTheQuestionHasAnAnswerWhateverItIs() {
+        for status in everyStatus where status != .notDetermined {
+            XCTAssertTrue(MapboxStart.mayCreate(reported: true, status: status), "status \(status.rawValue)")
+        }
+    }
+}
+
 final class NotificationPromptTests: XCTestCase {
 
     func testOnlyAnUndecidedUserIsAsked() {

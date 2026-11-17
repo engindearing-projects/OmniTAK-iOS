@@ -12,6 +12,7 @@ import XCTest
 import MapKit
 import CoreLocation
 import JavaScriptCore
+import MapboxMaps
 @testable import OmniTAK
 
 final class FirstFixCameraTests: XCTestCase {
@@ -83,11 +84,6 @@ final class FirstFixCameraTests: XCTestCase {
         XCTAssertEqual(TacticalMapView.zoom(forSpan: region.span, mapHeight: 800), 14, accuracy: 1e-6)
     }
 
-    func testTheGlobeLooksDownAtTheAngleTheAppAlreadyUsesFromAboutThreeKilometres() {
-        XCTAssertEqual(FirstFixCamera.globeHeight, 3_000)
-        XCTAssertEqual(FirstFixCamera.globePitch, -60)
-    }
-
     // MARK: - What has happened in this run
 
     func testAFreshInstallMovesOnTheFirstUsableFixAndNeverAgain() {
@@ -137,11 +133,18 @@ final class FirstFixCameraTests: XCTestCase {
     }
 
     func testTheSavedViewIsReadOnceAtLaunchAndKeptWhateverTheDefaultsDoLater() {
-        // the page's own start camera events rewrite the saved one within seconds
-        let state = FirstFixState(savedGlobePose: Self.spokanePose)
+        // the page's own camera events rewrite the saved one within seconds of launch
+        let suite = defaults(["cesium.lastLat": 47.6588, "cesium.lastLon": -117.426, "cesium.lastHeight": 3_000,
+                              "cesium.lastHeading": 0, "cesium.lastPitch": -60])
+        let state = FirstFixState(defaults: suite)
         XCTAssertEqual(state.launchGlobePose, Self.spokanePose)
         XCTAssertTrue(state.hasSavedGlobeCamera)
-        XCTAssertFalse(FirstFixState(savedGlobePose: nil).hasSavedGlobeCamera)
+        suite.set(0.0, forKey: "cesium.lastLat")
+        suite.set(20_000_000.0, forKey: "cesium.lastHeight")
+        suite.set(0.0, forKey: "cesium.lastLon")
+        XCTAssertEqual(state.launchGlobePose, Self.spokanePose, "the launch snapshot does not follow the defaults")
+        XCTAssertNil(SavedGlobePose.load(from: suite), "while a fresh read of them now finds the start pose")
+        XCTAssertFalse(FirstFixState(defaults: defaults([:])).hasSavedGlobeCamera)
     }
 
     // MARK: - What the globe opens on
@@ -154,13 +157,25 @@ final class FirstFixCameraTests: XCTestCase {
         XCTAssertEqual(GlobeStart.plan(hasSeed: false, hasSavedPose: false), .startPose)
     }
 
+    func testAReloadedPageGoesBackToWhereTheCameraLastWasWhateverElseIsKnown() {
+        // the web view's process was killed: a seed from the other engine and the view saved at launch are
+        // both older than the camera the operator was using
+        for seed in [false, true] {
+            for saved in [false, true] {
+                XCTAssertEqual(GlobeStart.plan(isReload: true, hasSeed: seed, hasSavedPose: saved), .currentPose)
+            }
+        }
+    }
+
     // MARK: - The saved globe view
 
-    private func defaults(_ values: [String: Double]) -> UserDefaults {
+    /// A throwaway defaults domain holding `values`, marked as saved by this version unless `marked` is false.
+    private func defaults(_ values: [String: Double], marked: Bool = true) -> UserDefaults {
         let name = "FirstFixCameraTests.\(UUID().uuidString)"
         let suite = UserDefaults(suiteName: name)!
         addTeardownBlock { suite.removePersistentDomain(forName: name) }
         for (key, value) in values { suite.set(value, forKey: key) }
+        if marked && !values.isEmpty { suite.set(SavedGlobePose.version, forKey: SavedGlobePose.versionKey) }
         return suite
     }
 
@@ -177,13 +192,22 @@ final class FirstFixCameraTests: XCTestCase {
         XCTAssertEqual(saved, SavedGlobePose(latitude: 47.6588, longitude: -117.426, height: 3_000, heading: 20, pitch: -45))
     }
 
-    func testTheViewEveryLaunchUsedToStartAtIsNotASavedView() {
-        // Every install of an earlier version saved New York at 50 km as soon as the globe opened, so
-        // "something is saved" cannot tell a returning user from a new one.
-        XCTAssertNil(SavedGlobePose.load(from: defaults([
-            "cesium.lastLat": 40.6413, "cesium.lastLon": -73.7781, "cesium.lastHeight": 50_000,
-            "cesium.lastHeading": 0, "cesium.lastPitch": -60,
-        ])))
+    func testACameraAnEarlierVersionSavedIsNoSavedView() {
+        // Earlier versions saved where their own start-up flight put the camera: New York at 50 km, or the
+        // phone's position (or New York again with no fix) at 20 km. None of those is a view anyone chose,
+        // so without this version's mark every upgrader would have counted as a returning user and
+        // reopened on it, and a phone that never had a fix would reopen over New York for good.
+        let spokane = ["cesium.lastLat": 47.6588, "cesium.lastLon": -117.426, "cesium.lastHeight": 20_000,
+                       "cesium.lastHeading": 0, "cesium.lastPitch": -60]
+        let newYorkAtFiftyKm = ["cesium.lastLat": 40.6413, "cesium.lastLon": -73.7781, "cesium.lastHeight": 50_000,
+                                "cesium.lastHeading": 0, "cesium.lastPitch": -60]
+        let newYorkAtTwentyKm = ["cesium.lastLat": 40.6413, "cesium.lastLon": -73.7781, "cesium.lastHeight": 20_000,
+                                 "cesium.lastHeading": 0, "cesium.lastPitch": -60]
+        for saved in [spokane, newYorkAtFiftyKm, newYorkAtTwentyKm] {
+            XCTAssertNil(SavedGlobePose.load(from: defaults(saved, marked: false)))
+            XCTAssertNotNil(SavedGlobePose.load(from: defaults(saved, marked: true)),
+                            "the same camera saved by this version is a view the operator left it on")
+        }
     }
 
     func testTheWholeWorldViewTheGlobeStartsAtNowIsNotASavedViewEither() {
@@ -229,6 +253,44 @@ final class FirstFixCameraTests: XCTestCase {
     func testTheFirstFixFliesTheGlobeToTheOperatorFromAboutThreeKilometres() {
         let js = CesiumCameraMath.firstFixJS(for: spokane)
         XCTAssertEqual(js, "window.OmniBridge.centerOnSelf({lat:47.6588,lon:-117.426,height:3000.0,heading:0,pitch:-60.0,fly:true});")
+    }
+
+    // MARK: - A new user is not shown New York's aircraft
+
+    func testTheAircraftFeedHasNoCentreUntilThePhoneHasAFix() {
+        var settings = ADSBTrafficSettings()
+        settings.useCurrentLocation = true
+        XCTAssertNil(ADSBTrafficService.searchCenter(for: settings, fix: nil), "it used to search around New York")
+        let found = ADSBTrafficService.searchCenter(for: settings, fix: spokane)
+        XCTAssertEqual(found?.latitude, spokane.latitude)
+        XCTAssertEqual(found?.longitude, spokane.longitude)
+    }
+
+    func testAFeedSetToATypedPositionNeverUsesTheFix() {
+        var settings = ADSBTrafficSettings()
+        settings.useCurrentLocation = false
+        XCTAssertNil(ADSBTrafficService.searchCenter(for: settings, fix: spokane), "no position typed in yet")
+        settings.customLatitude = 51.5
+        settings.customLongitude = -0.12
+        let typed = ADSBTrafficService.searchCenter(for: settings, fix: spokane)
+        XCTAssertEqual(typed?.latitude, 51.5)
+        XCTAssertEqual(typed?.longitude, -0.12)
+    }
+
+    // MARK: - The 2D map moves to the operator
+
+    func testTheFirstFixMovesThe2DCameraAndKeepsItsTiltAndBearing() {
+        let washington = CLLocationCoordinate2D(latitude: 38.8977, longitude: -77.0365)
+        let mapView = MapView(
+            frame: CGRect(x: 0, y: 0, width: 402, height: 874),
+            mapInitOptions: MapInitOptions(cameraOptions: CameraOptions(center: washington, zoom: 11, bearing: 20, pitch: 45)))
+        TacticalMapView.moveCamera(of: mapView, to: spokane, zoom: FirstFixCamera.mapZoom)
+        let state = mapView.mapboxMap.cameraState
+        XCTAssertEqual(state.center.latitude, spokane.latitude, accuracy: 1e-6)
+        XCTAssertEqual(state.center.longitude, spokane.longitude, accuracy: 1e-6)
+        XCTAssertEqual(state.zoom, FirstFixCamera.mapZoom, accuracy: 1e-6)
+        XCTAssertEqual(state.bearing, 20, accuracy: 1e-6)
+        XCTAssertEqual(state.pitch, 45, accuracy: 1e-6)
     }
 
     // MARK: - The globe page's centring

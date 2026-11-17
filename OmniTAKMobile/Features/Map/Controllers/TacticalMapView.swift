@@ -299,14 +299,8 @@ struct TacticalMapView: UIViewRepresentable {
                   let lat = note.userInfo?["lat"] as? Double,
                   let lon = note.userInfo?["lon"] as? Double,
                   let zoom = note.userInfo?["zoom"] as? Double else { return }
-            let state = mapView.mapboxMap.cameraState
             coord.isProgrammaticUpdate = true
-            mapView.mapboxMap.setCamera(to: CameraOptions(
-                center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
-                zoom: zoom,
-                bearing: state.bearing,
-                pitch: state.pitch
-            ))
+            TacticalMapView.moveCamera(of: mapView, to: CLLocationCoordinate2D(latitude: lat, longitude: lon), zoom: zoom)
             coord.isProgrammaticUpdate = false
         }
 
@@ -418,6 +412,12 @@ struct TacticalMapView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    /// Moves the camera to a place and a zoom, keeping its tilt and bearing.
+    static func moveCamera(of mapView: MapView, to center: CLLocationCoordinate2D, zoom: Double) {
+        let state = mapView.mapboxMap.cameraState
+        mapView.mapboxMap.setCamera(to: CameraOptions(center: center, zoom: zoom, bearing: state.bearing, pitch: state.pitch))
+    }
 
     /// User-location puck honoring the Settings "Self-position marker"
     /// picker:

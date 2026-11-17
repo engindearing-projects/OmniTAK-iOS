@@ -20,6 +20,9 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var heading: CLHeading?
     @Published var course: Double = 0
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    /// True once the system has reported the permission status (even "not determined"). Until then
+    /// `authorizationStatus` is only the starting value, and the system may be slow to answer.
+    @Published private(set) var hasReportedAuthorization = false
 
     override init() {
         super.init()
@@ -65,6 +68,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         let status = manager.authorizationStatus
         DispatchQueue.main.async {
             self.authorizationStatus = status
+            self.hasReportedAuthorization = true
         }
     }
 

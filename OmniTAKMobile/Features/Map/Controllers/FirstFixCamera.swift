@@ -60,14 +60,18 @@ enum GlobeStart {
         case seed
         /// The camera the globe was left on in an earlier session.
         case savedPose
+        /// The page was reloaded (the web view's process was killed): back to where the camera last was.
+        case currentPose
         /// Nothing to send: the page opens on the whole world and the first fix brings it in.
         case startPose
     }
 
-    /// The seed wins, then the saved pose, then the start pose. Nothing else decides where the
-    /// globe opens: not the aircraft feed's search centre, which was always set (to a fix, or to
-    /// New York) and so hid the saved pose behind it.
-    static func plan(hasSeed: Bool, hasSavedPose: Bool) -> Plan {
+    /// A reload goes back to the live camera, which a seed and a saved view are older than.
+    /// Otherwise the seed wins, then the saved pose, then the start pose. Nothing else decides
+    /// where the globe opens: not the aircraft feed's search centre, which was always set (to a
+    /// fix, or to New York) and so hid the saved pose behind it.
+    static func plan(isReload: Bool = false, hasSeed: Bool, hasSavedPose: Bool) -> Plan {
+        if isReload { return .currentPose }
         if hasSeed { return .seed }
         return hasSavedPose ? .savedPose : .startPose
     }
@@ -81,10 +85,18 @@ struct SavedGlobePose: Equatable {
     var heading: Double
     var pitch: Double
 
-    /// The saved pose, or nil when there is none worth opening on: nothing saved, or the pose
-    /// every launch starts at (a camera nobody chose, so a new install is still a new install).
+    /// Written with every saved camera. Earlier versions saved the camera too, but what they saved
+    /// was where their own start-up flight put it (New York, or the phone's position at 20 km),
+    /// not a view anyone chose, so a camera saved without this mark counts as no camera at all.
+    static let version = 2
+    static let versionKey = "cesium.poseVersion"
+
+    /// The saved pose, or nil when there is none worth opening on: nothing saved by this version,
+    /// or the pose every launch starts at (a camera nobody chose, so a new install is still a new
+    /// install).
     static func load(from defaults: UserDefaults = .standard) -> SavedGlobePose? {
-        guard defaults.object(forKey: "cesium.lastLat") != nil,
+        guard defaults.integer(forKey: versionKey) >= version,
+              defaults.object(forKey: "cesium.lastLat") != nil,
               defaults.object(forKey: "cesium.lastLon") != nil,
               defaults.object(forKey: "cesium.lastHeight") != nil else { return nil }
         let pose = SavedGlobePose(
@@ -96,20 +108,15 @@ struct SavedGlobePose: Equatable {
         return pose.isStartPose ? nil : pose
     }
 
-    /// One of the two poses the globe starts at: New York at 50 km (every earlier version, and so
-    /// what an earlier version saved for anyone who never moved the globe), or the whole world
-    /// (this one). A camera nobody chose.
+    /// The whole-world pose the globe starts at: a camera nobody chose.
     var isStartPose: Bool {
-        let newYork = abs(latitude - 40.6413) < 0.001 && abs(longitude + 73.7781) < 0.001
-            && abs(height - 50_000) < 1_000
-        let wholeWorld = abs(latitude) < 0.5 && abs(longitude) < 0.5 && height >= 19_000_000
-        return newYork || wholeWorld
+        abs(latitude) < 0.5 && abs(longitude) < 0.5 && height >= 19_000_000
     }
 }
 
 /// What has happened to the camera in this run, shared by both engines. Main thread only.
 final class FirstFixState {
-    static let shared = FirstFixState()
+    static let shared = FirstFixState(defaults: .standard)
 
     /// The globe's camera from an earlier session, read once when the app starts. The page's own
     /// start camera events rewrite the saved one within seconds, so it is read here, first.
@@ -120,7 +127,12 @@ final class FirstFixState {
     private(set) var alreadyMoved = false
     private var observers: [NSObjectProtocol] = []
 
-    init(savedGlobePose: SavedGlobePose? = SavedGlobePose.load()) {
+    /// Reads the saved camera now, from `defaults`: later changes to the defaults do not change it.
+    convenience init(defaults: UserDefaults) {
+        self.init(savedGlobePose: SavedGlobePose.load(from: defaults))
+    }
+
+    init(savedGlobePose: SavedGlobePose?) {
         launchGlobePose = savedGlobePose
         // Sending the map somewhere on purpose (Show on map, Go to coordinate, an opened overlay)
         // is moving it by hand, whichever engine is showing.
