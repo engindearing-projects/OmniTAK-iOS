@@ -81,6 +81,7 @@ enum RadialMenuAction: Equatable {
     // Utility Actions
     case copyCoordinates
     case setRangeRings
+    case clearRangeRings
     case centerMap
     case quickChat
     case emergency
@@ -141,6 +142,8 @@ enum RadialMenuAction: Equatable {
             return "copyCoordinates"
         case .setRangeRings:
             return "setRangeRings"
+        case .clearRangeRings:
+            return "clearRangeRings"
         case .centerMap:
             return "centerMap"
         case .quickChat:

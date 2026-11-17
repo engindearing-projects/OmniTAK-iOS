@@ -561,6 +561,8 @@ struct RadialMenuPresetsPreviewWrapper: View {
             return "Copy Coordinates"
         case .setRangeRings:
             return "Set Range Rings"
+        case .clearRangeRings:
+            return "Clear Range Rings"
         case .centerMap:
             return "Center Map"
         case .getInfo:

@@ -1409,13 +1409,50 @@ struct ATAKMapView: View {
         )
     }
 
+    /// Hand the radial menu the stores its actions work on. The measurement
+    /// manager is what makes the radial "Rings" and "Clear Rings" items do
+    /// anything: the executor needs `services.measurementManager`, and until
+    /// this was passed "Rings" was a silent no-op. Kept out of the `onAppear`
+    /// closure so that long modifier chain stays within the type-checker's limit.
+    private func configureRadialServices() {
+        radialMenuCoordinator.configure(measurementManager: measurementManager, drawingStore: drawingStore)
+    }
+
     /// Compact measurement HUD (ATAK-style) — engine-agnostic SwiftUI
     /// chrome, mounted on both engines via `mapChrome`.
     @ViewBuilder
     private var measurementChrome: some View {
-        if showMeasurement {
-            CompactMeasurementOverlay(manager: measurementManager, isPresented: $showMeasurement)
-                .zIndex(1000)
+        Group {
+            if showMeasurement {
+                CompactMeasurementOverlay(manager: measurementManager, isPresented: $showMeasurement)
+                    .zIndex(1000)
+            }
+            // Range rings placed by any route: Remove takes back that set, Keep
+            // (or 8 seconds) leaves it. A small banner top trailing, below the status
+            // strip, the aircraft pill and both compasses (the app's, 60 pt at top 60,
+            // and Mapbox's rotate compass, 40 pt at top 96), and far above the callsign card.
+            if let placement = measurementManager.lastRangeRingPlacement {
+                VStack {
+                    HStack {
+                        Spacer()
+                        RangeRingPlacedBanner(
+                            onRemove: { measurementManager.removeRangeRings(of: placement) },
+                            onKeep: { measurementManager.acknowledgeRangeRingPlacement(placement) }
+                        )
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.top, 144) // 8 pt under the lower of the two compasses
+                    Spacer()
+                }
+                .zIndex(2600) // with the other top banners: above the lasso pill, below the radial menu
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: measurementManager.lastRangeRingPlacement)
+        // When a measurement ends (completed, cancelled, or rings placed) close the HUD,
+        // so Tools > Measure opens its tool picker again instead of showing nothing.
+        .onChange(of: measurementManager.isActive) { active in
+            if !active { showMeasurement = false }
         }
     }
 
@@ -1784,7 +1821,7 @@ struct ATAKMapView: View {
             .onAppear {
                 setupTAKConnection()
                 startLocationUpdates()
-                radialMenuCoordinator.configure(drawingStore: drawingStore)
+                configureRadialServices()
                 positionBroadcastService.configure(takService: takService, locationManager: locationManager)
                 positionBroadcastService.isEnabled = true
                 overlayCoordinator.loadSettings()
