@@ -490,6 +490,99 @@ final class MapScaleTests: XCTestCase {
         return String(html[start..<end.lowerBound])
     }
 
+    // MARK: - Five points and the median (the globe page)
+
+    /// The page's `_scaleSample` and its five-point functions, cut out of the bundled scene.
+    private func globeMedianFunctions() throws -> JSContext {
+        let html = CesiumMainMap.html
+        func block(_ name: String) throws -> String {
+            let begin = try XCTUnwrap(html.range(of: "// \(name)-BEGIN"), "marker \(name) missing from cesium_scene.html")
+            let end = try XCTUnwrap(html.range(of: "// \(name)-END"), "marker \(name) missing from cesium_scene.html")
+            let start = try XCTUnwrap(html[begin.upperBound...].firstIndex(of: "\n"))
+            return String(html[start..<end.lowerBound])
+        }
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript(try block("SCALE-SAMPLE"))
+        context.evaluateScript(try block("SCALE-MEDIAN"))
+        return context
+    }
+
+    func testTheGlobeMeasuresFivePointsOnTheBarsRow() throws {
+        let context = try globeMedianFunctions()
+        func xs(_ anchor: CGPoint?, _ size: CGSize) throws -> (xs: [Double], y: Double)? {
+            let jsAnchor: Any = anchor.map { ["x": Double($0.x), "y": Double($0.y)] } ?? NSNull()
+            let r = try XCTUnwrap(context.objectForKeyedSubscript("_scaleXs")
+                .call(withArguments: [jsAnchor, size.width, size.height]))
+            if r.isNull { return nil }
+            return (r.forProperty("xs").toArray().map { ($0 as? NSNumber)?.doubleValue ?? .nan }, r.forProperty("y").toDouble())
+        }
+        // the anchor and 25 and 50 either side
+        let mid = try XCTUnwrap(try xs(CGPoint(x: 74, y: 614), phone))
+        XCTAssertEqual(mid.xs, [24, 49, 74, 99, 124])
+        XCTAssertEqual(mid.y, 614)
+        // each is kept on the canvas, as the two points were
+        let left = try XCTUnwrap(try xs(CGPoint(x: 20, y: 700), phone))
+        XCTAssertEqual(left.xs, [0, 0, 20, 45, 70])
+        let right = try XCTUnwrap(try xs(CGPoint(x: 390, y: 700), phone))
+        XCTAssertEqual(right.xs, [340, 365, 390, 402, 402])
+        // no anchor yet: the middle of the screen
+        let centre = try XCTUnwrap(try xs(nil, phone))
+        XCTAssertEqual(centre.xs, [151, 176, 201, 226, 251])
+        XCTAssertNil(try xs(nil, CGSize(width: 0, height: 874)), "no points on a canvas with no width")
+        // the outer two are the two points the native 2D map measures between
+        for anchor in [CGPoint(x: 74, y: 614), CGPoint(x: 20, y: 700), CGPoint(x: 390, y: 700), CGPoint(x: -30, y: 900)] {
+            let page = try XCTUnwrap(try xs(anchor, phone))
+            let native = try XCTUnwrap(MapScale.sample(anchor: anchor, mapSize: phone))
+            XCTAssertEqual(page.xs.first, Double(native.left.x), "\(anchor)")
+            XCTAssertEqual(page.xs.last, Double(native.right.x), "\(anchor)")
+        }
+    }
+
+    func testTheGlobesScaleIsTheMedianOfTheFourPairsSoOneBadPointCannotMoveIt() throws {
+        let context = try globeMedianFunctions()
+        func scale(_ pairs: [[String: Any]?]) throws -> Double? {
+            let js: [Any] = pairs.map { $0 ?? NSNull() }
+            let r = try XCTUnwrap(context.objectForKeyedSubscript("_scaleFromPairs").call(withArguments: [js]))
+            return r.isNull ? nil : r.toDouble()
+        }
+        func pair(_ d: Double, _ px: Double = 25) -> [String: Any] { ["d": d, "px": px] }
+        // four pairs of the same ground: 4 m per px
+        XCTAssertEqual(try scale([pair(100), pair(100), pair(100), pair(100)]), 4)
+        // a point on a roof makes one pair nine times too long: the median does not follow it
+        XCTAssertEqual(try scale([pair(100), pair(100), pair(900), pair(100)]), 4)
+        // the median of an even number of pairs is the mean of the middle two
+        XCTAssertEqual(try scale([pair(75), pair(100), pair(125), pair(150)]), 4.5)   // 3, 4, 5, 6 m per px: (4 + 5) / 2
+        // a pair needs both points on the globe; fewer than three usable pairs is no scale
+        XCTAssertEqual(try scale([nil, pair(100), pair(100), pair(100)]), 4)
+        XCTAssertNil(try scale([nil, nil, pair(100), pair(100)]))
+        XCTAssertNil(try scale([nil, nil, nil, nil]))
+        // pairs with no distance, or no pixels (both points pulled onto one edge), are not usable
+        XCTAssertNil(try scale([pair(0), pair(100), pair(100), nil]))
+        XCTAssertNil(try scale([pair(100, 0), pair(100), pair(100), nil]))
+        XCTAssertEqual(try scale([pair(100, 0), pair(100), pair(100), pair(100)]), 4)
+    }
+
+    func testThePageMeasuresTheScaleAgainWhenTheTilesLoadAndOnceASecondAndPostsOnlyAChange() {
+        let html = CesiumMainMap.html
+        // the ground under the bar changes while the camera is still: the globe's tile queue empties, the photoreal
+        // tileset has loaded, or a second has passed
+        XCTAssertTrue(html.contains("v.scene.globe.tileLoadProgressEvent.addEventListener(function(n){if(n===0)_scaleSoon(v)})"))
+        XCTAssertTrue(html.contains("ts.allTilesLoaded.addEventListener(function(){_scaleSoon(v)})"))
+        XCTAssertTrue(html.contains("setInterval(function(){if(!document.hidden)_scaleRefresh(v)},1000)"))
+        // and the camera is posted again only when the scale moved, with the scale just measured
+        XCTAssertTrue(html.contains("function _scaleRefresh(v){const m=_scaleMpp(v);if(!_scaleMoved(_state.scalePosted,m))return;_postCameraChanged(v,false,m)}"))
+    }
+
+    func testAMovingCameraReadsTheScaleWithTwoPointsAndAnAtRestCameraWithFive() {
+        // a camera event for every 5 percent of movement each read the depth buffer back for five points instead
+        // of two: only the end of the move, the tiles and the tick use all five
+        let html = CesiumMainMap.html
+        XCTAssertTrue(html.contains("viewer.camera.changed.addEventListener(function(){_postCameraChanged(viewer,true)})"))
+        XCTAssertTrue(html.contains("viewer.camera.moveEnd.addEventListener(function(){_postCameraChanged(viewer)})"))
+        XCTAssertTrue(html.contains("(arguments.length>2?mpp:_scaleMpp(v,moving===true))"))
+        XCTAssertTrue(html.contains("if(quick){const q=pair(at(r.xs[0]),at(r.xs[4]),r.xs[4]-r.xs[0])"))
+    }
+
     func testTheBridgeCallThatSetsTheAnchor() {
         XCTAssertEqual(CesiumMainMap.scaleAnchorJS(CGPoint(x: 74, y: 614)),
                        "window.OmniBridge.setScaleAnchor(74.0,614.0);")
