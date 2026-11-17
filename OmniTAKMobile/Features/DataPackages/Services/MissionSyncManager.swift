@@ -31,7 +31,10 @@ import os
 enum MissionServerStatus: Equatable {
     case checking
     case online
-    case offline(String)   // associated value = short reason
+    /// `reason` is the one-line explanation shown on the server row;
+    /// `detail` is the full diagnosis (system error codes, what the TLS
+    /// handshake saw) for the details sheet, the clipboard and the log (#169).
+    case offline(reason: String, detail: String?)
 
     var isOnline: Bool { if case .online = self { return true } else { return false } }
 }
@@ -179,9 +182,10 @@ final class MissionSyncManager: ObservableObject {
             try await client.checkReachability()
             session.status = .online
         } catch {
-            session.status = .offline(shortReason(error))
+            let (reason, detail) = describe(error)
+            session.status = .offline(reason: reason, detail: detail)
             session.lastChecked = Date()
-            log.info("mission sync: \(server.name, privacy: .public) offline — \(shortReason(error), privacy: .public)")
+            log.error("mission sync: \(server.name, privacy: .public) offline — \(detail ?? reason, privacy: .public)")
             return session
         }
 
@@ -194,10 +198,15 @@ final class MissionSyncManager: ObservableObject {
         return session
     }
 
-    private static func shortReason(_ error: Error) -> String {
-        if let apiErr = error as? TAKAPIError, let desc = apiErr.errorDescription {
-            return desc
+    /// The row text and, when the transport layer explained itself, the
+    /// full diagnosis for the details sheet.
+    private static func describe(_ error: Error) -> (reason: String, detail: String?) {
+        if let apiErr = error as? TAKAPIError {
+            if let failure = apiErr.connectionFailure {
+                return (failure.summary, failure.details)
+            }
+            return (apiErr.errorDescription ?? String(describing: apiErr), nil)
         }
-        return (error as NSError).localizedDescription
+        return ((error as NSError).localizedDescription, nil)
     }
 }

@@ -13,6 +13,13 @@
 //    path does (CertificateManager p12s by id, CSR-enrolled
 //    identities by keychain label)
 //
+//  It also keeps a `TAKTLSHandshakeReport` of what it saw: which trust
+//  policy ran and how it decided, whether the server asked for a client
+//  certificate, and whether one was presented. A failed request reads
+//  that report so the user gets "the server requires a client certificate
+//  and this entry has none" instead of "A TLS error caused the secure
+//  connection to fail" (#169).
+//
 
 import Foundation
 import Security
@@ -66,6 +73,111 @@ extension TAKTLSTrustMode {
     }
 }
 
+// MARK: - Handshake report
+
+/// A copy of what the delegate saw, safe to hand around and compare.
+struct TAKTLSHandshakeSnapshot: Equatable {
+    enum ServerTrust: Equatable {
+        /// No server-trust challenge arrived (DNS or TCP failed first, or
+        /// the request never ran).
+        case notChallenged
+        /// The explicit "Trust untrusted certificates" opt-in accepted it.
+        case acceptedUntrusted
+        /// The enrolled truststore validated the chain (anchor count).
+        case acceptedAnchored(Int)
+        /// The enrolled truststore rejected the chain; the request was
+        /// cancelled, which the system reports as URLError -999.
+        case rejectedByAnchors(String)
+        /// Left to the system roots (public CAs).
+        case systemDefault
+    }
+
+    enum ClientIdentity: Equatable {
+        /// The server never asked for a client certificate.
+        case notRequested
+        /// The server asked and this identity was presented.
+        case presented(String)
+        /// The server asked but this server entry has no certificate.
+        case noneConfigured
+        /// The server asked, the entry names a certificate, and it could
+        /// not be found on the device.
+        case lookupFailed(String)
+    }
+
+    /// Label of the trust mode the session was created with.
+    var trustMode: String
+    var serverTrust: ServerTrust = .notChallenged
+    var clientIdentity: ClientIdentity = .notRequested
+    /// Number of acceptable issuers the server listed in its certificate
+    /// request (its truststore CAs). Zero when it listed none or never asked.
+    var acceptableIssuerCount: Int = 0
+    /// Server-trust challenges seen; the system retries dropped connections,
+    /// so this is roughly the number of handshakes attempted.
+    var handshakeAttempts: Int = 0
+
+    init(trustMode: String) {
+        self.trustMode = trustMode
+    }
+
+    /// Human-readable lines for a details view or log.
+    var describedLines: [String] {
+        var lines: [String] = ["Trust policy: \(trustMode)"]
+        switch serverTrust {
+        case .notChallenged: lines.append("Server certificate: no TLS handshake reached the certificate step")
+        case .acceptedUntrusted: lines.append("Server certificate: accepted without validation (Trust untrusted certificates is on)")
+        case .acceptedAnchored(let n): lines.append("Server certificate: validated against the enrolled truststore (\(n) anchor\(n == 1 ? "" : "s"))")
+        case .rejectedByAnchors(let why): lines.append("Server certificate: rejected by the enrolled truststore: \(why)")
+        case .systemDefault: lines.append("Server certificate: left to iOS system trust")
+        }
+        switch clientIdentity {
+        case .notRequested:
+            lines.append("Client certificate: not requested by the server")
+        case .presented(let name):
+            lines.append("Client certificate: server requested one (\(acceptableIssuerCount) acceptable issuer\(acceptableIssuerCount == 1 ? "" : "s")); presented \"\(name)\"")
+        case .noneConfigured:
+            lines.append("Client certificate: server requested one (\(acceptableIssuerCount) acceptable issuer\(acceptableIssuerCount == 1 ? "" : "s")); this server entry has none")
+        case .lookupFailed(let name):
+            lines.append("Client certificate: server requested one; \"\(name)\" is configured but was not found on this device")
+        }
+        lines.append("Handshake attempts: \(handshakeAttempts)")
+        return lines
+    }
+}
+
+/// What the TLS delegate saw during the most recent handshake(s) of a
+/// session. Written from the URLSession delegate queue, read from the
+/// request's failure path, so access goes through a lock. One report per
+/// session: a request is diagnosed right after it fails, so the last
+/// handshake is the one that matters.
+final class TAKTLSHandshakeReport {
+    private let lock = NSLock()
+    private var current: TAKTLSHandshakeSnapshot
+
+    init(trustMode: TAKTLSTrustMode) {
+        current = TAKTLSHandshakeSnapshot(trustMode: trustMode.label)
+    }
+
+    func snapshot() -> TAKTLSHandshakeSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        return current
+    }
+
+    fileprivate func recordServerTrust(_ outcome: TAKTLSHandshakeSnapshot.ServerTrust) {
+        lock.lock(); defer { lock.unlock() }
+        current.serverTrust = outcome
+        current.handshakeAttempts += 1
+        // A new handshake starts the client-certificate story over.
+        current.clientIdentity = .notRequested
+        current.acceptableIssuerCount = 0
+    }
+
+    fileprivate func recordClientIdentity(_ outcome: TAKTLSHandshakeSnapshot.ClientIdentity, acceptableIssuers: Int) {
+        lock.lock(); defer { lock.unlock() }
+        current.clientIdentity = outcome
+        current.acceptableIssuerCount = acceptableIssuers
+    }
+}
+
 // MARK: - Session Delegate
 
 final class TAKTLSSessionDelegate: NSObject, URLSessionDelegate {
@@ -76,11 +188,14 @@ final class TAKTLSSessionDelegate: NSObject, URLSessionDelegate {
     /// CSR-enrolled identities live under this label and are NOT
     /// tracked by CertificateManager.
     let certificateName: String?
+    /// What the handshake(s) on this session looked like (#169).
+    let report: TAKTLSHandshakeReport
 
     init(trustMode: TAKTLSTrustMode, certificateId: UUID? = nil, certificateName: String? = nil) {
         self.trustMode = trustMode
         self.certificateId = certificateId
         self.certificateName = certificateName
+        self.report = TAKTLSHandshakeReport(trustMode: trustMode)
     }
 
     func urlSession(
@@ -91,14 +206,17 @@ final class TAKTLSSessionDelegate: NSObject, URLSessionDelegate {
         switch challenge.protectionSpace.authenticationMethod {
         case NSURLAuthenticationMethodServerTrust:
             guard let serverTrust = challenge.protectionSpace.serverTrust else {
+                report.recordServerTrust(.systemDefault)
                 completionHandler(.performDefaultHandling, nil)
                 return
             }
             switch trustMode {
             case .acceptUntrusted:
+                report.recordServerTrust(.acceptedUntrusted)
                 completionHandler(.useCredential, URLCredential(trust: serverTrust))
 
             case .system:
+                report.recordServerTrust(.systemDefault)
                 completionHandler(.performDefaultHandling, nil)
 
             case .anchored(let anchors):
@@ -111,20 +229,31 @@ final class TAKTLSSessionDelegate: NSObject, URLSessionDelegate {
 
                 var error: CFError?
                 if SecTrustEvaluateWithError(serverTrust, &error) {
+                    report.recordServerTrust(.acceptedAnchored(anchors.count))
                     completionHandler(.useCredential, URLCredential(trust: serverTrust))
                 } else {
-                    Logger.takNetwork.error("TLS: server certificate rejected against CA anchors: \(error.map { String(describing: $0) } ?? "unknown", privacy: .public)")
+                    let why = error.map { String(describing: $0) } ?? "unknown"
+                    report.recordServerTrust(.rejectedByAnchors(why))
+                    Logger.takNetwork.error("TLS: server certificate rejected against CA anchors: \(why, privacy: .public)")
                     completionHandler(.cancelAuthenticationChallenge, nil)
                 }
             }
 
         case NSURLAuthenticationMethodClientCertificate:
-            if let identity = resolveClientIdentity() {
+            let issuers = challenge.protectionSpace.distinguishedNames?.count ?? 0
+            if let (identity, name) = resolveClientIdentity() {
+                report.recordClientIdentity(.presented(name), acceptableIssuers: issuers)
+                Logger.takNetwork.info("TLS mTLS: server asked for a client certificate (\(issuers, privacy: .public) acceptable issuers); presenting \(name, privacy: .public)")
                 let credential = URLCredential(identity: identity, certificates: nil, persistence: .forSession)
                 completionHandler(.useCredential, credential)
             } else {
-                if certificateId != nil || certificateName != nil {
-                    Logger.takNetwork.error("TLS mTLS: no client identity for name=\(self.certificateName ?? "nil", privacy: .public)")
+                if certificateId != nil || (certificateName.map { !$0.isEmpty } ?? false) {
+                    let name = certificateName ?? certificateId?.uuidString ?? "?"
+                    report.recordClientIdentity(.lookupFailed(name), acceptableIssuers: issuers)
+                    Logger.takNetwork.error("TLS mTLS: server asked for a client certificate but no identity was found for name=\(name, privacy: .public)")
+                } else {
+                    report.recordClientIdentity(.noneConfigured, acceptableIssuers: issuers)
+                    Logger.takNetwork.error("TLS mTLS: server asked for a client certificate (\(issuers, privacy: .public) acceptable issuers) and this server entry has none")
                 }
                 completionHandler(.performDefaultHandling, nil)
             }
@@ -140,11 +269,13 @@ final class TAKTLSSessionDelegate: NSObject, URLSessionDelegate {
     /// Imported .p12 certs tracked by CertificateManager take priority via
     /// `certificateId`; CSR-enrolled (easy-connect) identities live in the
     /// keychain under a label = `certificateName` and are resolved by name.
-    private func resolveClientIdentity() -> SecIdentity? {
+    /// Returns the identity with the name it was found under, for the report.
+    private func resolveClientIdentity() -> (SecIdentity, String)? {
         if let certId = certificateId, let identity = try? CertificateManager.shared.getIdentity(for: certId) {
-            return identity
+            return (identity, certificateName ?? "imported certificate \(certId.uuidString.prefix(8))")
         }
         guard let name = certificateName, !name.isEmpty else { return nil }
-        return resolveCSREnrolledSecIdentity(label: name)
+        guard let identity = resolveCSREnrolledSecIdentity(label: name) else { return nil }
+        return (identity, name)
     }
 }
