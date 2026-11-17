@@ -14,6 +14,12 @@ struct ContactListView: View {
     @State private var searchText = ""
     @State private var selectedContact: ChatParticipant?
     @State private var sortOption: ContactSortOption = .lastSeen
+    // #137: contacts not heard from for the contact max age are taken out of the
+    // main list and put in a collapsed section at the end. The decision is the
+    // monitor's, the same one the map reads, so the two always agree.
+    @ObservedObject private var contactMaxAge = ContactMaxAgeMonitor.shared
+    @AppStorage(ContactMaxAge.defaultsKey) private var contactMaxAgeMinutes = ContactMaxAge.defaultMinutes
+    @State private var staleExpanded = false
 
     enum ContactSortOption: String, CaseIterable {
         case callsign = "Callsign"
@@ -50,8 +56,21 @@ struct ContactListView: View {
         return contacts
     }
 
+    /// The contacts that stay in the main list.
+    private var visibleContacts: [ChatParticipant] {
+        ContactMaxAge.partition(filteredContacts, hidden: contactMaxAge.hidden).visible
+    }
+
+    /// The contacts in the collapsed "not heard from" section, heard from most
+    /// recently first.
+    private var staleContacts: [ChatParticipant] {
+        ContactMaxAge.partition(filteredContacts, hidden: contactMaxAge.hidden).stale
+    }
+
     var onlineCount: Int {
-        chatManager.participants.filter { $0.isOnline }.count
+        // #137: a contact in the "not heard from" section is not online, whatever
+        // its saved flag says, so the header agrees with the rows.
+        chatManager.participants.filter { $0.isOnline && contactMaxAge.hidden[$0.id] == nil }.count
     }
 
     var body: some View {
@@ -157,7 +176,7 @@ struct ContactListView: View {
                     } else {
                         ScrollView {
                             LazyVStack(spacing: 0) {
-                                ForEach(filteredContacts) { contact in
+                                ForEach(visibleContacts) { contact in
                                     ContactRow(contact: contact)
                                         .onTapGesture {
                                             selectedContact = contact
@@ -165,6 +184,11 @@ struct ContactListView: View {
 
                                     Divider()
                                         .background(Color(hex: "#3A3A3A"))
+                                }
+
+                                // #137: at the end, collapsed until opened.
+                                if !staleContacts.isEmpty {
+                                    staleSection(staleContacts)
                                 }
                             }
                         }
@@ -215,6 +239,63 @@ struct ContactListView: View {
     }
 }
 
+// MARK: - Not heard from (#137)
+
+extension ContactListView {
+    /// "Not heard from for over 30 min": the contacts the max age has taken off
+    /// the map, still in the store until twice that age. Collapsed by default;
+    /// each row shows how long ago this device last received a report from it.
+    @ViewBuilder
+    fileprivate func staleSection(_ stale: [ChatParticipant]) -> some View {
+        Button(action: {
+            withAnimation(.easeInOut(duration: 0.15)) { staleExpanded.toggle() }
+        }) {
+            HStack(spacing: 10) {
+                Image(systemName: staleExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(Color(hex: "#FFFC00"))
+                    .frame(width: 14)
+
+                Text(ContactMaxAge.staleSectionTitle(maxAgeMinutes: contactMaxAgeMinutes))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color(hex: "#CCCCCC"))
+
+                Spacer()
+
+                Text("\(stale.count)")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(Color(hex: "#999999"))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(hex: "#2A2A2A"))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ContactMaxAge.staleSectionTitle(maxAgeMinutes: contactMaxAgeMinutes))
+        .accessibilityValue("\(stale.count), \(staleExpanded ? "expanded" : "collapsed")")
+        .accessibilityAddTraits(.isButton)
+
+        if staleExpanded {
+            ForEach(stale) { contact in
+                // Not heard from for the max age or longer: shown offline, with
+                // the age of the last report.
+                ContactRow(contact: contact, lastHeard: contactMaxAge.hidden[contact.id])
+                    .onTapGesture {
+                        // The detail sheet shows the status it is given: offline here too.
+                        var offline = contact
+                        offline.isOnline = false
+                        selectedContact = offline
+                    }
+
+                Divider()
+                    .background(Color(hex: "#3A3A3A"))
+            }
+        }
+    }
+}
+
 // MARK: - Stats Badge
 
 struct StatsBadge: View {
@@ -246,14 +327,20 @@ struct StatsBadge: View {
 
 struct ContactRow: View {
     let contact: ChatParticipant
+    /// #137: when this device last received a report from the contact, for the
+    /// "not heard from" section. Nil reads `contact.lastSeen`, as it always did.
+    /// A row given a time is in that section, so it reads offline.
+    var lastHeard: Date? = nil
+
+    private var isOnline: Bool { contact.isOnline && lastHeard == nil }
 
     var statusColor: Color {
-        contact.isOnline ? Color(hex: "#4CAF50") : Color(hex: "#666666")
+        isOnline ? Color(hex: "#4CAF50") : Color(hex: "#666666")
     }
 
     var lastSeenText: String {
         let now = Date()
-        let interval = now.timeIntervalSince(contact.lastSeen)
+        let interval = now.timeIntervalSince(lastHeard ?? contact.lastSeen)
 
         if interval < 60 {
             return "Just now"
@@ -299,7 +386,7 @@ struct ContactRow: View {
 
                 HStack(spacing: 8) {
                     // Status text
-                    Text(contact.isOnline ? "ONLINE" : "OFFLINE")
+                    Text(isOnline ? "ONLINE" : "OFFLINE")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundColor(statusColor)
 
