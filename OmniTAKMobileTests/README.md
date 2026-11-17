@@ -57,6 +57,21 @@ Regression tests for OmniTAK Mobile networking and connection functionality.
 - `TAKService` against a loopback server: one dial at a time, dial again after
   a drop, nothing dials after the server is switched off
 
+### EnrolledServerAdoptionTests
+- How an enrollment is merged into the record already saved for that address
+  (it keeps its id, name and switched-on state, takes the new certificate and
+  the Marti API port) and whether an enrollment is for a new endpoint or a
+  saved one (#156)
+- `ServerManager.adoptEnrolledServer` with `TAKService` against a loopback
+  server: a new server is dialed once, enrolling again re-dials the saved
+  record once with no second entry and no second connection, also when the
+  link is waiting for its next dial
+- "ssl" and "tls" are the same endpoint, so a server that Edit Server has saved
+  is still the saved server for the next enrollment
+- The source of the enrollment paths (`DeepLinkHandler`, `SimpleEnrollView`,
+  `CSREnrollmentService`) is scanned for the older `connect(host:...)`; those
+  call sites need a TAK server to run, so a loopback test cannot see them
+
 ## Test Target
 
 These suites are compiled into the `OmniTAKMobileTests` unit-test target
