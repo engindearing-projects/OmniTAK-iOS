@@ -31,6 +31,9 @@ struct SettingsView: View {
     @AppStorage("showMGRSLabels") private var showMGRSLabels = true
     // #178 — on-map staleness overlay. Off by default; read by ATAKMapView.
     @AppStorage("stalenessOverlayEnabled") private var stalenessOverlayEnabled = false
+    // #137: hide a teammate not heard from for this many minutes, remove them at
+    // twice that. 0 = Never. Read by ContactMaxAgeMonitor and the map.
+    @AppStorage(ContactMaxAge.defaultsKey) private var contactMaxAgeMinutes = ContactMaxAge.defaultMinutes
     // #135: Label size: names under markers and the position box, as a whole
     // percent (80 to 160, default 100). Read by ATAKMapView, which redraws at once.
     @AppStorage(LabelSize.storageKey) private var labelScalePercent = LabelSize.defaultPercent
@@ -325,6 +328,21 @@ struct SettingsView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
+                    // #137: max age for a teammate's marker. Hidden from the map
+                    // at this age, listed under "Not heard from" in Contacts, and
+                    // removed at twice this age. Same words and choices as Android.
+                    Picker(ContactMaxAge.settingTitle, selection: $contactMaxAgeMinutes) {
+                        ForEach(ContactMaxAge.choices, id: \.self) { minutes in
+                            Text(ContactMaxAge.label(forMinutes: minutes)).tag(minutes)
+                        }
+                    }
+                    .onChange(of: contactMaxAgeMinutes) { _ in
+                        ContactMaxAgeMonitor.shared.settingChanged()
+                    }
+
+                    Text(ContactMaxAge.settingHelp)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     // #135: Label size. Plain English like "Show point age on map"
                     // above. One stored percent; the map reads it and redraws at once.
                     VStack(alignment: .leading, spacing: 8) {

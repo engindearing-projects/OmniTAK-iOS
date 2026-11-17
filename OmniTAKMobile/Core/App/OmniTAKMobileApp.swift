@@ -46,6 +46,10 @@ struct OmniTAKMobileApp: App {
         // stream). On/off mirrors @AppStorage("gybDetectorEnabled") below.
         _ = GybManager.shared
 
+        // #137: contact max age: hides a teammate who has gone quiet and removes
+        // them later. Starts its own timer, so it works with no report arriving.
+        ContactMaxAgeMonitor.shared.start()
+
         // Plugin SDK — populate the COMPILE-TIME registry and activate the
         // plugins the user has enabled. There is NO dynamic / downloadable
         // code: bundled plugins are Swift types linked into the binary
