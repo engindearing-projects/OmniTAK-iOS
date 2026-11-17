@@ -68,6 +68,7 @@
 		1A5776DB1338FD3EC8D25046 /* SNGP-------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 103C33E3B66400D772DDE95F /* SNGP-------.svg */; };
 		1BE25DA5B44BA5AD28D90C82 /* RadialMenuMapCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628B317671CF6452847569CB /* RadialMenuMapCoordinator.swift */; };
 		1C9137217214B1713429C1F8 /* LocalizationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7545CAC8E7D57583BCDAB1CE /* LocalizationManager.swift */; };
+		1CE3742DB8135243CD19B392 /* TAKConnectionFailureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 682BC692F407FC662A8B8225 /* TAKConnectionFailureTests.swift */; };
 		20CAAB4409715F7431C1DEAB /* AppPreviewRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786486F562966ED005A6E978 /* AppPreviewRecordingTests.swift */; };
 		2152BF37AF7F80147E73BDCB /* UASConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699B5990C6EA00ABB6691FB8 /* UASConnectView.swift */; };
 		21E444F72F9D14820940739A /* TAKServerSecureAPIPortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC1D4C513E2C2C744439752 /* TAKServerSecureAPIPortTests.swift */; };
@@ -248,6 +249,7 @@
 		AC6A89CF8B5AA43CA798750E /* ChatMeshMirrorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4896D09E66A3B8875668695 /* ChatMeshMirrorTests.swift */; };
 		8C438F404590B4041797F2A3 /* CertificateEnrollmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A52CF4DD21759290DD7E0B /* CertificateEnrollmentService.swift */; };
 		8C752969A4CF6C6B2654DE0F /* ChatXMLParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14751E8F7455DF58CA15A0A1 /* ChatXMLParser.swift */; };
+		8E328700C36C72A115ED715C /* TAKTLSClientCertificateRequiredTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9B93E60B450030A02D23FEC /* TAKTLSClientCertificateRequiredTests.swift */; };
 		8E3D7906ED5C43E9912DF463 /* IconsetPackParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 859A06578E2346468CECC5F3 /* IconsetPackParser.swift */; };
 		8E72C92E973D3FC91739BD4B /* GeofenceManagementView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0453E372571CF9C2739A871 /* GeofenceManagementView.swift */; };
 		8EB591857FD97F76C54E7397 /* SNAPMF-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = B4E49EC79566C4E1FA39BB03 /* SNAPMF-----.svg */; };
@@ -287,6 +289,7 @@
 		A27A2BB51FD644288B3E7213 /* MapLibreService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90C26A4593204D06AECCDD22 /* MapLibreService.swift */; };
 		A351A8B77C3983E18499A04F /* OpenDroneIdParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C644AA06A8883B0013638A4E /* OpenDroneIdParserTests.swift */; };
 		A39258D9C30862F33F8ED940 /* SUAPMHQ----.svg in Resources */ = {isa = PBXBuildFile; fileRef = C4C6755C8B6629F45526C18E /* SUAPMHQ----.svg */; };
+		A49185C59E9999989E0DA8A3 /* TAKTLSHandshakeReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 097E7B1ACA68E34F99BFD33F /* TAKTLSHandshakeReportTests.swift */; };
 		A59C8E0C95564E90277AB48E /* TrackOverlayRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D2A5DFDD7975D09495FA81A /* TrackOverlayRenderer.swift */; };
 		A633639D8EC73D468D105269 /* TileDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17EF09598A6E3E19F6F83576 /* TileDownloader.swift */; };
 		A6CEA9E02F31C917002D96E2 /* MapboxMaps in Frameworks */ = {isa = PBXBuildFile; productRef = 7D6348C4CBB3428FBD5FF5CC /* MapboxMaps */; };
@@ -416,6 +419,7 @@
 		DE33389B8145869804340112 /* BNGConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5160EE3247DE0377F3E6CE8 /* BNGConverter.swift */; };
 		DFE26C2C7FD86309FED7802E /* MapDrawingAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F27DAD8386D9D7209EE02AA9 /* MapDrawingAnnotations.swift */; };
 		DFE366B176992E3CE85E10BF /* PluginRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D95E31A4FB55F17B88EDA43 /* PluginRegistry.swift */; };
+		E1220923ADC80046CE87DD5F /* TAKConnectionFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = 436068BE87BA6076F94FC8ED /* TAKConnectionFailure.swift */; };
 		E1F2A3B4C5D6E7F809182930 /* PointMarkerEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D6E7F809182931 /* PointMarkerEditView.swift */; };
 		E3397D517A54F6F76789C606 /* MeshtasticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */; };
 		E5F60718293A4B5C6D7E8F90 /* ToolRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5F60718293A4B5C6D7E8F91 /* ToolRegistry.swift */; };
@@ -498,6 +502,7 @@
 		06968B4309853CB9BD15D16B /* MapOverlayCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MapOverlayCoordinator.swift; path = OmniTAKMobile/Features/Map/Controllers/MapOverlayCoordinator.swift; sourceTree = "<group>"; };
 		08B18AEA7E422F3C5717BF5B /* RemoteIdToPointMarkerConverter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RemoteIdToPointMarkerConverter.swift; path = OmniTAKMobile/Features/RemoteID/Services/RemoteIdToPointMarkerConverter.swift; sourceTree = "<group>"; };
 		097DAF0444ABFD1021CA104E /* RasterOverlay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RasterOverlay.swift; path = OmniTAKMobile/Utilities/Integration/RasterOverlay.swift; sourceTree = "<group>"; };
+		097E7B1ACA68E34F99BFD33F /* TAKTLSHandshakeReportTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKTLSHandshakeReportTests.swift; path = OmniTAKMobileTests/TAKTLSHandshakeReportTests.swift; sourceTree = "<group>"; };
 		09DAC73D9366FC5CC53349A0 /* WaypointManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WaypointManager.swift; path = OmniTAKMobile/Features/Navigation/Managers/WaypointManager.swift; sourceTree = "<group>"; };
 		0A7FB9C4E1E1A57D761DBE6B /* MeshBroadcastTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshBroadcastTests.swift; path = OmniTAKMobileTests/MeshBroadcastTests.swift; sourceTree = "<group>"; };
 		0AB08CBDD7F4FBC1BC0E0870 /* ContactMarkerRendering.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactMarkerRendering.swift; path = OmniTAKMobile/Features/Map/Controllers/ContactMarkerRendering.swift; sourceTree = "<group>"; };
@@ -649,6 +654,7 @@
 		64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DrawingVertexEditTests.swift; path = OmniTAKMobileTests/DrawingVertexEditTests.swift; sourceTree = "<group>"; };
 		6573C607EB2B7E7F82B0B79D /* de */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = de; path = OmniTAKMobile/Resources/de.lproj/Localizable.strings; sourceTree = "<group>"; };
 		676590F7AFD402DEBBC6868D /* VideoPlayerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VideoPlayerView.swift; path = OmniTAKMobile/Features/Video/Views/VideoPlayerView.swift; sourceTree = "<group>"; };
+		682BC692F407FC662A8B8225 /* TAKConnectionFailureTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKConnectionFailureTests.swift; path = OmniTAKMobileTests/TAKConnectionFailureTests.swift; sourceTree = "<group>"; };
 		699B5990C6EA00ABB6691FB8 /* UASConnectView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UASConnectView.swift; path = OmniTAKMobile/Features/UAS/Views/UASConnectView.swift; sourceTree = "<group>"; };
 		6A0A793E185CC30595DAB79B /* CoordinateDisplayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoordinateDisplayView.swift; path = OmniTAKMobile/Features/Map/Views/CoordinateDisplayView.swift; sourceTree = "<group>"; };
 		6A299080EB48E2B8246EE899 /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = OmniTAKMobile/Features/Settings/Views/SettingsView.swift; sourceTree = "<group>"; };
@@ -830,6 +836,7 @@
 		C37A46332F33B263B8DAD93E /* MeshtasticSettingsControlsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticSettingsControlsTests.swift; path = OmniTAKMobileTests/MeshtasticSettingsControlsTests.swift; sourceTree = "<group>"; };
 		5FC80ABCAAB67619BBB35D2D /* MeshtasticChannelKeyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticChannelKeyTests.swift; path = OmniTAKMobileTests/MeshtasticChannelKeyTests.swift; sourceTree = "<group>"; };
 		42ED9BB934E34F663E364DB9 /* MeshtasticChannelWriteTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticChannelWriteTests.swift; path = OmniTAKMobileTests/MeshtasticChannelWriteTests.swift; sourceTree = "<group>"; };
+		436068BE87BA6076F94FC8ED /* TAKConnectionFailure.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKConnectionFailure.swift; path = OmniTAKMobile/Features/Networking/Services/TAKConnectionFailure.swift; sourceTree = "<group>"; };
 		133F9E5C095D9ACDB6F4B0A7 /* MeshtasticLinkOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticLinkOwnershipTests.swift; path = OmniTAKMobileTests/MeshtasticLinkOwnershipTests.swift; sourceTree = "<group>"; };
 		90EDA3CC6246102ABD0AB2A7 /* MeshWriteRig.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshWriteRig.swift; path = OmniTAKMobileTests/MeshWriteRig.swift; sourceTree = "<group>"; };
 		86165191C554731E56C7997A /* LoopbackRadio.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LoopbackRadio.swift; path = OmniTAKMobileTests/LoopbackRadio.swift; sourceTree = "<group>"; };
@@ -909,6 +916,7 @@
 		E763527D180A2BFA06815720 /* SHAPMFQ----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHAPMFQ----.svg"; sourceTree = "<group>"; };
 		E7CD94F2AA3C9E1621AE6021 /* es */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = es; path = OmniTAKMobile/Resources/es.lproj/Localizable.strings; sourceTree = "<group>"; };
 		E950DB1D70D2C1193584A481 /* CoTAgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoTAgeTests.swift; path = OmniTAKMobileTests/CoTAgeTests.swift; sourceTree = "<group>"; };
+		E9B93E60B450030A02D23FEC /* TAKTLSClientCertificateRequiredTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TAKTLSClientCertificateRequiredTests.swift; path = OmniTAKMobileTests/TAKTLSClientCertificateRequiredTests.swift; sourceTree = "<group>"; };
 		D786C6D33C71E3E97157D78A /* ContactMaxAgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactMaxAgeTests.swift; path = OmniTAKMobileTests/ContactMaxAgeTests.swift; sourceTree = "<group>"; };
 		EA171D08B8BECD16ACA18D51 /* SHGP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGP-------.svg"; sourceTree = "<group>"; };
 		EA4A86523E550E87AC1EE8A4 /* SALUTEReportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SALUTEReportView.swift; path = OmniTAKMobile/Features/Military/Views/SALUTEReportView.swift; sourceTree = "<group>"; };
@@ -994,6 +1002,7 @@
 				6CB754FA0C8506C4D22450CE /* ServerValidator.swift */,
 				9540F19EA7E0D4D8F98FC80F /* TAKRestAPIClient.swift */,
 				C3D4E5F60718293A4B5C6D7F /* TAKTLSSessionDelegate.swift */,
+				436068BE87BA6076F94FC8ED /* TAKConnectionFailure.swift */,
 			);
 			name = Services;
 			sourceTree = "<group>";
@@ -1266,6 +1275,9 @@
 				7FBF2A7098F37344F6A244DB /* MeshtasticProtoDecoderTests.swift */,
 				F0E7ACFAB445E2075F4E5FEF /* MBTilesRenderTests.swift */,
 				809E8C5B4560FABB17AAF3AE /* MBTilesOverlayStoreTests.swift */,
+				682BC692F407FC662A8B8225 /* TAKConnectionFailureTests.swift */,
+				097E7B1ACA68E34F99BFD33F /* TAKTLSHandshakeReportTests.swift */,
+				E9B93E60B450030A02D23FEC /* TAKTLSClientCertificateRequiredTests.swift */,
 			);
 			name = OmniTAKMobileTests;
 			sourceTree = "<group>";
@@ -2987,6 +2999,9 @@
 				CD1E3C409EE9D7E869EBD04C /* MeshtasticProtoDecoderTests.swift in Sources */,
 				DB9D4179F59C36F9F4E258A7 /* MBTilesRenderTests.swift in Sources */,
 				9313B33DEBA3C56147A4B27B /* MBTilesOverlayStoreTests.swift in Sources */,
+				1CE3742DB8135243CD19B392 /* TAKConnectionFailureTests.swift in Sources */,
+				A49185C59E9999989E0DA8A3 /* TAKTLSHandshakeReportTests.swift in Sources */,
+				8E328700C36C72A115ED715C /* TAKTLSClientCertificateRequiredTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3260,6 +3275,7 @@
 				CF000003B000000000000001 /* ProfileStore.swift in Sources */,
 				CF000004B000000000000001 /* ProfilesView.swift in Sources */,
 				08EA4021B46C9391E6B7992B /* ContactMarkerRendering.swift in Sources */,
+				E1220923ADC80046CE87DD5F /* TAKConnectionFailure.swift in Sources */,
 				7E8DD0425D0A945760D4E2D5 /* LabelSize.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -9,10 +9,13 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct MissionSyncView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var manager = MissionSyncManager.shared
+    /// The offline server whose full diagnosis is open (#169).
+    @State private var failureDetail: MissionSyncFailureDetail?
 
     private let accent = Color(hex: "#00BCD4")
 
@@ -40,6 +43,11 @@ struct MissionSyncView: View {
                     }
                     .disabled(manager.isRefreshing)
                 }
+            }
+        }
+        .sheet(item: $failureDetail) { detail in
+            MissionSyncFailureDetailView(detail: detail) {
+                Task { await manager.refresh(serverId: detail.serverId) }
             }
         }
         .task { await manager.refreshAll() }
@@ -90,18 +98,27 @@ struct MissionSyncView: View {
                 HStack(spacing: 12) {
                     statusDot(s.status)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(s.serverName).font(.system(size: 15, weight: .semibold)).foregroundColor(.white)
-                        Text(statusLine(s)).font(.system(size: 12)).foregroundColor(.secondary)
+                        Text(s.serverName).font(.system(size: 15, weight: .semibold)).foregroundColor(.primary)
+                        Text(statusLine(s)).font(.system(size: 12)).foregroundColor(.secondary).lineLimit(3)
                     }
                     Spacer()
                     if s.isOnline {
                         Text("\(s.missions.count)m · \(s.dataPackages.count)p")
                             .font(.system(size: 12, weight: .medium)).foregroundColor(accent)
+                    } else if case .offline = s.status {
+                        // Tap for the full diagnosis (system error, handshake facts).
+                        Image(systemName: "info.circle").foregroundColor(accent).font(.system(size: 15))
                     }
                 }
                 .padding(.vertical, 2)
                 .contentShape(Rectangle())
-                .onTapGesture { Task { await manager.refresh(serverId: s.serverId) } }
+                .onTapGesture {
+                    if let detail = MissionSyncFailureDetail(session: s) {
+                        failureDetail = detail
+                    } else {
+                        Task { await manager.refresh(serverId: s.serverId) }
+                    }
+                }
             }
         } header: {
             HStack {
@@ -127,7 +144,7 @@ struct MissionSyncView: View {
         switch s.status {
         case .checking: return "\(s.host) — checking…"
         case .online:   return s.host
-        case .offline(let reason): return "\(s.host) — \(reason)"
+        case .offline(let reason, _): return reason
         }
     }
 
@@ -138,7 +155,7 @@ struct MissionSyncView: View {
             ForEach(manager.allMissions) { item in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
-                        Text(item.mission.name).font(.system(size: 15, weight: .medium)).foregroundColor(.white)
+                        Text(item.mission.name).font(.system(size: 15, weight: .medium)).foregroundColor(.primary)
                         Spacer()
                         serverBadge(item.serverName)
                     }
@@ -162,7 +179,7 @@ struct MissionSyncView: View {
                 HStack {
                     Image(systemName: "shippingbox.fill").foregroundColor(accent).font(.system(size: 14))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.package.name).font(.system(size: 14)).foregroundColor(.white).lineLimit(1)
+                        Text(item.package.name).font(.system(size: 14)).foregroundColor(.primary).lineLimit(1)
                         if item.package.size > 0 {
                             Text(ByteCountFormatter.string(fromByteCount: item.package.size, countStyle: .file))
                                 .font(.system(size: 11)).foregroundColor(.secondary)
@@ -191,10 +208,133 @@ struct MissionSyncView: View {
         VStack(spacing: 14) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 44)).foregroundColor(.secondary)
-            Text("No servers enabled").font(.system(size: 18, weight: .semibold)).foregroundColor(.white)
+            Text("No servers enabled").font(.system(size: 18, weight: .semibold)).foregroundColor(.primary)
             Text("Enable a TLS TAK server with a client certificate in Servers, then pull to refresh. Every enabled server syncs here at once.")
                 .font(.system(size: 13)).foregroundColor(.secondary)
                 .multilineTextAlignment(.center).padding(.horizontal, 32)
         }
     }
+}
+
+// MARK: - Offline server diagnosis (#169)
+
+/// What an offline server row opens: the one-line reason plus the full
+/// diagnosis from the transport layer, ready to copy into a bug report.
+struct MissionSyncFailureDetail: Identifiable {
+    let serverId: UUID
+    let serverName: String
+    let host: String
+    let reason: String
+    let detail: String?
+
+    var id: UUID { serverId }
+
+    /// Text for the clipboard and the share sheet.
+    var shareText: String {
+        var lines = ["OmniTAK Mission Sync: \(serverName) is offline"]
+        if let detail { lines.append(detail) } else { lines.append("\(host): \(reason)") }
+        lines.append("App version: \(Self.appVersion), iOS \(UIDevice.current.systemVersion)")
+        return lines.joined(separator: "\n")
+    }
+
+    static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
+    }
+
+    init?(session: ServerSyncSession) {
+        guard case .offline(let reason, let detail) = session.status else { return nil }
+        serverId = session.serverId
+        serverName = session.serverName
+        host = session.host
+        self.reason = reason
+        self.detail = detail
+    }
+}
+
+struct MissionSyncFailureDetailView: View {
+    let detail: MissionSyncFailureDetail
+    let onRetry: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var showShare = false
+    @State private var copied = false
+
+    private let accent = Color(hex: "#00BCD4")
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(detail.reason)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if let text = detail.detail {
+                            Text("Details")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Text(text)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.85))
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(10)
+                                .background(Color.white.opacity(0.06))
+                                .cornerRadius(8)
+                        }
+
+                        HStack(spacing: 12) {
+                            Button {
+                                UIPasteboard.general.string = detail.shareText
+                                copied = true
+                            } label: {
+                                Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            }
+                            Button {
+                                showShare = true
+                            } label: {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                            Spacer()
+                            Button {
+                                onRetry()
+                                dismiss()
+                            } label: {
+                                Label("Retry", systemImage: "arrow.clockwise")
+                            }
+                        }
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(accent)
+                    }
+                    .padding(16)
+                }
+            }
+            .navigationTitle(detail.serverName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }.foregroundColor(accent)
+                }
+            }
+        }
+        .sheet(isPresented: $showShare) {
+            MissionSyncShareSheet(activityItems: [detail.shareText])
+        }
+    }
+}
+
+/// System share sheet for the diagnosis text (same pattern as the lasso and
+/// data-package share flows).
+struct MissionSyncShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
