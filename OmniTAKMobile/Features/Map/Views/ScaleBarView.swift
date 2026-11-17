@@ -3,191 +3,90 @@ import MapKit
 import CoreLocation
 
 // MARK: - Scale Bar View
-// ATAK-style map scale indicator that adjusts based on zoom level
-// Uses computed properties for instant reactivity during map movement
+// A line whose on-screen length is exactly the distance printed above it.
+// The length comes from the active map engine's real ground scale (metres per
+// screen point); the 1/2/5 rounding and the unit live in `MapScale`.
 
 struct ScaleBarView: View {
-    let region: MKCoordinateRegion
+    /// Ground metres per screen point at the middle of the map, from whichever
+    /// engine is showing. nil while the engine has no ground to measure (the
+    /// globe's horizon, space): no bar is drawn then rather than a wrong one.
+    /// When the map is tilted the scale also changes up and down the screen, so
+    /// the bar is exact for ground at the middle and reads long for the nearer
+    /// ground it is drawn over.
+    let metersPerPoint: Double?
     let isVisible: Bool
     /// #182 — compact landscape layout. The portrait bottom offset (225, tuned
     /// to sit above the GPS cluster + full-width bar) lifts the scale bar near
     /// the top on the short landscape canvas, so shrink the reservation.
     var compact: Bool = false
 
-    @State private var isExpanded: Bool = false
+    /// Same key `UnitPreferences` stores, read here so the bar redraws the
+    /// moment the operator changes Settings > Units.
+    @AppStorage("unitSystem") private var unitSystem: UnitSystem = .metric
 
-    // Computed scale values for instant reactivity
-    private var scaleInfo: (width: CGFloat, text: String) {
-        calculateScaleInfo()
-    }
+    /// The longest the bar is ever drawn, in points.
+    static let maxBarWidth: CGFloat = 110
+    /// Room either side of the bar so the end ticks and their outline are not clipped.
+    private static let tickInset: CGFloat = 3
+    private static let barHeight: CGFloat = 9
 
     var body: some View {
-        if isVisible {
+        if isVisible,
+           let bar = MapScale.bar(metersPerPoint: metersPerPoint, maxWidth: Self.maxBarWidth, unitSystem: unitSystem) {
             VStack {
                 Spacer()
                 HStack {
-                    if isExpanded {
-                        expandedScaleBar
-                    } else {
-                        collapsedScaleBar
-                    }
+                    scaleBar(width: bar.width, label: bar.label)
                     Spacer()
                 }
                 .padding(.leading, 16)
                 .padding(.bottom, compact ? 110 : 225)
             }
+            .allowsHitTesting(false)
         }
     }
 
-    private var collapsedScaleBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "ruler")
-                .font(.system(size: 10))
-                .foregroundColor(.white)
-
-            Text(scaleInfo.text)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(.white)
-                .animation(.none, value: scaleInfo.text)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.black.opacity(0.7))
-        .cornerRadius(6)
-        .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded = true
-            }
-        }
-    }
-
-    private var expandedScaleBar: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            // Scale bar graphic
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color.white)
-                    .frame(width: scaleInfo.width / 2, height: 4)
-
-                Rectangle()
-                    .fill(Color.black)
-                    .frame(width: scaleInfo.width / 2, height: 4)
-            }
-            .overlay(
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.white)
-                        .frame(width: 2, height: 12)
-                    Spacer()
-                    Rectangle()
-                        .fill(Color.white)
-                        .frame(width: 2, height: 12)
-                    Spacer()
-                    Rectangle()
-                        .fill(Color.white)
-                        .frame(width: 2, height: 12)
-                }
-                .frame(width: scaleInfo.width)
-            )
-
-            Text(scaleInfo.text)
+    /// Label above, then a baseline with a tick at each end. The ticks are
+    /// centred `width` points apart, so that gap is the labelled distance.
+    private func scaleBar(width: CGFloat, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .foregroundColor(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(Color.black.opacity(0.7))
-                .cornerRadius(4)
-                .animation(.none, value: scaleInfo.text)
-        }
-        .padding(8)
-        .background(Color.black.opacity(0.5))
-        .cornerRadius(8)
-        .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded = false
+                .mapLabelOutline()
+                .padding(.leading, Self.tickInset)
+
+            Canvas { context, size in
+                let left = Self.tickInset
+                let right = Self.tickInset + width
+                var line = Path()
+                line.move(to: CGPoint(x: left, y: 0))
+                line.addLine(to: CGPoint(x: left, y: size.height))
+                line.move(to: CGPoint(x: left, y: size.height - 1))
+                line.addLine(to: CGPoint(x: right, y: size.height - 1))
+                line.move(to: CGPoint(x: right, y: 0))
+                line.addLine(to: CGPoint(x: right, y: size.height))
+                // A dark outline under a white stroke reads on satellite and on the light street style
+                context.stroke(line, with: .color(.black.opacity(0.7)), style: StrokeStyle(lineWidth: 4))
+                context.stroke(line, with: .color(.white), style: StrokeStyle(lineWidth: 2))
             }
+            .frame(width: width + 2 * Self.tickInset, height: Self.barHeight)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Map scale")
+        .accessibilityValue(label)
     }
+}
 
-    // MARK: - Scale Calculation (Computed - No State)
-
-    private func calculateScaleInfo() -> (width: CGFloat, text: String) {
-        let center = region.center
-        let span = region.span
-
-        // Calculate distance across the visible region
-        let point1 = CLLocation(
-            latitude: center.latitude,
-            longitude: center.longitude - span.longitudeDelta / 2
-        )
-        let point2 = CLLocation(
-            latitude: center.latitude,
-            longitude: center.longitude + span.longitudeDelta / 2
-        )
-
-        let distanceMeters = point1.distance(from: point2)
-
-        // Get nice rounded scale value
-        let (distance, unit) = calculateScale(from: distanceMeters)
-
-        // Calculate proportional width
-        let maxWidth: CGFloat = 120
-        let minWidth: CGFloat = 60
-        let niceNum = getNiceNumber(distanceMeters)
-        let width = min(maxWidth, max(minWidth, maxWidth * CGFloat(distance) / CGFloat(niceNum)))
-
-        let text = "\(formatDistance(distance)) \(unit)"
-
-        return (width, text)
-    }
-
-    private func calculateScale(from meters: Double) -> (Double, String) {
-        let unitSystem = UnitPreferences.shared.unitSystem
-
-        switch unitSystem {
-        case .metric:
-            if meters >= 1000 {
-                let km = meters / 1000
-                return (getNiceNumber(km), "km")
-            } else {
-                return (getNiceNumber(meters), "m")
-            }
-        case .imperial:
-            let feet = meters * 3.28084
-            let miles = meters / 1609.344
-
-            if miles >= 0.1 {
-                return (getNiceNumber(miles), "mi")
-            } else {
-                return (getNiceNumber(feet), "ft")
-            }
-        }
-    }
-
-    private func getNiceNumber(_ value: Double) -> Double {
-        guard value > 0 else { return 1 }
-        let magnitude = pow(10, floor(log10(value)))
-        let normalized = value / magnitude
-
-        let nice: Double
-        if normalized <= 1 { nice = 1 }
-        else if normalized <= 2 { nice = 2 }
-        else if normalized <= 5 { nice = 5 }
-        else { nice = 10 }
-
-        return nice * magnitude
-    }
-
-    private func formatDistance(_ distance: Double) -> String {
-        if distance >= 100 {
-            return String(format: "%.0f", distance)
-        } else if distance >= 1 {
-            return String(format: "%.0f", distance)
-        } else {
-            return String(format: "%.1f", distance)
-        }
+private extension View {
+    /// A thin dark edge around light text so it stays readable on any map style.
+    func mapLabelOutline() -> some View {
+        self
+            .shadow(color: .black.opacity(0.85), radius: 0, x: 1, y: 0)
+            .shadow(color: .black.opacity(0.85), radius: 0, x: -1, y: 0)
+            .shadow(color: .black.opacity(0.85), radius: 0, x: 0, y: 1)
+            .shadow(color: .black.opacity(0.85), radius: 0, x: 0, y: -1)
     }
 }
 

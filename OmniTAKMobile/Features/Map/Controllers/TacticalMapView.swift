@@ -85,6 +85,10 @@ struct TacticalMapView: UIViewRepresentable {
     /// whenever the Mapbox camera rotates, so the parent can update the
     /// compass overlay needle.
     var onBearingChanged: ((Double) -> Void)? = nil
+    /// Ground metres per screen point at the camera center, reported with every
+    /// camera change (and once when the map opens) so the parent's scale bar
+    /// measures this map and not an approximation of it.
+    var onMetersPerPointChanged: ((Double?) -> Void)? = nil
     /// #178 — when on, contact pins fade by freshness bucket and gain a compact
     /// age label ("<1m" / "Nm" / ">1h"). Off by default; gated by the Settings
     /// "Show point age on map" toggle. Defaulted so other call sites are unchanged.
@@ -226,8 +230,8 @@ struct TacticalMapView: UIViewRepresentable {
         // Lifecycle hooks — load terrain + atmosphere on style load
         // so the operator gets immediate 3D depth without a settings
         // detour, and mirror camera changes back into the SwiftUI
-        // region binding for downstream consumers (scale bar, MGRS
-        // grid, overlay coordinator).
+        // region binding for downstream consumers (MGRS grid, overlay
+        // coordinator). The scale bar reads onMetersPerPointChanged instead.
         let coord = context.coordinator
         coord.mapView = mapView
 
@@ -241,6 +245,13 @@ struct TacticalMapView: UIViewRepresentable {
         coord.cameraChangedToken = mapView.mapboxMap.onCameraChanged.observe { [weak coord, weak mapView] _ in
             guard let coord = coord, let mapView = mapView else { return }
             coord.handleCameraChanged(mapView: mapView)
+        }
+
+        // The scale bar needs a scale before the first camera move, not after it.
+        DispatchQueue.main.async { [weak coord, weak mapView] in
+            guard let coord = coord, let mapView = mapView else { return }
+            let state = mapView.mapboxMap.cameraState
+            coord.reportMetersPerPoint(latitude: state.center.latitude, zoom: state.zoom)
         }
 
         // Issue #72/#73 — listen for the north-snap notification so
@@ -605,8 +616,8 @@ struct TacticalMapView: UIViewRepresentable {
 
         /// React to a Mapbox camera-change event by mirroring the new
         /// state back to the SwiftUI `region` binding so the rest of
-        /// the app (scale bar, MGRS center label, layer toggles) keeps
-        /// up with whatever the operator is doing on screen.
+        /// the app (MGRS center label, layer toggles) keeps up with
+        /// whatever the operator is doing on screen.
         func handleCameraChanged(mapView: MapView) {
             let state = mapView.mapboxMap.cameraState
             if !isProgrammaticUpdate {
@@ -622,6 +633,7 @@ struct TacticalMapView: UIViewRepresentable {
                 // Issue #73 — report bearing so the compass overlay needle tracks
                 // the 2D map's rotation (not just the device's magnetometer).
                 self.parent.onBearingChanged?(state.bearing)
+                self.reportMetersPerPoint(latitude: state.center.latitude, zoom: state.zoom)
                 // Issue #72 — if north-lock is engaged, snap back to 0° on any
                 // user-initiated rotation (bearing drift > 0.5° threshold).
                 if self.parent.isNorthLocked && !self.isProgrammaticUpdate && abs(state.bearing) > 0.5 {
@@ -638,6 +650,12 @@ struct TacticalMapView: UIViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.isUserInteracting = false
             }
+        }
+
+        /// Hand the parent the ground scale at the camera center for the current
+        /// zoom: what Mapbox's own scale bar uses, 512 pt tiles included.
+        func reportMetersPerPoint(latitude: CLLocationDegrees, zoom: CGFloat) {
+            parent.onMetersPerPointChanged?(Projection.metersPerPoint(for: latitude, zoom: zoom))
         }
 
         // MARK: - Annotation refresh fan-out

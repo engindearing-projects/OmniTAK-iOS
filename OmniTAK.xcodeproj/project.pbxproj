@@ -222,6 +222,7 @@
 		77C90E9E99C1F3023C42A912 /* PhotoAttachmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE0BC94C797829D15192516 /* PhotoAttachmentService.swift */; };
 		7815F59874E2A05DAF94510C /* SFGPUUL----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 9F574EC82B38F9A8107A6205 /* SFGPUUL----.svg */; };
 		783AF5F4F93A87A0619C6144 /* ScaleBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 448D0EBEFF3E2A71669016D1 /* ScaleBarView.swift */; };
+		4F536F288F9C44F28A0381AD /* MapScale.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF2551C87EE128B61662D663 /* MapScale.swift */; };
 		78B31CA785CE3564CFC6DAE8 /* MilStdIconService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1119873F4EBB6AC92B2157E0 /* MilStdIconService.swift */; };
 		7931902509B5936FBA2B5226 /* ServersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C34616EDE31B56B2D08565A /* ServersView.swift */; };
 		7985F8F77553018A47ECD92A /* OfflineMapManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFC510F398E76BD5838AB3A0 /* OfflineMapManager.swift */; };
@@ -419,6 +420,7 @@
 		D6CD0200DE6145B6D111E992 /* SNGPUCA----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 1D9483CD3E2E5125BE1AA9E6 /* SNGPUCA----.svg */; };
 		D74967E0D954815E4A43E69D /* SHGPUCI----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 00459F49871153410DCE6A67 /* SHGPUCI----.svg */; };
 		D7A6203FEC6C090F38F35099 /* CesiumCameraSeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */; };
+		2A4BA8FD5AD6DB5DB61C4C4A /* MapScaleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9171D61F1D842E3F64E2A830 /* MapScaleTests.swift */; };
 		D849486F7BDFAA795C171EBF /* GybDetectionParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 618A58C89F64552E4A2F4124 /* GybDetectionParser.swift */; };
 		D92368D49AF6C4AD7DD76C28 /* SUGPUCF----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 38E9D249C5D2CAAAC7C659D8 /* SUGPUCF----.svg */; };
 		DA2A8784EFB5439DE89E2644 /* BloodhoundService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DCD48A428E5AEB0C328EB16 /* BloodhoundService.swift */; };
@@ -578,6 +580,7 @@
 		2D240A72682F8C0E3253BA1F /* CompassOverlayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CompassOverlayView.swift; path = OmniTAKMobile/Features/Map/Views/CompassOverlayView.swift; sourceTree = "<group>"; };
 		2D61F229B86A7E9D62B8B6DC /* CoTEventHandler.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoTEventHandler.swift; path = OmniTAKMobile/CoT/CoTEventHandler.swift; sourceTree = "<group>"; };
 		2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CesiumCameraSeedTests.swift; path = OmniTAKMobileTests/CesiumCameraSeedTests.swift; sourceTree = "<group>"; };
+		9171D61F1D842E3F64E2A830 /* MapScaleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MapScaleTests.swift; path = OmniTAKMobileTests/MapScaleTests.swift; sourceTree = "<group>"; };
 		2DC2F34C8C26D8B010197EF8 /* CSREnrollmentService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CSREnrollmentService.swift; path = OmniTAKMobile/Features/Networking/Services/CSREnrollmentService.swift; sourceTree = "<group>"; };
 		2E68A74AC57A313668A716ED /* SHGPUC-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPUC-----.svg"; sourceTree = "<group>"; };
 		2F863C9B3920784C32F6416D /* AppModePreferences.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppModePreferences.swift; path = OmniTAKMobile/Utilities/Preferences/AppModePreferences.swift; sourceTree = "<group>"; };
@@ -615,6 +618,7 @@
 		43C20C5734319D533A7C2227 /* OfflineMapsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OfflineMapsView.swift; path = OmniTAKMobile/Features/OfflineMaps/Views/OfflineMapsView.swift; sourceTree = "<group>"; };
 		441D3BF6E34A4ECF34A40AEF /* SFGPEVF----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SFGPEVF----.svg"; sourceTree = "<group>"; };
 		448D0EBEFF3E2A71669016D1 /* ScaleBarView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScaleBarView.swift; path = OmniTAKMobile/Features/Map/Views/ScaleBarView.swift; sourceTree = "<group>"; };
+		EF2551C87EE128B61662D663 /* MapScale.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MapScale.swift; path = OmniTAKMobile/Features/Map/Views/MapScale.swift; sourceTree = "<group>"; };
 		450330F089409385FE975F3E /* CSREnrollmentTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CSREnrollmentTests.swift; path = OmniTAKMobileTests/CSREnrollmentTests.swift; sourceTree = "<group>"; };
 		45151A7BD79EE804420303C2 /* SPOTREPView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SPOTREPView.swift; path = OmniTAKMobile/Features/Military/Views/SPOTREPView.swift; sourceTree = "<group>"; };
 		46167ED785145DB9FB57E36B /* MissionPackageModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MissionPackageModels.swift; path = OmniTAKMobile/Features/DataPackages/Models/MissionPackageModels.swift; sourceTree = "<group>"; };
@@ -1258,6 +1262,7 @@
 				D60F60F60F60F60F60F60F60 /* DrawingMoveTests.swift */,
 				64C7049C308AC89CA5B0B79F /* DrawingVertexEditTests.swift */,
 				2D9B234301E66FB09D2BE034 /* CesiumCameraSeedTests.swift */,
+				9171D61F1D842E3F64E2A830 /* MapScaleTests.swift */,
 				CA12B626BFB043BDBC528F07 /* CustomTileURLTests.swift */,
 				8C519123F2BD19CC900B7DE5 /* MeshRoleSplitTests.swift */,
 				8D3A7C46FD7B29D70D019C18 /* TAKServiceTests.swift */,
@@ -1542,6 +1547,7 @@
 				2D240A72682F8C0E3253BA1F /* CompassOverlayView.swift */,
 				6A0A793E185CC30595DAB79B /* CoordinateDisplayView.swift */,
 				448D0EBEFF3E2A71669016D1 /* ScaleBarView.swift */,
+				EF2551C87EE128B61662D663 /* MapScale.swift */,
 				D9EF53FB6EBD8EDF3F86897D /* CoordinateEntryView.swift */,
 				AA65001AB2347C8D9E001234 /* SelfPositionEditSheet.swift */,
 			);
@@ -3014,6 +3020,7 @@
 				D60D60D60D60D60D60D60D60 /* DrawingMoveTests.swift in Sources */,
 				0B3D84FD5B2E90470EDD3D15 /* DrawingVertexEditTests.swift in Sources */,
 				D7A6203FEC6C090F38F35099 /* CesiumCameraSeedTests.swift in Sources */,
+				2A4BA8FD5AD6DB5DB61C4C4A /* MapScaleTests.swift in Sources */,
 				BC4BB03E3F2142BC941EA004 /* CustomTileURLTests.swift in Sources */,
 				F2859752F90F4173967D575C /* MeshRoleSplitTests.swift in Sources */,
 				4DF8129B40825E01D7F5BA79 /* TAKServiceTests.swift in Sources */,
@@ -3118,6 +3125,7 @@
 				A9321E0EC74569E8473691D6 /* CompassOverlayView.swift in Sources */,
 				CE5F2F49F3722EA2EF4E8420 /* CoordinateDisplayView.swift in Sources */,
 				783AF5F4F93A87A0619C6144 /* ScaleBarView.swift in Sources */,
+				4F536F288F9C44F28A0381AD /* MapScale.swift in Sources */,
 				CB50E63D3524EEB1A11227CD /* MeasurementManager.swift in Sources */,
 				AFD778BE3B5663B5918782BF /* ElevationProfileModels.swift in Sources */,
 				FD9A668D450BCB86426AEBE1 /* LineOfSightModels.swift in Sources */,

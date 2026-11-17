@@ -168,6 +168,10 @@ struct ATAKMapView: View {
     // both engines on every camera-change event so the compass overlay always
     // reflects the live map rotation (not just device heading).
     @State private var mapBearing: Double = 0
+    /// Ground metres per screen point at the middle of the active engine's map,
+    /// fed by that engine and read by the scale bar. nil until the engine reports
+    /// one, and cleared on an engine switch so the other engine's number is never shown.
+    @State private var mapMetersPerPoint: Double?
     // Issue #62 — 2D→3D camera seed. Captured when the operator switches from
     // Mapbox 2D to the Cesium globe so the globe opens at the operator's last
     // 2D view. Cleared after each switch (the CesiumMainMap view is recreated on
@@ -352,6 +356,10 @@ struct ATAKMapView: View {
             // bearing to the parent for the compass overlay needle.
             onBearingChanged: { bearing in
                 mapBearing = bearing
+            },
+            // Scale bar: the 2D engine's real ground scale at the camera center.
+            onMetersPerPointChanged: { metersPerPoint in
+                if mapEngine == .mapbox2D { mapMetersPerPoint = metersPerPoint }
             },
             // #178 — fade/label contact pins by age when enabled in Settings.
             // Referencing stalenessTick here ties the slow timer to a re-render
@@ -699,7 +707,7 @@ struct ATAKMapView: View {
     @ViewBuilder
     private var scaleBar: some View {
         ScaleBarView(
-            region: mapRegion,
+            metersPerPoint: mapMetersPerPoint,
             isVisible: showScaleBar,
             compact: isLandscape
         )
@@ -1250,6 +1258,8 @@ struct ATAKMapView: View {
         // Switching 3D→2D clears the seed — the reverse direction already works
         // via mapRegion mirroring from Cesium camera-changed events.
         .onChange(of: mapEngineRaw) { newValue in
+            // The scale bar must never show the engine we just left.
+            mapMetersPerPoint = nil
             if drawingMoveSession.isActive { cancelDrawingMove() }
             // Issue #84 — same bail-out for vertex-edit mode on engine toggle.
             if drawingVertexEditSession.isActive { cancelVertexEdit() }
@@ -2062,8 +2072,10 @@ struct ATAKMapView: View {
             // is engaged the JS side pins heading to 0° itself (setNorthLock),
             // so this just reflects the corrected value — no native re-snap loop.
             mapBearing = isNorthLocked ? 0 : cam.heading
+            // Scale bar: the globe measured its own ground scale at the screen center.
+            if mapEngine == .cesium3D { mapMetersPerPoint = cam.metersPerPoint }
             // Mirror the Cesium camera into mapRegion so 2D-derived chrome
-            // (scale bar, MGRS grid) reads the right scale on the globe, an
+            // (MGRS grid) reads a plausible scale on the globe, an
             // engine toggle lands at the same view, and — crucially — the
             // point-drop coordinate (MapCenterStore, fed from mapRegion) is
             // the globe point under the screen-center crosshair, not the
