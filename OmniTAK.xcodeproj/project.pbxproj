@@ -94,6 +94,8 @@
 		2C213DD4704CBFF5DCE841C5 /* PluginSettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB82A68BE625612A8B0E94DC /* PluginSettingsManager.swift */; };
 		2CA3C8BEC25D704E76152257 /* SFSPX------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 1146597916B3AEC4BAE8C687 /* SFSPX------.svg */; };
 		2E7F17AD3D074A695AC601C0 /* CoTAge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3335C3DF14B38CB233099BC6 /* CoTAge.swift */; };
+		8F09161A0334DFDCDF9EC2CA /* ContactMaxAgeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7453BA22EB2AC22B71D1C11 /* ContactMaxAgeMonitor.swift */; };
+		0074AE9341FEA581692BE88C /* ContactMaxAge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 668FB4AE260A96EBEFFF8451 /* ContactMaxAge.swift */; };
 		2EA7B6EBC0683F9B2FE87994 /* CertificateImportPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9AB820E688425E45EE60103 /* CertificateImportPipeline.swift */; };
 		2F28591B9FC564C3E5B232CC /* DrawingToolsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FCF30C181516B0451F11577 /* DrawingToolsPanel.swift */; };
 		2F9034902998C844AA7E4C4F /* SUSP-------.svg in Resources */ = {isa = PBXBuildFile; fileRef = 05AC64D605838B84290656CE /* SUSP-------.svg */; };
@@ -426,6 +428,7 @@
 		EBFA22DE58FD890D0EEB7385 /* ADSBTrafficView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21ECE157083843DC0D219677 /* ADSBTrafficView.swift */; };
 		EDAA48D45FB34C818BCE785F /* SHAPMHA----.svg in Resources */ = {isa = PBXBuildFile; fileRef = FA4DFA4B9DB560A649CF0ACB /* SHAPMHA----.svg */; };
 		EDD1AE9BDD0405B50F460BE5 /* CoTAgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E950DB1D70D2C1193584A481 /* CoTAgeTests.swift */; };
+		770CBB9BA55AA8475EE3C313 /* ContactMaxAgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D786C6D33C71E3E97157D78A /* ContactMaxAgeTests.swift */; };
 		EEFF9B0094B33F8108BD20E8 /* SFAPMHA----.svg in Resources */ = {isa = PBXBuildFile; fileRef = C97F12CEA4D82BCF13A41600 /* SFAPMHA----.svg */; };
 		EF0CC48BDD0F4677A29BE8CA /* DeepLinkAPIPortTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1C8BE0D1AB61B76CD11A65 /* DeepLinkAPIPortTests.swift */; };
 		F02F379EF9D5597ECAF8CC2A /* TrackRecordingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2C570CC1F6DF0DE16113B /* TrackRecordingService.swift */; };
@@ -563,6 +566,8 @@
 		32A0B14AA6AE2A4EA6F01207 /* SUAPMF-----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SUAPMF-----.svg"; sourceTree = "<group>"; };
 		32DDAA71A32AEB4CF7544E37 /* MGRSConverter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MGRSConverter.swift; path = OmniTAKMobile/Utilities/Converters/MGRSConverter.swift; sourceTree = "<group>"; };
 		3335C3DF14B38CB233099BC6 /* CoTAge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoTAge.swift; path = OmniTAKMobile/CoT/CoTAge.swift; sourceTree = "<group>"; };
+		A7453BA22EB2AC22B71D1C11 /* ContactMaxAgeMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactMaxAgeMonitor.swift; path = OmniTAKMobile/CoT/ContactMaxAgeMonitor.swift; sourceTree = "<group>"; };
+		668FB4AE260A96EBEFFF8451 /* ContactMaxAge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactMaxAge.swift; path = OmniTAKMobile/CoT/ContactMaxAge.swift; sourceTree = "<group>"; };
 		3370233EDA8C5D193E4F794E /* ServerManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ServerManager.swift; path = OmniTAKMobile/Features/Networking/Managers/ServerManager.swift; sourceTree = "<group>"; };
 		33BE217D66F59D9E9606C20A /* GeofenceManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GeofenceManager.swift; path = OmniTAKMobile/Features/Geofencing/Managers/GeofenceManager.swift; sourceTree = "<group>"; };
 		341557E70705872E61DF6310 /* ToolSheetHost.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OmniTAKMobile/Core/App/ToolSheetHost.swift; sourceTree = "<group>"; };
@@ -900,6 +905,7 @@
 		E763527D180A2BFA06815720 /* SHAPMFQ----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHAPMFQ----.svg"; sourceTree = "<group>"; };
 		E7CD94F2AA3C9E1621AE6021 /* es */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = es; path = OmniTAKMobile/Resources/es.lproj/Localizable.strings; sourceTree = "<group>"; };
 		E950DB1D70D2C1193584A481 /* CoTAgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoTAgeTests.swift; path = OmniTAKMobileTests/CoTAgeTests.swift; sourceTree = "<group>"; };
+		D786C6D33C71E3E97157D78A /* ContactMaxAgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ContactMaxAgeTests.swift; path = OmniTAKMobileTests/ContactMaxAgeTests.swift; sourceTree = "<group>"; };
 		EA171D08B8BECD16ACA18D51 /* SHGP-------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGP-------.svg"; sourceTree = "<group>"; };
 		EA4A86523E550E87AC1EE8A4 /* SALUTEReportView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SALUTEReportView.swift; path = OmniTAKMobile/Features/Military/Views/SALUTEReportView.swift; sourceTree = "<group>"; };
 		EA65513B351E6E8D864A945A /* RemoteIdAppBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RemoteIdAppBridge.swift; path = OmniTAKMobile/Features/RemoteID/Services/RemoteIdAppBridge.swift; sourceTree = "<group>"; };
@@ -1126,6 +1132,8 @@
 			isa = PBXGroup;
 			children = (
 				3335C3DF14B38CB233099BC6 /* CoTAge.swift */,
+				A7453BA22EB2AC22B71D1C11 /* ContactMaxAgeMonitor.swift */,
+				668FB4AE260A96EBEFFF8451 /* ContactMaxAge.swift */,
 				12E7752C58DAF145BBCB8BE7 /* CoTSource.swift */,
 				2D61F229B86A7E9D62B8B6DC /* CoTEventHandler.swift */,
 				ADDFCAFC6CCE91DC4AA9FBF6 /* CoTMessageParser.swift */,
@@ -1193,6 +1201,7 @@
 			isa = PBXGroup;
 			children = (
 				E950DB1D70D2C1193584A481 /* CoTAgeTests.swift */,
+				D786C6D33C71E3E97157D78A /* ContactMaxAgeTests.swift */,
 				FDDE43008695778FF4D4A868 /* CoTSourceTests.swift */,
 				A30B6DE30B0975605C73973B /* ATAKPluginParserTests.swift */,
 				ECFF97D1F93D4F76B58669BC /* IconsetPackParserTests.swift */,
@@ -2909,6 +2918,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				EDD1AE9BDD0405B50F460BE5 /* CoTAgeTests.swift in Sources */,
+				770CBB9BA55AA8475EE3C313 /* ContactMaxAgeTests.swift in Sources */,
 				B3373CAACE7C57446A5A6729 /* CoTSourceTests.swift in Sources */,
 				355F6BBFA52041BC0B7788FC /* ATAKPluginParserTests.swift in Sources */,
 				D366E0C85BE74FCEA8E8C5A3 /* IconsetPackParserTests.swift in Sources */,
@@ -2978,6 +2988,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				2E7F17AD3D074A695AC601C0 /* CoTAge.swift in Sources */,
+				8F09161A0334DFDCDF9EC2CA /* ContactMaxAgeMonitor.swift in Sources */,
+				0074AE9341FEA581692BE88C /* ContactMaxAge.swift in Sources */,
 				B9A61822B72892554A42F866 /* CoTSource.swift in Sources */,
 				A27A2BB51FD644288B3E7213 /* MapLibreService.swift in Sources */,
 				8678488239C0D1DB2116DAA1 /* OmniTAKMobileApp.swift in Sources */,

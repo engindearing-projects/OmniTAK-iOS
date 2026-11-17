@@ -91,6 +91,7 @@ Backed by `UserDefaults`. Same ATAK-side aliases honoured.
 | `breadcrumbTrailsEnabled` | boolean | `true` |, |
 | `trailMaxLength` | int (10–500) | `100` |, |
 | `trailColorName` | string (`cyan`, `green`, `orange`, `red`, `blue`) | `cyan` |, |
+| `contactMaxAgeMinutes` | int (`5`, `10`, `15`, `30`, `60`, `120`; `0` = Never) | `30` |, |
 | `appMode` | string (`tactical`, `fire_rescue`, `sar`, `civilian`) | `tactical` |, |
 
 ### iOS Meshtastic device-config keys
