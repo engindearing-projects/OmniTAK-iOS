@@ -99,6 +99,14 @@ enum RadioProto {
         static let gpsMode = 13
     }
 
+    /// LoRaConfig (config.proto): the parts the position floor looks at, and the
+    /// region, which a radio at work always has.
+    enum LoRa {
+        static let usePreset = 1
+        static let modemPreset = 2
+        static let region = 7
+    }
+
     enum Channel {
         static let index = 1
         static let settings = 2
