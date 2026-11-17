@@ -319,6 +319,26 @@ final class FirstFixCameraTests: XCTestCase {
         XCTAssertEqual(try range(1_234, Double.nan, -60), 1_234)
     }
 
+    func testTheScaleIsPostedAgainOnlyWhenItHasMovedByMoreThanOnePercent() throws {
+        // measured once a second, so a scale that was wrong when the terrain had not loaded is put right
+        let html = CesiumMainMap.html
+        let begin = try XCTUnwrap(html.range(of: "// SCALE-MOVED-BEGIN"), "marker missing from cesium_scene.html")
+        let end = try XCTUnwrap(html.range(of: "// SCALE-MOVED-END"), "marker missing from cesium_scene.html")
+        let start = try XCTUnwrap(html[begin.upperBound...].firstIndex(of: "\n"))
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript(String(html[start..<end.lowerBound]))
+        func moved(_ previous: Any, _ next: Any) throws -> Bool {
+            try XCTUnwrap(context.objectForKeyedSubscript("_scaleMoved").call(withArguments: [previous, next])).toBool()
+        }
+        XCTAssertTrue(try moved(26.43, 80.81), "the 3 times too coarse value that stayed on screen")
+        XCTAssertTrue(try moved(80.81, 25.5))
+        XCTAssertFalse(try moved(25.5, 25.6), "a change of under one percent is not posted")
+        XCTAssertTrue(try moved(25.5, 26.0))
+        XCTAssertTrue(try moved(NSNull(), 25.5), "a scale appears")
+        XCTAssertTrue(try moved(25.5, NSNull()), "a scale goes (the horizon)")
+        XCTAssertFalse(try moved(NSNull(), NSNull()))
+    }
+
     // MARK: - The onboarding page that asks
 
     func testEveryLanguageHasTheLocationPageInItsOwnTable() throws {
