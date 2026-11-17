@@ -54,7 +54,7 @@ struct ATAKStatusBar: View {
                 if !isPortrait {
                     Text("OmniTAK")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(Color(red: 1.0, green: 0.988, blue: 0.0))
+                        .foregroundColor(StatusStripStyle.brand.color)
                 }
             }
 
@@ -73,7 +73,7 @@ struct ATAKStatusBar: View {
                         HStack(spacing: 2) {
                             ForEach(Array(serverConnectedFlags.enumerated()), id: \.offset) { _, up in
                                 Circle()
-                                    .fill(up ? Color.green : Color.gray.opacity(0.6))
+                                    .fill((up ? StatusStripStyle.good : StatusStripStyle.quiet).color)
                                     .frame(width: 5, height: 5)
                             }
                         }

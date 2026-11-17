@@ -34,6 +34,14 @@ final class StatusStripStyleTests: XCTestCase {
         }
     }
 
+    func testTheLandscapeNameAndTheServerDotsAreDrawnInTheStylesColours() {
+        // the "OmniTAK" name (yellow) and the dots of a server list are part of the strip too: they were
+        // left in their own greens, greys and yellow, outside what is checked
+        XCTAssertTrue(StatusStripStyle.allText.contains(StatusStripStyle.brand))
+        XCTAssertTrue(StatusStripStyle.allText.contains(StatusStripStyle.good))
+        XCTAssertTrue(StatusStripStyle.allText.contains(StatusStripStyle.quiet))
+    }
+
     func testTheOldColoursOnTheOldBackingDidNotReadOnAPaleMap() {
         // the grey server name, the blue and the orange counts, and the green fix, on black at 50 percent
         let old: [StatusStripStyle.RGB] = [

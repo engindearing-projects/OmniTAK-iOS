@@ -42,9 +42,11 @@ enum StatusStripStyle {
     static let good = RGB(r: 0.45, g: 0.95, b: 0.55)
     /// Partly connected, and a poor position fix.
     static let warning = RGB(r: 1.00, g: 0.85, b: 0.30)
+    /// The "OmniTAK" name shown on a phone held on its side (the app's yellow).
+    static let brand = RGB(r: 1.00, g: 0.988, b: 0.00)
 
-    /// Every colour the strip draws text in.
-    static let allText: [RGB] = [text, quiet, received, sent, good, warning]
+    /// Every colour the strip draws, as text or as a status dot.
+    static let allText: [RGB] = [text, quiet, received, sent, good, warning, brand]
 
     /// WCAG contrast ratio of two relative luminances.
     static func contrast(_ a: Double, _ b: Double) -> Double {

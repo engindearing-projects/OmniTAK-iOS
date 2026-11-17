@@ -43,7 +43,7 @@ struct ScaleBarView: View {
     /// The row the bar line is drawn in. As wide as the longest bar, so where it is
     /// (and so the scale anchor) does not depend on how long the bar is right now,
     /// and it stays in place while the bar is hidden.
-    private static let rowWidth: CGFloat = maxBarWidth + 2 * tickInset
+    static let rowWidth: CGFloat = maxBarWidth + 2 * tickInset
 
     var body: some View {
         Group {

@@ -208,20 +208,18 @@ struct ATAKMapView: View {
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
     /// Where the bottom bar is (with its tip, when shown): the floating controls are stacked above it.
     @Environment(\.bottomBarMeasure) private var barMeasure
+    /// The position box's drawn height while it is shown (0 until it has been laid out).
+    @State private var callsignCardHeight: CGFloat = 0
 
     var isLandscape: Bool {
         horizontalSizeClass == .regular || verticalSizeClass == .compact
     }
 
-    // #182 — landscape (plate-carrier) compaction. On the wide-but-short
-    // landscape canvas the portrait bottom offsets (tuned to clear the
-    // full-width floating bar + the tall tab strip) push the bottom chrome
-    // most of the way up the map. In landscape the floating bar is a compact
-    // centered pill (see CustomToolbar), so the bottom corners are free and
-    // the chrome only needs to clear the home indicator. These offsets shrink
-    // the bottom reservations accordingly; portrait keeps its original values.
     /// Where the floating controls sit above the bottom bar, from where the bar really is (see
-    /// MapChromeLayout). The 2D map's own logo and attribution button get a row under them.
+    /// MapChromeLayout). In landscape (#182) the bar is a compact centred pill, so a column that is
+    /// not across from it keeps to the bottom corner; in portrait the bar spans the window and
+    /// everything sits above it, above its first-run tip too. The 2D map's own logo and attribution
+    /// button get a row under the controls.
     private var chrome: MapChromeLayout.Placement {
         MapChromeLayout.placement(
             bar: barMeasure.bar,
@@ -392,7 +390,8 @@ struct ATAKMapView: View {
             // The map's logo and attribution button must stay visible and tappable: they sit
             // just above the bar, with the controls stacked above them.
             logoBottom: chrome.logoBottom ?? 4,
-            attributionBottom: chrome.attributionBottom ?? 8
+            attributionBottom: chrome.attributionBottom ?? 8,
+            safeBottom: barMeasure.safeBottom
         )
         .ignoresSafeArea()
         .onReceive(stalenessTimer) { _ in
@@ -654,14 +653,23 @@ struct ATAKMapView: View {
                             labelFactor: labelFactor,
                             maxWidth: MapChromeLayout.cardWidth(availableWidth: geo.size.width)
                         )
+                        // Its drawn height (it grows with the text size): what shares its column
+                        // above it (the lasso pill) is placed from it.
+                        .background(GeometryReader { card in
+                            Color.clear.preference(key: CallsignCardHeightKey.self, value: card.size.height)
+                        })
                         .padding(.trailing, MapChromeLayout.rightMargin)
                         .padding(.bottom, callsignBottomPad)
                     }
                 }
             }
             .zIndex(1003)
+            .onPreferenceChange(CallsignCardHeightKey.self) { callsignCardHeight = $0 }
         }
     }
+
+    /// Whether the position box is on screen.
+    private var callsignCardShown: Bool { showCallsignPanel && locationManager.location != nil }
 
     /// A geofence alert across the top of the map: below the status strip, the aircraft pill and
     /// the compasses, and below the "Range rings placed" banner while that is up. Tapping it opens
@@ -949,8 +957,10 @@ struct ATAKMapView: View {
                             showLassoActions = true
                         }
                     )
-                    .padding(.trailing, 16)
-                    .padding(.bottom, isLandscape ? 96 : 200) // above the bottom toolbar (#182 compact in landscape)
+                    .padding(.trailing, MapChromeLayout.rightMargin)
+                    // In the position box's column: on the box when it is shown, else above the bar.
+                    .padding(.bottom, MapChromeLayout.bottomAbove(cardBottom: chrome.cardBottom,
+                                                                  cardHeight: callsignCardShown ? callsignCardHeight : nil))
                 }
             }
             .zIndex(2000)
@@ -1691,7 +1701,7 @@ struct ATAKMapView: View {
                         videoVisible = false
                     }
                     .padding(.trailing, 12)
-                    .padding(.bottom, 90) // clear the bottom toolbar
+                    .padding(.bottom, chrome.cardBottom) // clear the bottom bar, its tip and the 2D map's attribution
                 }
             }
             .allowsHitTesting(true)
@@ -3159,4 +3169,10 @@ private struct PointDropCrosshair: View {
         }
         .shadow(color: .black.opacity(0.7), radius: 2)
     }
+}
+
+/// The position box's drawn height, reported up so the lasso pill can sit on its top edge.
+private struct CallsignCardHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

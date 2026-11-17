@@ -25,7 +25,9 @@ enum MapChromeLayout {
     static let zoomBlockPadding: CGFloat = 8
     /// The scale bar: its label, the 1 pt under it, and the row its line is drawn in.
     static let scaleBar: CGFloat = 24
-    /// The row the 2D map's own logo and attribution button sit in.
+    /// The row the 2D map's own logo and attribution button sit in: the height of what is drawn. The
+    /// attribution button's frame is 44 pt with its glyph at the bottom, so the top 16 pt of that frame
+    /// (nothing is drawn there) can lie under the position box; the glyph itself never does.
     static let ornamentRow: CGFloat = 28
     /// How far a control in a corner keeps from the bottom edge when the bar is not in its way.
     static let cornerMargin: CGFloat = 12
@@ -47,6 +49,14 @@ enum MapChromeLayout {
                                                   leadingReserved: Double(leftColumnWidth + gap),
                                                   trailing: Double(rightMargin))
         return min(cardMaxWidth, CGFloat(available))
+    }
+
+    /// Where something that shares the position box's column and sits above it (the lasso selection
+    /// pill) starts: on the box's top edge with a gap, or where the box would start while it is not
+    /// shown. `cardHeight` is the box's drawn height (it grows with the text size), nil or 0 when hidden.
+    static func bottomAbove(cardBottom: CGFloat, cardHeight: CGFloat?) -> CGFloat {
+        guard let cardHeight, cardHeight > 0 else { return cardBottom }
+        return cardBottom + cardHeight + gap
     }
 
     /// The bar's distance from the bottom edge when it has not been measured yet (a portrait phone's).

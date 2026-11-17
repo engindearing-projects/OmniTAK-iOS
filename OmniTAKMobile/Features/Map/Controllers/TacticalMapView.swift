@@ -115,6 +115,11 @@ struct TacticalMapView: UIViewRepresentable {
     /// above the edge) is under it, where they could not be seen or tapped.
     var logoBottom: CGFloat = 4
     var attributionBottom: CGFloat = 8
+    /// The bottom safe-area inset the map's ornaments are measured from (the SDK lays them out from
+    /// the safe area, the bar floats over it). Passed in from the window's own measure: the map view's
+    /// own inset is zero before it is in a window and a rotation behind while it turns, which put the
+    /// logo and the (i) up to 34 pt too high until something else updated the view.
+    var safeBottom: CGFloat = 0
 
     // MARK: - UIViewRepresentable
 
@@ -324,7 +329,8 @@ struct TacticalMapView: UIViewRepresentable {
             }
         }
 
-        TacticalMapView.placeOrnaments(on: mapView, logoBottom: logoBottom, attributionBottom: attributionBottom)
+        TacticalMapView.placeOrnaments(on: mapView, logoBottom: logoBottom, attributionBottom: attributionBottom,
+                                       safeBottom: safeBottom)
 
         // Style swap on mapType change
         let desiredStyle = TacticalMapView.styleURI(for: mapType)
@@ -417,10 +423,8 @@ struct TacticalMapView: UIViewRepresentable {
     }
 
     /// Puts the logo bottom-left and the attribution button bottom-right, each `bottom` points above
-    /// the bottom edge of the screen. The SDK measures from the safe area, so the view's own bottom
-    /// inset comes off.
-    static func placeOrnaments(on mapView: MapView, logoBottom: CGFloat, attributionBottom: CGFloat) {
-        let inset = mapView.safeAreaInsets.bottom
+    /// the bottom edge of the screen. The SDK measures from the safe area, so `safeBottom` comes off.
+    static func placeOrnaments(on mapView: MapView, logoBottom: CGFloat, attributionBottom: CGFloat, safeBottom inset: CGFloat) {
         var logo = mapView.ornaments.options.logo
         let logoMargins = CGPoint(x: 8, y: max(logoBottom - inset, 0))
         if logo.position != .bottomLeading || logo.margins != logoMargins {
