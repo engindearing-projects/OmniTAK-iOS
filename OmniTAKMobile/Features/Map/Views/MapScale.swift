@@ -11,6 +11,18 @@
 //  width that distance covers on screen: what the label says is what the line
 //  measures.
 //
+//  Where the scale is taken matters as much as the rounding. The bar sits in the
+//  bottom-left corner, and on a tilted view the ground there is nearer the camera
+//  than the ground at the middle of the screen, so a scale taken at the middle
+//  makes the bar read long for the ground it lies on (16 % long on the globe at
+//  its default tilt, 27 % on the 2D map). The scale is therefore measured on the
+//  bar's own row: the ground distance between the two screen points 50 pt either
+//  side of the scale anchor, divided by the real distance between those points.
+//  The anchor is the middle of the bar's maximum width, on the bar line's row,
+//  and comes from the bar's own frame (see `ScaleBarView`). A line measured
+//  across the middle of a tilted screen therefore does NOT match the bar, by
+//  design: do not move the sample back to the center.
+//
 
 import CoreGraphics
 import Foundation
@@ -75,5 +87,84 @@ enum MapScale {
     private static func label(value: Double, symbol: String) -> String {
         let number = value >= 1 ? String(format: "%.0f", value) : String(format: "%.1f", value)
         return "\(number) \(symbol)"
+    }
+}
+
+// MARK: - Where the bar is measured
+
+extension MapScale {
+    /// Half the baseline the ground scale is measured over, in points (CSS px on the globe).
+    static let sampleHalfSpan: CGFloat = 50
+
+    /// The two screen points the ground scale is measured between, on one row.
+    struct Sample: Equatable {
+        let left: CGPoint
+        let right: CGPoint
+        /// How far apart they really are, in points. The ground distance is divided
+        /// by this, not by 100: near an edge the points are pulled onto the map and
+        /// the baseline gets shorter.
+        var span: CGFloat { right.x - left.x }
+    }
+
+    /// The two points to measure between: `sampleHalfSpan` either side of the scale
+    /// anchor, on the anchor's row, both kept on the map.
+    ///
+    /// - Parameters:
+    ///   - anchor: the scale anchor in the map view's own coordinate space, or nil
+    ///     until the bar has been laid out, which measures at the middle of the map.
+    ///   - mapSize: the map view's size in points.
+    /// - Returns: nil when the map has no size yet or the anchor is not a number.
+    static func sample(anchor: CGPoint?, mapSize: CGSize) -> Sample? {
+        guard mapSize.width > 0, mapSize.height > 0,
+              mapSize.width.isFinite, mapSize.height.isFinite else { return nil }
+        let point = anchor ?? CGPoint(x: mapSize.width / 2, y: mapSize.height / 2)
+        guard point.x.isFinite, point.y.isFinite else { return nil }
+        let x = min(max(point.x, 0), mapSize.width)
+        let y = min(max(point.y, 0), mapSize.height)
+        let left = max(x - sampleHalfSpan, 0)
+        let right = min(x + sampleHalfSpan, mapSize.width)
+        guard right > left else { return nil }
+        return Sample(left: CGPoint(x: left, y: y), right: CGPoint(x: right, y: y))
+    }
+
+    /// Ground metres per screen point from the ground distance between a sample's
+    /// two points. nil when there is no honest distance.
+    static func metersPerPoint(groundDistance: Double?, over sample: Sample) -> Double? {
+        guard let groundDistance, groundDistance.isFinite, groundDistance > 0, sample.span > 0 else { return nil }
+        return groundDistance / Double(sample.span)
+    }
+
+    /// The scale at the bar for an engine that can measure ground distance between
+    /// two screen points.
+    ///
+    /// - Parameters:
+    ///   - anchor: the scale anchor, nil until the bar's place is known.
+    ///   - mapSize: the map view's size in points.
+    ///   - fallback: the scale to use until an anchor is known (the 2D map's tile
+    ///     formula at the camera center).
+    ///   - groundDistance: metres of ground between two screen points of the map,
+    ///     nil unless both are on the ground (not above the horizon, not off the globe).
+    /// - Returns: nil (no bar) when a point is not on the ground. Once an anchor
+    ///   is known the fallback is never used: a bar measured somewhere else is the
+    ///   very error this exists to remove.
+    static func metersPerPoint(anchor: CGPoint?,
+                               mapSize: CGSize,
+                               fallback: () -> Double?,
+                               groundDistance: (CGPoint, CGPoint) -> Double?) -> Double? {
+        guard let anchor else { return fallback() }
+        guard let sample = sample(anchor: anchor, mapSize: mapSize) else { return nil }
+        return metersPerPoint(groundDistance: groundDistance(sample.left, sample.right), over: sample)
+    }
+
+    /// The scale anchor, in the map's coordinate space, from the frames of the bar's
+    /// row and of the map, both measured in one common space.
+    ///
+    /// - Parameters:
+    ///   - barRow: the row the bar line is drawn in, as wide as the longest bar, so
+    ///     the anchor does not move when the bar gets shorter or longer.
+    ///   - map: the map view's frame.
+    ///   - baselineInset: how far above the bottom of the row the bar line is drawn.
+    static func anchor(barRow: CGRect, in map: CGRect, baselineInset: CGFloat) -> CGPoint {
+        CGPoint(x: barRow.midX - map.minX, y: barRow.maxY - baselineInset - map.minY)
     }
 }

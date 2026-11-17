@@ -85,10 +85,14 @@ struct TacticalMapView: UIViewRepresentable {
     /// whenever the Mapbox camera rotates, so the parent can update the
     /// compass overlay needle.
     var onBearingChanged: ((Double) -> Void)? = nil
-    /// Ground metres per screen point at the camera center, reported with every
-    /// camera change (and once when the map opens) so the parent's scale bar
-    /// measures this map and not an approximation of it.
+    /// Ground metres per screen point at the scale bar, reported with every camera
+    /// change, whenever the bar moves, and once when the map opens, so the parent's
+    /// scale bar measures the ground it is drawn over and not an approximation.
     var onMetersPerPointChanged: ((Double?) -> Void)? = nil
+    /// Where the scale bar sits, in this map view's own coordinate space (the
+    /// middle of its maximum width, on its line's row). nil until the bar has been
+    /// laid out; the scale is then the tile formula at the camera center.
+    var scaleAnchor: CGPoint? = nil
     /// #178 — when on, contact pins fade by freshness bucket and gain a compact
     /// age label ("<1m" / "Nm" / ">1h"). Off by default; gated by the Settings
     /// "Show point age on map" toggle. Defaulted so other call sites are unchanged.
@@ -247,11 +251,18 @@ struct TacticalMapView: UIViewRepresentable {
             coord.handleCameraChanged(mapView: mapView)
         }
 
+        // For a moment after the map's size changes (rotation) it still projects with the old
+        // size and says so with no camera event, so measure again once it has settled.
+        coord.idleToken = mapView.mapboxMap.onMapIdle.observe { [weak coord, weak mapView] _ in
+            guard let coord = coord, let mapView = mapView else { return }
+            coord.reportMetersPerPoint(mapView: mapView)
+        }
+
         // The scale bar needs a scale before the first camera move, not after it.
+        coord.scaleAnchor = scaleAnchor
         DispatchQueue.main.async { [weak coord, weak mapView] in
             guard let coord = coord, let mapView = mapView else { return }
-            let state = mapView.mapboxMap.cameraState
-            coord.reportMetersPerPoint(latitude: state.center.latitude, zoom: state.zoom)
+            coord.reportMetersPerPoint(mapView: mapView)
         }
 
         // Issue #72/#73 — listen for the north-snap notification so
@@ -284,6 +295,17 @@ struct TacticalMapView: UIViewRepresentable {
 
     func updateUIView(_ mapView: MapView, context: Context) {
         context.coordinator.parent = self
+
+        // The scale bar moved (first layout, rotation, compact layout): measure
+        // the ground under its new place. Deferred, because reporting sets the
+        // parent's state and this is a view update.
+        if context.coordinator.scaleAnchor != scaleAnchor {
+            context.coordinator.scaleAnchor = scaleAnchor
+            DispatchQueue.main.async { [weak coord = context.coordinator, weak mapView] in
+                guard let coord = coord, let mapView = mapView else { return }
+                coord.reportMetersPerPoint(mapView: mapView)
+            }
+        }
 
         // Style swap on mapType change
         let desiredStyle = TacticalMapView.styleURI(for: mapType)
@@ -457,6 +479,23 @@ struct TacticalMapView: UIViewRepresentable {
         )
     }
 
+    /// Metres of ground between two points of this map view, given in the map
+    /// view's own coordinate space, along the surface (pitch, terrain and the
+    /// Mercator stretch are all in what the map reports). nil unless both points
+    /// are on the ground: a point above the horizon of a steeply pitched map has
+    /// no ground under it, and the scale bar is then hidden rather than wrong.
+    static func groundDistance(on map: MapboxMap) -> (CGPoint, CGPoint) -> Double? {
+        { first, second in
+            let a = map.coordinateInfo(for: first)
+            let b = map.coordinateInfo(for: second)
+            guard a.isOnSurface, b.isOnSurface,
+                  CLLocationCoordinate2DIsValid(a.coordinate), CLLocationCoordinate2DIsValid(b.coordinate)
+            else { return nil }
+            return CLLocation(latitude: a.coordinate.latitude, longitude: a.coordinate.longitude)
+                .distance(from: CLLocation(latitude: b.coordinate.latitude, longitude: b.coordinate.longitude))
+        }
+    }
+
     // MARK: - Coordinator
 
     /// All of the per-MapView state lives here: annotation managers,
@@ -466,6 +505,13 @@ struct TacticalMapView: UIViewRepresentable {
     class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: TacticalMapView
         weak var mapView: MapView?
+        /// The scale anchor the last report was measured at.
+        var scaleAnchor: CGPoint?
+        /// Keeps the map-idle subscription that re-measures the scale alive.
+        var idleToken: AnyCancelable?
+        /// The last scale handed to the parent, so an unchanged one is not handed over again
+        /// (the map goes idle often, and every hand-over redraws the screen).
+        private var reportedScale: Double??
 
         // Lifecycle / observation tokens
         var styleLoadedToken: AnyCancelable?
@@ -633,7 +679,7 @@ struct TacticalMapView: UIViewRepresentable {
                 // Issue #73 — report bearing so the compass overlay needle tracks
                 // the 2D map's rotation (not just the device's magnetometer).
                 self.parent.onBearingChanged?(state.bearing)
-                self.reportMetersPerPoint(latitude: state.center.latitude, zoom: state.zoom)
+                self.reportMetersPerPoint(mapView: mapView)
                 // Issue #72 — if north-lock is engaged, snap back to 0° on any
                 // user-initiated rotation (bearing drift > 0.5° threshold).
                 if self.parent.isNorthLocked && !self.isProgrammaticUpdate && abs(state.bearing) > 0.5 {
@@ -652,10 +698,22 @@ struct TacticalMapView: UIViewRepresentable {
             }
         }
 
-        /// Hand the parent the ground scale at the camera center for the current
-        /// zoom: what Mapbox's own scale bar uses, 512 pt tiles included.
-        func reportMetersPerPoint(latitude: CLLocationDegrees, zoom: CGFloat) {
-            parent.onMetersPerPointChanged?(Projection.metersPerPoint(for: latitude, zoom: zoom))
+        /// Hand the parent the ground scale at the scale bar: the ground distance
+        /// between the two screen points 50 pt either side of the bar, on its row,
+        /// over the distance between them. On a pitched map that is not the scale at
+        /// the camera center, and is not meant to be. Until the bar's place is known
+        /// it is the tile formula at the camera center (what Mapbox's own scale bar
+        /// uses, 512 pt tiles included), which agrees with the measured one on a flat map.
+        func reportMetersPerPoint(mapView: MapView) {
+            let state = mapView.mapboxMap.cameraState
+            let metersPerPoint = MapScale.metersPerPoint(
+                anchor: scaleAnchor,
+                mapSize: mapView.bounds.size,
+                fallback: { Projection.metersPerPoint(for: state.center.latitude, zoom: state.zoom) },
+                groundDistance: TacticalMapView.groundDistance(on: mapView.mapboxMap))
+            if let reported = reportedScale, reported == metersPerPoint { return }
+            reportedScale = .some(metersPerPoint)
+            parent.onMetersPerPointChanged?(metersPerPoint)
         }
 
         // MARK: - Annotation refresh fan-out

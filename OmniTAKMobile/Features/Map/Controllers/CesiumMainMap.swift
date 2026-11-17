@@ -61,9 +61,11 @@ struct CesiumMapEvent {
         let heading: Double     // degrees CW from north
         let pitch: Double       // degrees (negative = looking down)
         let zoom: Double        // Mapbox-style zoom, derived from height
-        /// Ground metres per screen point at the screen center, measured on the
-        /// globe between two points 100 CSS px apart (tilt included). nil when a
-        /// sample point misses the globe. Feeds the scale bar.
+        /// Ground metres per screen point at the scale bar, measured on the globe
+        /// between the two points 50 CSS px either side of `scaleAnchor` on its row
+        /// (tilt and terrain included). nil when a sample point misses the globe.
+        /// Feeds the scale bar. On a tilted globe this is not the scale at the
+        /// screen center, by design.
         var metersPerPoint: Double? = nil
     }
 }
@@ -249,6 +251,11 @@ struct CesiumMainMap: UIViewRepresentable {
     /// Issue #62 — bearing to carry into the seeded globe heading so the
     /// operator's rotation (if any) is preserved on engine switch.
     var cameraSeedBearing: Double = 0
+    /// Where the scale bar sits, in this web view's own coordinate space (points =
+    /// CSS px): the middle of its maximum width, on its line's row. The page measures
+    /// the ground scale there (`setScaleAnchor`). nil until the bar has been laid out;
+    /// the page then measures at the screen center.
+    var scaleAnchor: CGPoint? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -442,6 +449,13 @@ struct CesiumMainMap: UIViewRepresentable {
                 context.coordinator.northLocked = isNorthLocked
                 webView.evaluateJavaScript("window.OmniBridge.setNorthLock({on:\(isNorthLocked)});", completionHandler: nil)
             }
+
+            // The scale bar moved (first layout, rotation, compact layout): the page
+            // measures the ground scale under its new place, and re-posts it.
+            if scaleAnchor != context.coordinator.sentScaleAnchor {
+                context.coordinator.sentScaleAnchor = scaleAnchor
+                webView.evaluateJavaScript(CesiumMainMap.scaleAnchorJS(scaleAnchor), completionHandler: nil)
+            }
         }
     }
 
@@ -480,6 +494,8 @@ struct CesiumMainMap: UIViewRepresentable {
         /// Latest north-lock state, re-applied when the bridge (re)initializes
         /// so the lock survives an engine toggle or a WebGL process restart.
         var northLocked = false
+        /// The scale anchor the page was last given. A freshly loaded page has none.
+        var sentScaleAnchor: CGPoint?
         /// Watchdog: the globe pulls Cesium.js + terrain from the cesium.com
         /// CDN on every load. If the device can't reach it (bad network, dead
         /// CDN) the page sits on "Loading 3D world…" forever. If the bridge
@@ -544,6 +560,12 @@ struct CesiumMainMap: UIViewRepresentable {
                 // so the globe comes back north-up and stays locked.
                 if northLocked {
                     webView?.evaluateJavaScript("window.OmniBridge.setNorthLock({on:true});", completionHandler: nil)
+                }
+                // The page starts with no scale anchor: give it the bar's place, so the
+                // first scale it posts is already the one at the bar.
+                sentScaleAnchor = parent.scaleAnchor
+                if let anchor = parent.scaleAnchor {
+                    webView?.evaluateJavaScript(CesiumMainMap.scaleAnchorJS(anchor), completionHandler: nil)
                 }
                 // Issue #60 — if reposition mode was active before this bridge
                 // (re)initialized (e.g. a WebGL process restart mid-move),
@@ -715,9 +737,9 @@ struct CesiumMainMap: UIViewRepresentable {
             // camerachanged — the correct point-drop / region center.
             let centerLat: Double?
             let centerLon: Double?
-            // Ground metres per screen point at the screen center, measured on
-            // the globe (see _postCameraChanged). null when a sample point
-            // missed the globe; the scale bar is then hidden.
+            // Ground metres per screen point at the scale bar, measured on the
+            // globe (see _metersPerPoint). null when a sample point missed the
+            // globe; the scale bar is then hidden.
             let mpp: Double?
             // Freehand lasso polygon as [[lat,lon],...] for a 'lasso' event.
             let polygon: [[Double]]?
@@ -1284,6 +1306,13 @@ struct CesiumMainMap: UIViewRepresentable {
     /// Build-time injected — see `CesiumIonConfig`. Kept as a computed alias so
     /// the HTML interpolation below reads the same as before the migration.
     private static var cesiumIonToken: String { CesiumIonConfig.token }
+
+    /// The bridge call that tells the page where the scale bar is. `null,null`
+    /// clears it (the page measures at the screen center again).
+    static func scaleAnchorJS(_ anchor: CGPoint?) -> String {
+        guard let anchor else { return "window.OmniBridge.setScaleAnchor(null,null);" }
+        return String(format: "window.OmniBridge.setScaleAnchor(%.1f,%.1f);", Double(anchor.x), Double(anchor.y))
+    }
 
     /// HTML for the Cesium scene, loaded from the bundled `cesium_scene.html`
     /// resource — kept in lockstep with the Android copy at

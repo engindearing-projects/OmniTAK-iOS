@@ -168,10 +168,15 @@ struct ATAKMapView: View {
     // both engines on every camera-change event so the compass overlay always
     // reflects the live map rotation (not just device heading).
     @State private var mapBearing: Double = 0
-    /// Ground metres per screen point at the middle of the active engine's map,
-    /// fed by that engine and read by the scale bar. nil until the engine reports
-    /// one, and cleared on an engine switch so the other engine's number is never shown.
+    /// Ground metres per screen point at the scale bar (on its own row, not at the
+    /// middle of the screen), fed by the active engine and read by the scale bar. nil
+    /// until the engine reports one, and cleared on an engine switch so the other
+    /// engine's number is never shown.
     @State private var mapMetersPerPoint: Double?
+    /// Where the scale bar sits, in the map views' own coordinate space: the middle
+    /// of its maximum width, on its line's row. Reported by the bar from its own
+    /// frame and handed to both engines, which measure the ground scale there.
+    @State private var scaleAnchor: CGPoint?
     // Issue #62 — 2D→3D camera seed. Captured when the operator switches from
     // Mapbox 2D to the Cesium globe so the globe opens at the operator's last
     // 2D view. Cleared after each switch (the CesiumMainMap view is recreated on
@@ -357,10 +362,11 @@ struct ATAKMapView: View {
             onBearingChanged: { bearing in
                 mapBearing = bearing
             },
-            // Scale bar: the 2D engine's real ground scale at the camera center.
+            // Scale bar: the 2D engine's real ground scale where the bar sits.
             onMetersPerPointChanged: { metersPerPoint in
                 if mapEngine == .mapbox2D { mapMetersPerPoint = metersPerPoint }
             },
+            scaleAnchor: scaleAnchor,
             // #178 — fade/label contact pins by age when enabled in Settings.
             // Referencing stalenessTick here ties the slow timer to a re-render
             // so pins age visibly even without inbound CoT.
@@ -709,7 +715,10 @@ struct ATAKMapView: View {
         ScaleBarView(
             metersPerPoint: mapMetersPerPoint,
             isVisible: showScaleBar,
-            compact: isLandscape
+            compact: isLandscape,
+            onAnchorChange: { anchor in
+                if scaleAnchor != anchor { scaleAnchor = anchor }
+            }
         )
         .zIndex(1007)
     }
@@ -1377,7 +1386,8 @@ struct ATAKMapView: View {
                 // Issue #62 — seed the Cesium camera from the 2D Mapbox view when
                 // the operator switches engines. nil on cold start and after 3D→2D.
                 cameraSeed: cesiumCameraSeed,
-                cameraSeedBearing: mapBearing
+                cameraSeedBearing: mapBearing,
+                scaleAnchor: scaleAnchor
             )
             .ignoresSafeArea()
     }
@@ -2109,7 +2119,7 @@ struct ATAKMapView: View {
             // is engaged the JS side pins heading to 0° itself (setNorthLock),
             // so this just reflects the corrected value — no native re-snap loop.
             mapBearing = isNorthLocked ? 0 : cam.heading
-            // Scale bar: the globe measured its own ground scale at the screen center.
+            // Scale bar: the globe measured its own ground scale where the bar sits.
             if mapEngine == .cesium3D { mapMetersPerPoint = cam.metersPerPoint }
             // Mirror the Cesium camera into mapRegion so 2D-derived chrome
             // (MGRS grid) reads a plausible scale on the globe, an
