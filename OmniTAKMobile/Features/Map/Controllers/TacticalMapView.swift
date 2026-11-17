@@ -84,6 +84,11 @@ struct TacticalMapView: UIViewRepresentable {
     /// age label ("<1m" / "Nm" / ">1h"). Off by default; gated by the Settings
     /// "Show point age on map" toggle. Defaulted so other call sites are unchanged.
     var stalenessOverlay: Bool = false
+    /// #135: the phone's text size x the Settings "Label size", as one multiplier
+    /// for every name this map draws under or beside a marker (contacts, dropped
+    /// markers, ADS-B aircraft, KML pins). Marker icons keep their size. 1 is the
+    /// size the app always drew; defaulted so other call sites are unchanged.
+    var labelFactor: Double = 1
 
     // MARK: - UIViewRepresentable
 
@@ -730,7 +735,25 @@ struct TacticalMapView: UIViewRepresentable {
                 // line width / visibility) take effect live without a reload.
                 styleKMLLayers(map: map, overlay: overlay)
             }
+
+            // #135: a new Label size (or phone text size) restyles the pin names
+            // of overlays that already exist. Layers created above, or after a style
+            // swap, are built at the current size, so only a change needs this.
+            let labelFactor = parent.labelFactor
+            if appliedKMLLabelFactor != labelFactor {
+                let nameStyle = MapLabelStyle.kmlPin(factor: labelFactor)
+                for overlay in overlays {
+                    let symID = "kmlsym-\(overlay.id)"
+                    try? map.setLayerProperty(for: symID, property: "text-size", value: nameStyle.textSize)
+                    try? map.setLayerProperty(for: symID, property: "text-offset", value: [0, nameStyle.offsetEm])
+                    try? map.setLayerProperty(for: symID, property: "text-halo-width", value: nameStyle.haloWidth)
+                }
+                appliedKMLLabelFactor = labelFactor
+            }
         }
+
+        /// #135: the label factor the KML pin names were last styled for.
+        private var appliedKMLLabelFactor: Double?
 
         private func kmlLayerIDs(_ overlayID: String) -> [String] {
             // Issue #93 — kmlsym- replaces kmlpt- (circle) for Point placemarks.
@@ -845,6 +868,9 @@ struct TacticalMapView: UIViewRepresentable {
             ensureKMLPushpinImage(map: map)
 
             // SymbolLayer: yellow pushpin + placemark name label for Point features.
+            // #135: the name is created at the current Label size; later changes
+            // are applied by refreshKMLVectorOverlays.
+            let nameStyle = MapLabelStyle.kmlPin(factor: parent.labelFactor)
             var sym = SymbolLayer(id: "kmlsym-\(overlay.id)", source: sourceID)
             sym.filter = Exp(.eq) { Exp(.geometryType); "Point" }
             sym.iconImage = .constant(.name(Self.kmlPushpinImageID))
@@ -853,10 +879,10 @@ struct TacticalMapView: UIViewRepresentable {
             sym.textField = .expression(Exp(.get) { "name" })
             sym.textColor = .constant(StyleColor(.white))
             sym.textHaloColor = .constant(StyleColor(.black))
-            sym.textHaloWidth = .constant(1.2)
-            sym.textSize = .constant(12)
+            sym.textHaloWidth = .constant(nameStyle.haloWidth)
+            sym.textSize = .constant(nameStyle.textSize)
             sym.textAnchor = .constant(.top)
-            sym.textOffset = .constant([0, 0.6])
+            sym.textOffset = .constant([0, nameStyle.offsetEm])
             sym.textOptional = .constant(true)
             sym.textAllowOverlap = .constant(false)
             try? map.addLayer(sym)
@@ -1049,7 +1075,8 @@ struct TacticalMapView: UIViewRepresentable {
                     for: marker,
                     image: symbolImage(for: marker),
                     stalenessOverlay: overlay,
-                    now: now
+                    now: now,
+                    labelFactor: parent.labelFactor
                 ))
             }
             manager.annotations = fresh
@@ -1086,8 +1113,12 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshPointMarkers() {
             guard let manager = ensurePoint(\.pointMarkerManager) else { return }
+            // #135: the name's size is part of what was published, so a new Label
+            // size (or phone text size) republishes the markers at once.
+            let labelFactor = parent.labelFactor
             var sigHasher = Hasher()
             sigHasher.combine(parent.pointMarkers.count)
+            sigHasher.combine(labelFactor)
             for pm in parent.pointMarkers {
                 sigHasher.combine(pm.id); sigHasher.combine(pm.name)
                 sigHasher.combine(pm.coordinate.latitude); sigHasher.combine(pm.coordinate.longitude)
@@ -1108,13 +1139,7 @@ struct TacticalMapView: UIViewRepresentable {
                 else { key = "pm|\(pm.affiliation.rawValue)" }
                 var ann = PointAnnotation(id: "pm-\(pm.id.uuidString)", coordinate: pm.coordinate)
                 ann.image = .init(image: img, name: key)
-                ann.textField = pm.name
-                ann.textAnchor = .top
-                ann.textOffset = [0, 1.2]
-                ann.textColor = StyleColor(.white)
-                ann.textHaloColor = StyleColor(.black)
-                ann.textHaloWidth = 1.0
-                ann.textSize = 11
+                MapLabelRender.applyPlacedMarkerName(pm.name, to: &ann, labelFactor: labelFactor)
                 // Circular glyphs (spot dots, 2525 frames, affiliation) center on
                 // the coordinate; the Google teardrop pin points at its tip, so
                 // it anchors at the bottom.
@@ -1173,6 +1198,8 @@ struct TacticalMapView: UIViewRepresentable {
 
         private func refreshAircraftMarkers() {
             guard let manager = ensurePoint(\.aircraftManager) else { return }
+            // #135: the callsign follows the Label size like the other names.
+            let labelFactor = parent.labelFactor
             var fresh: [PointAnnotation] = []
             fresh.reserveCapacity(parent.aircraft.count)
             for ac in parent.aircraft {
@@ -1181,13 +1208,8 @@ struct TacticalMapView: UIViewRepresentable {
                 ann.iconRotate = ac.heading
                 ann.iconSize = 1.0
                 ann.iconAnchor = IconAnchor.center
-                ann.textField = ac.callsign.isEmpty ? ac.id : ac.callsign
-                ann.textAnchor = TextAnchor.top
-                ann.textOffset = [0, 1.2]
-                ann.textColor = StyleColor(.systemBlue)
-                ann.textHaloColor = StyleColor(.black)
-                ann.textHaloWidth = 1
-                ann.textSize = 10
+                MapLabelRender.applyAircraftCallsign(ac.callsign.isEmpty ? ac.id : ac.callsign,
+                                                     to: &ann, labelFactor: labelFactor)
                 fresh.append(ann)
             }
             manager.annotations = fresh
@@ -1817,17 +1839,14 @@ struct TacticalMapView: UIViewRepresentable {
                 let p = mapView.mapboxMap.point(for: pm.coordinate)
                 let dIcon = hypot(p.x - screenPoint.x, p.y - screenPoint.y)
                 // Label hit-region — refreshPointMarkers anchors the
-                // text at `.top` with `textOffset = [0, 1.2]` em (≈16px
-                // at textSize 11). Approximate the label rect above
-                // the icon so long-press on the name resolves the same
-                // marker the icon would. Without this the floating
-                // text label is dead — only the dot itself reacts.
-                let labelCenter = CGPoint(x: p.x, y: p.y + 18)
-                let nameWidth = max(40, min(180, CGFloat(pm.name.count) * 7))
-                let labelRect = CGRect(x: labelCenter.x - nameWidth / 2,
-                                       y: labelCenter.y - 10,
-                                       width: nameWidth,
-                                       height: 20).insetBy(dx: -8, dy: -6)
+                // text at `.top`, 13.2 pt below the point at every size.
+                // Approximate the label rect below the icon so long-press
+                // on the name resolves the same marker the icon would.
+                // Without this the floating text label is dead, only the
+                // dot itself reacts. #135: the rect grows with the name
+                // (PlacedMarkerLabelHit) so a bigger name is still a target.
+                let labelRect = PlacedMarkerLabelHit.rect(
+                    markerPoint: p, nameLength: pm.name.count, factor: parent.labelFactor)
                 let dLabel: CGFloat = labelRect.contains(screenPoint) ? 0 : .greatestFiniteMagnitude
                 let d = min(dIcon, dLabel)
                 if d < radius, best == nil || d < best!.1 {
