@@ -51,7 +51,9 @@
 //  write may never come, and a value may be put back when the radio starts
 //  (#153). Each write is remembered, and what the radio reports in its config
 //  download when it connects again is compared with what was sent: the report
-//  says "applied", or what the radio reports instead.
+//  says "applied", or what the radio reports instead. When the instead is the
+//  firmware's floor under a short position interval on the radio's default
+//  channel, the report says why (`explainConfigReports`, MeshtasticPositionFloor).
 //
 //  Whose bytes. The settings belong to one connection: the one the operator
 //  chose, which delivered a `my_info` naming the radio. A write is addressed to
@@ -460,6 +462,8 @@ extension MeshtasticManager {
         if let only, report.state != only { return }
         guard report.state != state else { return }
         report.state = state
+        // A reason was found for the state the report was in.
+        report.explanation = nil
         setConfigReport(report)
     }
 
@@ -500,6 +504,42 @@ extension MeshtasticManager {
               let reported = Self.differences(from: pending.expected, in: body) else { return }
         pendingConfigWrites[variant] = nil
         setConfigReportState(variant: variant, reported.isEmpty ? .appliedAfterRestart : .differsAfterRestart(reported))
+        // The reason for a position interval put back is decided from the LoRa
+        // config and the channels, which this download may not have sent yet.
+        if reported[.positionInterval] != nil {
+            configReportsAwaitingExplanation.insert(variant)
+        }
+    }
+
+    /// A report that says the radio put the position interval back is given the
+    /// reason when the firmware's floor explains it (#153): the radio's position
+    /// channel is its default channel, the interval sent was under the floor for
+    /// its role, and it reports the floor. That is decided from what the radio
+    /// reported in the download that settled the report. The download sends the
+    /// channels, then the device and position configs, then the LoRa config, so
+    /// the answer is not known when the position config arrives: this is called
+    /// as every config and channel arrives, and a report is decided as soon as
+    /// the role, the LoRa config and the channels the rule needs are in. Once it
+    /// is decided it is not looked at again, so what the radio reports later
+    /// does not change what a restart that is over was said to be.
+    func explainConfigReports() {
+        guard !configReportsAwaitingExplanation.isEmpty else { return }
+        let facts = MeshtasticPositionFacts(radioSettings)
+        for variant in configReportsAwaitingExplanation {
+            guard var report = configReports.first(where: { $0.variant == variant }),
+                  case .differsAfterRestart(let reported) = report.state,
+                  let sent = report.sent[.positionInterval],
+                  let held = reported[.positionInterval] else {
+                // The report is gone, or a newer write replaced it.
+                configReportsAwaitingExplanation.remove(variant)
+                continue
+            }
+            guard let explained = facts.floorExplains(sent: sent, reported: held) else { continue }
+            configReportsAwaitingExplanation.remove(variant)
+            guard explained, let reason = facts.intervalReason(sent: sent, reported: held) else { continue }
+            report.explanation = reason
+            setConfigReport(report)
+        }
     }
 
     /// A config download is starting. Another radio's writes cannot be checked
@@ -510,6 +550,9 @@ extension MeshtasticManager {
         for (variant, pending) in pendingConfigWrites where pending.node != node {
             pendingConfigWrites[variant] = nil
         }
+        // A new download starts: what an earlier one left undecided is dropped
+        // with the reports it was about (the final ones go just below).
+        configReportsAwaitingExplanation.removeAll()
         if configReports.contains(where: { $0.node != node || $0.state.isFinal }) {
             configReports.removeAll { $0.node != node || $0.state.isFinal }
         }

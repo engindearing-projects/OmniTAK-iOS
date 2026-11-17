@@ -117,6 +117,12 @@ public class MeshtasticManager: ObservableObject {
     }
     /// By sub-config, as its field number inside `Config`.
     var pendingConfigWrites: [Int: PendingConfigWrite] = [:]
+    /// The sub-configs whose report says the radio put the position interval
+    /// back, and has not yet been given its reason (or been found to have none).
+    /// The reason needs the LoRa config and the channels, which the config
+    /// download sends around the position config, so it is decided as they
+    /// arrive (`explainConfigReports`, #153).
+    var configReportsAwaitingExplanation: Set<Int> = []
 
     /// One operation at a time uses the link.
     let operationGate = MeshtasticOperationGate()
@@ -347,9 +353,11 @@ public class MeshtasticManager: ObservableObject {
             dropChannelWrites(notFor: node)
         case .config(let variant, let body):
             settleConfigWriteAfterRestart(variant: variant, body: body)
+            explainConfigReports()
         case .channel(let index, let body):
             settleChannelWriteAfterReconnect(slot: index, body: body)
             adoptSavedChannel(slot: index)
+            explainConfigReports()
         case .answer:
             break
         }
@@ -378,6 +386,8 @@ public class MeshtasticManager: ObservableObject {
         if !radioSettings.isEmpty {
             radioSettings.removeAll()
         }
+        // What a reason would be decided from went with it.
+        configReportsAwaitingExplanation.removeAll()
     }
 
     // MARK: - BLE Client Setup

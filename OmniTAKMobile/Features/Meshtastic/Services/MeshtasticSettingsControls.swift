@@ -143,6 +143,20 @@ struct MeshtasticSettingsControls: Equatable {
         return "\(seconds)s"
     }
 
+    /// The interval the screen shows, in seconds: the operator's choice, or else
+    /// the radio's own value (0 is "radio default"). Nil until the position
+    /// config is known. Unlike `sliderValue` it is not held within the slider's
+    /// range: a radio's own value outside it is what the radio holds until the
+    /// slider is moved. The hint under the control is judged on this
+    /// (MeshtasticPositionFloor).
+    func shownSeconds(radio: MeshtasticRadioSettings) -> UInt32? {
+        guard radio.hasPositionConfig, let seconds = radio.positionBroadcastSeconds else { return nil }
+        if let intervalChoice, intervalChoice.isFinite, intervalChoice >= 0 {
+            return UInt32(min(intervalChoice, Double(UInt32.max)))
+        }
+        return seconds
+    }
+
     /// Set when the radio's interval is outside what the slider can show, so
     /// the screen can say that it stays as it is unless the slider is moved.
     func intervalOutsideSlider(radio: MeshtasticRadioSettings) -> Bool {

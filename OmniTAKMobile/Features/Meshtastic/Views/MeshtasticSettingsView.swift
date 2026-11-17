@@ -291,6 +291,14 @@ struct MeshtasticSettingsView: View {
                 in: MeshtasticSettingsControls.sliderRange,
                 step: controls.sliderStep(radio: radio))
                 .disabled(!positionLoaded)
+            // On its default channel the radio puts a short interval back to the
+            // floor when it restarts: say so before the push, not after it (#153).
+            if let hint = positionIntervalHint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .accessibilityIdentifier("positionIntervalHint")
+            }
             Button("Apply Interval") { applyInterval() }
                 .disabled(activeTransport != .meshtastic || !positionLoaded || meshtastic.settingsBusy)
         } header: {
@@ -402,6 +410,17 @@ struct MeshtasticSettingsView: View {
 
     private var deviceLoaded: Bool { meshtastic.radioSettings.hasDeviceConfig }
     private var positionLoaded: Bool { meshtastic.radioSettings.hasPositionConfig }
+
+    /// The caption under the interval control, or nil for none: the radio sends
+    /// positions on its default channel and the interval shown (the radio's own,
+    /// or the one on the slider) is under what the firmware will hold after the
+    /// push. Decided from what the radio reported. The role is the radio's: Apply
+    /// Interval writes the interval and nothing else, so a role picked in the
+    /// Device section and not applied is not in force for this push.
+    private var positionIntervalHint: String? {
+        let radio = meshtastic.radioSettings
+        return MeshtasticPositionFacts(radio).intervalHint(shownSeconds: controls.shownSeconds(radio: radio))
+    }
 
     /// Why the controls of a sub-config are empty: the radio was sent a change
     /// and is restarting, or its settings have not arrived.

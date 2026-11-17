@@ -32,10 +32,12 @@
 //  What the radio says in an answer is kept only when MeshtasticManager has
 //  matched it to a request it sent; this struct never applies an answer itself.
 //
-//  Only the sub-configs the app can write are kept. The rest of the config
-//  download is dropped on arrival: nothing here edits it, the security config
-//  holds the radio's private key and the network config holds the WiFi password.
-//  The bytes live in memory only.
+//  Only the sub-configs the app uses are kept: the two it can write (device and
+//  position) and the LoRa config, which it only reads, because the position
+//  floor depends on the preset (MeshtasticPositionFloor, #153). The rest of the
+//  config download is dropped on arrival: nothing here edits it, the security
+//  config holds the radio's private key and the network config holds the WiFi
+//  password. The bytes live in memory only.
 //
 
 import Foundation
@@ -94,10 +96,14 @@ struct MeshtasticRadioSettings: Equatable {
 
     // MARK: - What is kept
 
-    /// The sub-configs a setter can change. Their field numbers inside `Config`.
+    /// The sub-configs a setter can change, and the LoRa config, which nothing
+    /// writes: whether the radio's position channel is its default channel
+    /// depends on its preset (MeshtasticPositionFloor). Their field numbers
+    /// inside `Config`.
     static let storedConfigVariants: Set<Int> = [
         MeshtasticAdminCodec.ConfigVariant.device,
         MeshtasticAdminCodec.ConfigVariant.position,
+        MeshtasticAdminCodec.ConfigVariant.lora,
     ]
 
     /// The channel slots a radio has. Indices outside it are not kept.
@@ -486,6 +492,11 @@ struct MeshtasticConfigReport: Equatable, Identifiable {
     /// What was sent.
     var sent: [MeshtasticConfigField: UInt64]
     var state: State
+    /// One sentence on why the radio put a value back, when the app can say. It
+    /// goes after the radio has reported what it holds (`differsAfterRestart`),
+    /// once the config download has said enough to decide it, and goes with the
+    /// state it was found for: any other state has none (#153).
+    var explanation: String?
 
     var id: Int { variant }
 
@@ -526,8 +537,9 @@ struct MeshtasticConfigReport: Equatable, Identifiable {
         case .appliedAfterRestart:
             return "\(what): applied. The radio reports \(sentText) after reconnecting."
         case .differsAfterRestart(let reported):
-            return "\(what): the radio reports \(reportedText(reported)) after reconnecting. "
+            let sentence = "\(what): the radio reports \(reportedText(reported)) after reconnecting. "
                 + "\(Self.capitalizingFirst(sentText)) was sent."
+            return explanation.map { sentence + " " + $0 } ?? sentence
         default:
             return "\(what): \(sentText) sent. \(reason)"
         }
