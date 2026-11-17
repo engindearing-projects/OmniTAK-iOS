@@ -95,6 +95,20 @@ enum GeofenceColor: String, CaseIterable, Codable {
         }
     }
 
+    /// The system tint as "#RRGGBB", the same values the 3D bridge uses for drawings,
+    /// so a geofence reads the same color on the 2D map (`uiColor`) and on the globe.
+    var tintHex: String {
+        switch self {
+        case .red: return "#FF3B30"
+        case .blue: return "#007AFF"
+        case .green: return "#34C759"
+        case .yellow: return "#FFCC00"
+        case .orange: return "#FF9500"
+        case .purple: return "#AF52DE"
+        case .cyan: return "#5AC8FA"
+        }
+    }
+
     var hexColor: String {
         switch self {
         case .red: return "#FF0000"
@@ -120,7 +134,13 @@ struct Geofence: Identifiable, Codable, Equatable {
     var alertOnExit: Bool
     var dwellTimeThreshold: TimeInterval // in seconds, 0 = disabled
     var createdAt: Date
-    var lastTriggeredAt: Date?
+
+    /// Whose position this geofence watches: the operator's own, and/or the
+    /// teammates' (every contact reporting a position, over a TAK server or a mesh
+    /// radio). Both are on unless switched off; JSON written before these existed
+    /// has neither key and reads as on.
+    var watchSelf: Bool
+    var watchContacts: Bool
 
     // Circle-specific properties
     var center: CLLocationCoordinate2D?
@@ -128,11 +148,6 @@ struct Geofence: Identifiable, Codable, Equatable {
 
     // Polygon-specific properties
     var polygonCoordinates: [CLLocationCoordinate2D]?
-
-    // User tracking
-    var userInsideGeofence: Bool = false
-    var entryTime: Date?
-    var totalDwellTime: TimeInterval = 0
 
     init(
         id: UUID = UUID(),
@@ -143,6 +158,8 @@ struct Geofence: Identifiable, Codable, Equatable {
         alertOnEntry: Bool = true,
         alertOnExit: Bool = true,
         dwellTimeThreshold: TimeInterval = 0,
+        watchSelf: Bool = true,
+        watchContacts: Bool = true,
         center: CLLocationCoordinate2D? = nil,
         radius: CLLocationDistance? = nil,
         polygonCoordinates: [CLLocationCoordinate2D]? = nil
@@ -156,12 +173,52 @@ struct Geofence: Identifiable, Codable, Equatable {
         self.alertOnExit = alertOnExit
         self.dwellTimeThreshold = dwellTimeThreshold
         self.createdAt = Date()
+        self.watchSelf = watchSelf
+        self.watchContacts = watchContacts
         self.center = center
         self.radius = radius
         self.polygonCoordinates = polygonCoordinates
     }
 
+    // MARK: - Shape
+
+    /// Whether there is a shape to be inside of: a circle with a center and a radius
+    /// above zero, or a polygon with at least three corners. A geofence without one
+    /// is never drawn and never contains anything.
+    var hasUsableShape: Bool {
+        switch type {
+        case .circle:
+            guard let center, let radius else { return false }
+            return radius > 0 && CLLocationCoordinate2DIsValid(center)
+        case .polygon:
+            return (polygonCoordinates?.count ?? 0) >= 3
+        }
+    }
+
+    /// Whether this geofence watches the operator (`true`) or a teammate (`false`).
+    func watches(operator isOperator: Bool) -> Bool {
+        isOperator ? watchSelf : watchContacts
+    }
+
+    /// The middle of a circle, the mean of a polygon's corners: where "Show on map" centers.
+    var centerCoordinate: CLLocationCoordinate2D? {
+        switch type {
+        case .circle:
+            return center
+        case .polygon:
+            guard let coordinates = polygonCoordinates, !coordinates.isEmpty else { return nil }
+            let n = Double(coordinates.count)
+            return CLLocationCoordinate2D(
+                latitude: coordinates.reduce(0) { $0 + $1.latitude } / n,
+                longitude: coordinates.reduce(0) { $0 + $1.longitude } / n)
+        }
+    }
+
     // MARK: - Point-in-Geofence Detection
+    //
+    // Both tests are flat in latitude and longitude except the circle's radius, which
+    // is metres on the ground. A polygon that crosses the antimeridian (longitude 180)
+    // is out of scope: its corners would have to be unwrapped first.
 
     func containsPoint(_ point: CLLocationCoordinate2D) -> Bool {
         switch type {
@@ -212,10 +269,10 @@ struct Geofence: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, type, color, isActive, alertOnEntry, alertOnExit
-        case dwellTimeThreshold, createdAt, lastTriggeredAt
+        case dwellTimeThreshold, createdAt
+        case watchSelf, watchContacts
         case centerLatitude, centerLongitude, radius
         case polygonPoints
-        case userInsideGeofence, entryTime, totalDwellTime
     }
 
     struct CoordinatePair: Codable {
@@ -235,7 +292,8 @@ struct Geofence: Identifiable, Codable, Equatable {
         alertOnExit = try container.decode(Bool.self, forKey: .alertOnExit)
         dwellTimeThreshold = try container.decode(TimeInterval.self, forKey: .dwellTimeThreshold)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        lastTriggeredAt = try container.decodeIfPresent(Date.self, forKey: .lastTriggeredAt)
+        watchSelf = try container.decodeIfPresent(Bool.self, forKey: .watchSelf) ?? true
+        watchContacts = try container.decodeIfPresent(Bool.self, forKey: .watchContacts) ?? true
 
         // Circle properties
         if let lat = try container.decodeIfPresent(Double.self, forKey: .centerLatitude),
@@ -248,11 +306,6 @@ struct Geofence: Identifiable, Codable, Equatable {
         if let points = try container.decodeIfPresent([CoordinatePair].self, forKey: .polygonPoints) {
             polygonCoordinates = points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
         }
-
-        // User tracking
-        userInsideGeofence = try container.decodeIfPresent(Bool.self, forKey: .userInsideGeofence) ?? false
-        entryTime = try container.decodeIfPresent(Date.self, forKey: .entryTime)
-        totalDwellTime = try container.decodeIfPresent(TimeInterval.self, forKey: .totalDwellTime) ?? 0
     }
 
     func encode(to encoder: Encoder) throws {
@@ -267,7 +320,8 @@ struct Geofence: Identifiable, Codable, Equatable {
         try container.encode(alertOnExit, forKey: .alertOnExit)
         try container.encode(dwellTimeThreshold, forKey: .dwellTimeThreshold)
         try container.encode(createdAt, forKey: .createdAt)
-        try container.encodeIfPresent(lastTriggeredAt, forKey: .lastTriggeredAt)
+        try container.encode(watchSelf, forKey: .watchSelf)
+        try container.encode(watchContacts, forKey: .watchContacts)
 
         // Circle properties
         try container.encodeIfPresent(center?.latitude, forKey: .centerLatitude)
@@ -279,11 +333,6 @@ struct Geofence: Identifiable, Codable, Equatable {
             let points = coordinates.map { CoordinatePair(latitude: $0.latitude, longitude: $0.longitude) }
             try container.encode(points, forKey: .polygonPoints)
         }
-
-        // User tracking
-        try container.encode(userInsideGeofence, forKey: .userInsideGeofence)
-        try container.encodeIfPresent(entryTime, forKey: .entryTime)
-        try container.encode(totalDwellTime, forKey: .totalDwellTime)
     }
 
     static func == (lhs: Geofence, rhs: Geofence) -> Bool {
@@ -301,7 +350,11 @@ struct GeofenceEvent: Identifiable, Codable, Equatable {
     let timestamp: Date
     let coordinate: CLLocationCoordinate2D
     let userId: String
-    let dwellDuration: TimeInterval? // Only for dwell events
+    let dwellDuration: TimeInterval? // How long the subject had been inside: exit and dwell events
+    /// The subject's callsign, and whether it was the operator. Written from this
+    /// version on; an event stored by an earlier version has neither.
+    let userName: String?
+    let byOperator: Bool
 
     init(
         id: UUID = UUID(),
@@ -310,16 +363,21 @@ struct GeofenceEvent: Identifiable, Codable, Equatable {
         eventType: GeofenceEventType,
         coordinate: CLLocationCoordinate2D,
         userId: String,
-        dwellDuration: TimeInterval? = nil
+        dwellDuration: TimeInterval? = nil,
+        userName: String? = nil,
+        byOperator: Bool = false,
+        timestamp: Date = Date()
     ) {
         self.id = id
         self.geofenceId = geofenceId
         self.geofenceName = geofenceName
         self.eventType = eventType
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.coordinate = coordinate
         self.userId = userId
         self.dwellDuration = dwellDuration
+        self.userName = userName
+        self.byOperator = byOperator
     }
 
     // Manual Equatable conformance (CLLocationCoordinate2D isn't Equatable)
@@ -332,13 +390,15 @@ struct GeofenceEvent: Identifiable, Codable, Equatable {
         lhs.coordinate.latitude == rhs.coordinate.latitude &&
         lhs.coordinate.longitude == rhs.coordinate.longitude &&
         lhs.userId == rhs.userId &&
-        lhs.dwellDuration == rhs.dwellDuration
+        lhs.dwellDuration == rhs.dwellDuration &&
+        lhs.userName == rhs.userName &&
+        lhs.byOperator == rhs.byOperator
     }
 
     // Codable conformance
     enum CodingKeys: String, CodingKey {
         case id, geofenceId, geofenceName, eventType, timestamp
-        case latitude, longitude, userId, dwellDuration
+        case latitude, longitude, userId, dwellDuration, userName, byOperator
     }
 
     init(from decoder: Decoder) throws {
@@ -353,6 +413,8 @@ struct GeofenceEvent: Identifiable, Codable, Equatable {
         coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
         userId = try container.decode(String.self, forKey: .userId)
         dwellDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .dwellDuration)
+        userName = try container.decodeIfPresent(String.self, forKey: .userName)
+        byOperator = try container.decodeIfPresent(Bool.self, forKey: .byOperator) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -366,54 +428,9 @@ struct GeofenceEvent: Identifiable, Codable, Equatable {
         try container.encode(coordinate.longitude, forKey: .longitude)
         try container.encode(userId, forKey: .userId)
         try container.encodeIfPresent(dwellDuration, forKey: .dwellDuration)
+        try container.encodeIfPresent(userName, forKey: .userName)
+        try container.encode(byOperator, forKey: .byOperator)
     }
-}
-
-// MARK: - Geofence Alert
-
-struct GeofenceAlert: Identifiable, Codable, Equatable {
-    let id: UUID
-    let geofenceId: UUID
-    let geofenceName: String
-    let eventType: GeofenceEventType
-    let message: String
-    let timestamp: Date
-    var isRead: Bool
-    var isDismissed: Bool
-
-    init(
-        id: UUID = UUID(),
-        geofenceId: UUID,
-        geofenceName: String,
-        eventType: GeofenceEventType,
-        message: String
-    ) {
-        self.id = id
-        self.geofenceId = geofenceId
-        self.geofenceName = geofenceName
-        self.eventType = eventType
-        self.message = message
-        self.timestamp = Date()
-        self.isRead = false
-        self.isDismissed = false
-    }
-
-    var formattedTimestamp: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .medium
-        return formatter.string(from: timestamp)
-    }
-}
-
-// MARK: - Geofence Statistics
-
-struct GeofenceStatistics {
-    let totalEntries: Int
-    let totalExits: Int
-    let totalDwellTime: TimeInterval
-    let averageDwellTime: TimeInterval
-    let lastEvent: GeofenceEvent?
 }
 
 // MARK: - Shared Drawing from Existing System

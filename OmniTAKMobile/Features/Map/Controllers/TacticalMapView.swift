@@ -102,6 +102,9 @@ struct TacticalMapView: UIViewRepresentable {
     /// markers, ADS-B aircraft, KML pins). Marker icons keep their size. 1 is the
     /// size the app always drew; defaulted so other call sites are unchanged.
     var labelFactor: Double = 1
+    /// Every geofence. The ones switched on and with a shape are drawn: a light fill, an outline
+    /// in their color and their name. Defaulted so other call sites are unchanged.
+    var geofences: [Geofence] = []
 
     // MARK: - UIViewRepresentable
 
@@ -257,7 +260,6 @@ struct TacticalMapView: UIViewRepresentable {
             guard let coord = coord, let mapView = mapView else { return }
             coord.reportMetersPerPoint(mapView: mapView)
         }
-
         // The scale bar needs a scale before the first camera move, not after it.
         coord.scaleAnchor = scaleAnchor
         DispatchQueue.main.async { [weak coord, weak mapView] in
@@ -731,6 +733,7 @@ struct TacticalMapView: UIViewRepresentable {
             refreshDrawingLines()
             refreshDrawingPolygons()
             refreshDrawingCircles()
+            refreshGeofences()
             refreshDrawingTempOverlay()
             refreshVertexHandles()
             refreshMeasurementOverlay()
@@ -1408,9 +1411,11 @@ struct TacticalMapView: UIViewRepresentable {
             manager.annotations = fresh
         }
 
-        private func labelAnnotation(id: String, coordinate: CLLocationCoordinate2D, text: String, color: UIColor) -> PointAnnotation {
+        private func labelAnnotation(id: String, coordinate: CLLocationCoordinate2D, text: String, color: UIColor,
+                                     anchor: TextAnchor? = nil) -> PointAnnotation {
             var ann = PointAnnotation(id: id, coordinate: coordinate)
             ann.textField = text
+            ann.textAnchor = anchor
             ann.textColor = StyleColor(.white)
             ann.textHaloColor = StyleColor(color)
             ann.textHaloWidth = 2
@@ -1503,6 +1508,65 @@ struct TacticalMapView: UIViewRepresentable {
 
         private var circleManagerAttached = false
         private var circlePolygonManager: PolygonAnnotationManager?
+
+        // MARK: - Geofences
+
+        private var geofenceFillManager: PolygonAnnotationManager?
+        private var geofenceLineManager: PolylineAnnotationManager?
+        private var geofenceLabelManager: PointAnnotationManager?
+
+        /// The geofences that are switched on: a light fill, an outline in the geofence's color
+        /// over a dark casing (so it reads on the light street style), and the name. Every id
+        /// starts with `geofence-`, so none can be taken for a drawing. Taps are resolved
+        /// against the drawing store, never against these annotations, so a tap or a long press
+        /// on a geofence opens nothing that is not there.
+        private func refreshGeofences() {
+            guard let mapView = mapView else { return }
+            let shapes = GeofenceMapShape.shapes(from: parent.geofences)
+
+            var sigHasher = Hasher()
+            for shape in shapes {
+                sigHasher.combine(shape.id); sigHasher.combine(shape.name)
+                sigHasher.combine(shape.color.rawValue)
+                for c in shape.ring() { sigHasher.combine(c.latitude); sigHasher.combine(c.longitude) }
+            }
+            guard shouldPublish(layer: "geofences", signature: sigHasher.finalize()) else { return }
+            // Nobody who never made a geofence pays for three empty layers.
+            if shapes.isEmpty && geofenceFillManager == nil { return }
+
+            if geofenceFillManager == nil {
+                geofenceFillManager = mapView.annotations.makePolygonAnnotationManager(id: "geofence-fills")
+                geofenceLineManager = mapView.annotations.makePolylineAnnotationManager(id: "geofence-lines")
+                geofenceLabelManager = mapView.annotations.makePointAnnotationManager(id: "geofence-labels")
+            }
+
+            var fills: [PolygonAnnotation] = []
+            var lines: [PolylineAnnotation] = []
+            var labels: [PointAnnotation] = []
+            for shape in shapes {
+                let ring = shape.ring()
+                var fill = PolygonAnnotation(id: shape.id, polygon: Polygon(outerRing: Ring(coordinates: ring)))
+                fill.fillColor = StyleColor(shape.color.uiColor.withAlphaComponent(GeofenceMapShape.fillAlpha))
+                fill.fillOutlineColor = StyleColor(shape.color.uiColor.withAlphaComponent(0))
+                fills.append(fill)
+
+                var casing = PolylineAnnotation(id: shape.id + "-casing", lineCoordinates: ring)
+                casing.lineColor = StyleColor(UIColor.black.withAlphaComponent(0.5))
+                casing.lineWidth = 5
+                lines.append(casing)
+
+                var outline = PolylineAnnotation(id: shape.id + "-outline", lineCoordinates: ring)
+                outline.lineColor = StyleColor(shape.color.uiColor)
+                outline.lineWidth = 2.5
+                lines.append(outline)
+
+                labels.append(labelAnnotation(id: shape.id + "-label", coordinate: shape.labelCoordinate,
+                                              text: shape.name, color: shape.color.uiColor, anchor: .bottom))
+            }
+            geofenceFillManager?.annotations = fills
+            geofenceLineManager?.annotations = lines
+            geofenceLabelManager?.annotations = labels
+        }
 
         /// Approximate a great-circle ring of `radiusMeters` around
         /// `center` as a polygon. Latitude scaling accounts for

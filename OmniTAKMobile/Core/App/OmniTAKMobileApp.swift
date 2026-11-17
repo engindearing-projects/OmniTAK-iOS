@@ -50,6 +50,10 @@ struct OmniTAKMobileApp: App {
         // them later. Starts its own timer, so it works with no report arriving.
         ContactMaxAgeMonitor.shared.start()
 
+        // Geofences: watches the operator and the teammates against the geofences that are on.
+        // Cheap when there are none, and it never asks for a permission.
+        GeofenceService.shared.start()
+
         // Plugin SDK — populate the COMPILE-TIME registry and activate the
         // plugins the user has enabled. There is NO dynamic / downloadable
         // code: bundled plugins are Swift types linked into the binary

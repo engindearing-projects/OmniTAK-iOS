@@ -22,6 +22,9 @@ enum MapEngine: String, CaseIterable, Identifiable, Codable {
 // ATAK-style Map View with tactical interface
 struct ATAKMapView: View {
     @ObservedObject private var takService = TAKService.shared
+    // The geofences drawn on whichever engine is active. The alerts they raise are shown by
+    // GeofenceBannerHost, which observes the geofence service itself.
+    @ObservedObject private var geofenceManager = GeofenceManager.shared
     @StateObject private var locationManager = LocationManager()
     @StateObject private var drawingStore: DrawingStore
     @StateObject private var drawingManager: DrawingToolsManager
@@ -81,7 +84,6 @@ struct ATAKMapView: View {
     @State private var showToolsMenu = false
     @State private var showLoadingScreen = true
     @State private var showGPSError = false
-    @State private var showGeofenceAlert = false
     @State private var showTraffic = false
     @State private var trackingMode: MapUserTrackingMode = .none
     @State private var orientation = UIDeviceOrientation.unknown
@@ -372,7 +374,8 @@ struct ATAKMapView: View {
             // so pins age visibly even without inbound CoT.
             stalenessOverlay: stalenessOverlayEnabled && stalenessTick >= 0,
             // #135: names under markers at the phone's text size x Label size.
-            labelFactor: labelFactor
+            labelFactor: labelFactor,
+            geofences: geofenceManager.geofences
         )
         .ignoresSafeArea()
         .onReceive(stalenessTimer) { _ in
@@ -646,21 +649,15 @@ struct ATAKMapView: View {
         }
     }
 
+    /// A geofence alert across the top of the map: below the status strip, the aircraft pill and
+    /// the compasses, and below the "Range rings placed" banner while that is up. Tapping it opens
+    /// the geofence list.
     @ViewBuilder
     private var geofenceAlert: some View {
-        if showGeofenceAlert {
-            VStack {
-                GeofenceAlertNotification(
-                    geofenceName: "Circle 1",
-                    action: "Entered",
-                    callsign: userCallsign,
-                    isPresented: $showGeofenceAlert
-                )
-                .padding(.top, 60)
-                Spacer()
-            }
-            .zIndex(1004)
-        }
+        GeofenceBannerHost(
+            topInset: measurementManager.lastRangeRingPlacement != nil ? 200 : (isLandscape ? 110 : 150),
+            onOpenList: { showGeofences = true })
+            .zIndex(2700) // above the other top banners (2600), below the radial menu (3000)
     }
 
     @ViewBuilder
@@ -1387,7 +1384,8 @@ struct ATAKMapView: View {
                 // the operator switches engines. nil on cold start and after 3D→2D.
                 cameraSeed: cesiumCameraSeed,
                 cameraSeedBearing: mapBearing,
-                scaleAnchor: scaleAnchor
+                scaleAnchor: scaleAnchor,
+                geofences: geofenceManager.geofences
             )
             .ignoresSafeArea()
     }
@@ -2106,6 +2104,9 @@ struct ATAKMapView: View {
     @AppStorage("cesium.lastPitch")   private var cesiumLastPitch: Double = -60
 
     private func handleCesiumMapEvent(_ event: CesiumMapEvent) {
+        // A geofence is not a drawing, a contact or a marker: a tap or a long press that lands on
+        // one is a tap or a long press on the map, never a menu for something that is not there.
+        let entityUid = event.entityUid.flatMap { $0.hasPrefix(GeofenceMapShape.idPrefix) ? nil : $0 }
         switch event.kind {
         case .cameraChanged:
             guard let cam = event.camera else { return }
@@ -2141,19 +2142,19 @@ struct ATAKMapView: View {
             // point-marker menu (Edit/Delete/Share/Navigate) the 2D
             // Mapbox long-press path produces. Empty-map and other
             // entities fall through to the map-context menu.
-            if openCesiumPointMarkerMenu(uid: event.entityUid, at: event) { return }
+            if openCesiumPointMarkerMenu(uid: entityUid, at: event) { return }
             // Issue #60 — a long-press on a drawing (line / polygon / circle /
             // drawing-marker) opens its Edit/Delete radial menu, same as the 2D
             // Mapbox long-press path. Without this the 3D engine dropped the
             // drawing uid and the shape was unselectable.
-            if openCesiumDrawingMenu(uid: event.entityUid, at: event) { return }
+            if openCesiumDrawingMenu(uid: entityUid, at: event) { return }
             radialMenuCoordinator.showContextMenu(
                 at: event.screenPoint,
                 for: event.coordinate,
                 menuType: .mapContext
             )
         case .tap:
-            guard let uid = event.entityUid else {
+            guard let uid = entityUid else {
                 // Empty-map single tap mirrors the 2D Mapbox path —
                 // measurement / drawing tool consume the tap if active,
                 // otherwise it's a no-op.
@@ -2975,17 +2976,22 @@ private struct RadialMenuExtraObservers: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .radialMenuCenterMap)) { note in
                 guard let coordinate = note.userInfo?["coordinate"] as? CLLocationCoordinate2D else { return }
+                // "Show on map" for a geofence also says how much ground to show (`viewWidth`, metres
+                // across the screen); "Center" does not, and keeps the view it always had.
+                let viewWidth = note.userInfo?["viewWidth"] as? Double
+                let span = viewWidth.map {
+                    GeofenceFraming.longitudeSpan(viewWidth: $0, latitude: coordinate.latitude,
+                                                  screenWidth: GeofenceFraming.screenWidth)
+                } ?? 0.02
                 withAnimation {
                     mapRegion = MKCoordinateRegion(
                         center: coordinate,
-                        span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+                        span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
                     )
                 }
-                NotificationCenter.default.post(
-                    name: .cesiumCenterOn,
-                    object: nil,
-                    userInfo: ["lat": coordinate.latitude, "lon": coordinate.longitude]
-                )
+                var globe: [String: Any] = ["lat": coordinate.latitude, "lon": coordinate.longitude]
+                if let viewWidth { globe["viewWidth"] = viewWidth }
+                NotificationCenter.default.post(name: .cesiumCenterOn, object: nil, userInfo: globe)
             }
             .onReceive(NotificationCenter.default.publisher(for: .radialMenuDrawLine)) { _ in
                 drawingManager.startDrawing(mode: .line)
