@@ -31,7 +31,10 @@ import os
 enum MissionServerStatus: Equatable {
     case checking
     case online
-    case offline(String)   // associated value = short reason
+    /// `reason` is the one-line explanation shown on the server row;
+    /// `detail` is the full diagnosis (system error codes, what the TLS
+    /// handshake saw) for the details sheet, the clipboard and the log (#169).
+    case offline(reason: String, detail: String?)
 
     var isOnline: Bool { if case .online = self { return true } else { return false } }
 }
@@ -46,6 +49,9 @@ struct ServerSyncSession: Identifiable {
     var missions: [TAKMissionInfo]
     var dataPackages: [TAKDataPackageInfo]
     var lastChecked: Date?
+    /// How the Marti API was reached when it was not the client certificate
+    /// (for example "username and password (8446)", #169).
+    var authLabel: String?
 
     var id: UUID { serverId }
     var isOnline: Bool { status.isOnline }
@@ -100,12 +106,15 @@ final class MissionSyncManager: ObservableObject {
         }
     }
 
-    /// Enrolled, enabled, TLS servers from the single source of truth.
-    /// (A server with no client cert can't do mutual-TLS mission sync.)
-    /// Public so the mission-creation flow (and any future writer) can reuse
-    /// the same filter rather than re-deriving it from ServerManager.
+    /// Enabled TLS servers that can authenticate to the Marti API: with a
+    /// client certificate, or with a stored username and password, which
+    /// reach the API through the enrollment port (#169). Public so the
+    /// mission-creation flow (and any future writer) can reuse the same
+    /// filter rather than re-deriving it from ServerManager.
     func enabledServers() -> [TAKServer] {
-        ServerManager.shared.servers.filter { $0.enabled && $0.useTLS && $0.certificateName != nil }
+        ServerManager.shared.servers.filter {
+            $0.enabled && $0.useTLS && ($0.certificateName != nil || $0.hasStoredCredentials)
+        }
     }
 
     // MARK: Refresh
@@ -168,7 +177,6 @@ final class MissionSyncManager: ObservableObject {
     /// so missions come back empty while its data packages still load.
     private static func sync(server: TAKServer) async -> ServerSyncSession {
         let client = TAKRestAPIClient()
-        client.configure(from: server)
 
         var session = ServerSyncSession(
             serverId: server.id, serverName: server.name, host: server.host,
@@ -176,12 +184,19 @@ final class MissionSyncManager: ObservableObject {
         )
 
         do {
-            try await client.checkReachability()
+            // Certificate port first; username/password on the enrollment
+            // port when that is refused and credentials are stored (#169).
+            let mode = try await client.connect(to: server)
             session.status = .online
+            session.authLabel = mode.usesCredentials ? mode.label : nil
+            if mode.usesCredentials {
+                log.notice("mission sync: \(server.name, privacy: .public) reached the Marti API with \(mode.label, privacy: .public)")
+            }
         } catch {
-            session.status = .offline(shortReason(error))
+            let (reason, detail) = describe(error)
+            session.status = .offline(reason: reason, detail: detail)
             session.lastChecked = Date()
-            log.info("mission sync: \(server.name, privacy: .public) offline — \(shortReason(error), privacy: .public)")
+            log.error("mission sync: \(server.name, privacy: .public) offline — \(detail ?? reason, privacy: .public)")
             return session
         }
 
@@ -194,10 +209,15 @@ final class MissionSyncManager: ObservableObject {
         return session
     }
 
-    private static func shortReason(_ error: Error) -> String {
-        if let apiErr = error as? TAKAPIError, let desc = apiErr.errorDescription {
-            return desc
+    /// The row text and, when the transport layer explained itself, the
+    /// full diagnosis for the details sheet.
+    private static func describe(_ error: Error) -> (reason: String, detail: String?) {
+        if let apiErr = error as? TAKAPIError {
+            if let failure = apiErr.connectionFailure {
+                return (failure.summary, failure.details)
+            }
+            return (apiErr.errorDescription ?? String(describing: apiErr), nil)
         }
-        return (error as NSError).localizedDescription
+        return ((error as NSError).localizedDescription, nil)
     }
 }

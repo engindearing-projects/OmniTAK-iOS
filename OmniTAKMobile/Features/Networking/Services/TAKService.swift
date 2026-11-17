@@ -1263,6 +1263,12 @@ struct CoTEvent {
     /// tagged at the ingest point. Nil when unknown. Display/debug only — never
     /// rides the wire.
     var source: CoTSource? = nil
+    /// #137: the CoT `how` attribute of the <event> tag: how the position was
+    /// obtained. `m-...` (e.g. `m-g`, machine GPS) is a device reporting where it
+    /// is; `h-...` (e.g. `h-e`, `h-g-i-g-o`) is a person placing something. Nil
+    /// when the event did not come from CoT XML that carried one. The contact max
+    /// age only governs `m-` reports (ContactMaxAge.appliesTo).
+    var how: String? = nil
 }
 
 struct CoTPoint {
@@ -2426,9 +2432,15 @@ private func cotCallback(
         }
     } else {
         // Parse regular CoT message
-        if let event = parseCoT(xml: message) {
+        if let parsed = parseCoT(xml: message) {
             DispatchQueue.main.async {
                 service.incrementMessagesReceived()
+                // #137: stamp the receive time the way CoTEventHandler does. This
+                // path writes cotEvents itself, so without the stamp the event
+                // that lands last would have no age and the contact max age could
+                // not hide or remove the contact.
+                var event = parsed
+                event.receivedAt = Date()
                 // Dedup by UID: this Rust-FFI callback path runs alongside the
                 // DirectTCP path in legacy connect(), so the same contact can
                 // arrive twice. Appending blindly grew cotEvents unbounded with
@@ -2439,6 +2451,7 @@ private func cotCallback(
                 } else {
                     service.cotEvents.append(event)
                 }
+                ContactMaxAgeMonitor.shared.reportReceived(uid: event.uid)
                 service.onCoTReceived?(event)
 
                 // Also parse participant info for chat (skip own echoed PPLI)
@@ -2568,6 +2581,13 @@ private func parseCoT(xml: String) -> CoTEvent? {
         argbColor = Int(argbStr)
     }
 
+    // #137: the `how` of the <event> tag, read the way CoTMessageParser reads it, so
+    // the same report qualifies for the contact max age whichever path parsed it.
+    var how: String? = nil
+    if let eventRange = xml.range(of: "<event[^>]*>", options: .regularExpression) {
+        how = extractAttribute("how", from: String(xml[eventRange]))
+    }
+
     return CoTEvent(
         uid: String(uid),
         type: String(type),
@@ -2585,7 +2605,8 @@ private func parseCoT(xml: String) -> CoTEvent? {
             platform: platform,
             iconsetPath: iconsetPath,
             argbColor: argbColor
-        )
+        ),
+        how: how
     )
 }
 

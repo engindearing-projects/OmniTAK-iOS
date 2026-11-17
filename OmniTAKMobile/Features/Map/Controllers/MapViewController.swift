@@ -125,11 +125,20 @@ struct ATAKMapView: View {
     // #178 — on-map staleness overlay (Settings → "Show point age on map").
     // When on, contact pins fade by age bucket and gain a compact age label.
     @AppStorage("stalenessOverlayEnabled") private var stalenessOverlayEnabled = false
+    // #135: Settings, "Label size": the names under markers and the position box.
+    // Read here (not just in Settings) so a change redraws the map at once. The
+    // phone's own text size comes from the environment, so changing that redraws too.
+    @AppStorage(LabelSize.storageKey) private var labelScalePercent = LabelSize.defaultPercent
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     // Bumps once on a slow cadence while the overlay is on, so the pins
     // re-fade / re-label as points age even when no new CoT arrives. Idle when
     // the overlay is off, so the default render path is untouched.
     @State private var stalenessTick = 0
     private let stalenessTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
+    // #137: contact max age. The contacts it has hidden (not heard from for the
+    // Settings "Hide teammates not heard from for" time) are left out of the map
+    // below. The contact list reads the same object, so both agree.
+    @ObservedObject private var contactMaxAge = ContactMaxAgeMonitor.shared
     @State private var showLineOfSight = false
     @State private var showEchelonHierarchy = false
     @State private var showMissionSync = false
@@ -211,9 +220,22 @@ struct ATAKMapView: View {
         return isLandscape ? 56 : (showQuickActionToolbar ? 150 : 90)
     }
 
+    /// #135: the one multiplier for the names under markers and for the position
+    /// box: the phone's text size x the Label size setting.
+    private var labelFactor: Double {
+        LabelSize.factor(phoneFontScale: LabelSize.phoneFontScale(for: dynamicTypeSize),
+                         percent: labelScalePercent)
+    }
+
     // Computed CoT markers from TAK service - filtered by overlay settings
     private var cotMarkers: [CoTMarker] {
-        takService.cotEvents.compactMap { event in
+        let hiddenByMaxAge = contactMaxAge.hidden
+        return takService.cotEvents.compactMap { event in
+            // #137: a teammate not heard from for the contact max age is off the
+            // map (still in the store and in the contact list's "not heard from"
+            // section). Only contacts the rule governs are ever in this set.
+            if hiddenByMaxAge[event.uid] != nil { return nil }
+
             // Air-dimension tracks (a-?-A-…, e.g. Remote ID / gyb drones,
             // ADS-B) carry their HAE so the 3D globe floats them at altitude
             // with a TAK leader line; ground units stay clamped (hae nil).
@@ -334,7 +356,9 @@ struct ATAKMapView: View {
             // #178 — fade/label contact pins by age when enabled in Settings.
             // Referencing stalenessTick here ties the slow timer to a re-render
             // so pins age visibly even without inbound CoT.
-            stalenessOverlay: stalenessOverlayEnabled && stalenessTick >= 0
+            stalenessOverlay: stalenessOverlayEnabled && stalenessTick >= 0,
+            // #135: names under markers at the phone's text size x Label size.
+            labelFactor: labelFactor
         )
         .ignoresSafeArea()
         .onReceive(stalenessTimer) { _ in
@@ -574,25 +598,34 @@ struct ATAKMapView: View {
     @ViewBuilder
     private var callsignDisplay: some View {
         if showCallsignPanel, let location = locationManager.location {
-            VStack {
-                Spacer()
-                HStack {
+            // #135: GeometryReader so the box can be capped at a width that stops
+            // short of the map buttons on the left (long lines wrap instead).
+            GeometryReader { geo in
+                VStack {
                     Spacer()
-                    CallsignDisplay(
-                        callsign: userCallsign,
-                        coordinates: formatCoordinates(location.coordinate),
-                        altitude: formatAltitude(location.altitude),
-                        speed: formatSpeed(location.speed),
-                        heading: formatHeading(locationManager.heading),
-                        accuracy: "+/- \(Int(location.horizontalAccuracy))m",
-                        onDismiss: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                showCallsignPanel = false
-                            }
-                        }
-                    )
-                    .padding(.trailing, 16)
-                    .padding(.bottom, callsignBottomPad)
+                    HStack {
+                        Spacer()
+                        CallsignDisplay(
+                            callsign: userCallsign,
+                            coordinates: formatCoordinates(location.coordinate),
+                            altitude: formatAltitude(location.altitude),
+                            speed: formatSpeed(location.speed),
+                            heading: formatHeading(locationManager.heading),
+                            accuracy: "+/- \(Int(location.horizontalAccuracy))m",
+                            onDismiss: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showCallsignPanel = false
+                                }
+                            },
+                            labelFactor: labelFactor,
+                            maxWidth: CGFloat(PositionBoxStyle.maxWidth(
+                                screenWidth: Double(geo.size.width),
+                                leadingReserved: PositionBoxStyle.leadingReserved,
+                                trailing: PositionBoxStyle.trailingPadding))
+                        )
+                        .padding(.trailing, CGFloat(PositionBoxStyle.trailingPadding))
+                        .padding(.bottom, callsignBottomPad)
+                    }
                 }
             }
             .zIndex(1003)
