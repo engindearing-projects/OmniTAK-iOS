@@ -19,10 +19,9 @@ struct ScaleBarView: View {
     /// bar. Do not move the sample back to the centre.
     let metersPerPoint: Double?
     let isVisible: Bool
-    /// #182 — compact landscape layout. The portrait bottom offset (225, tuned
-    /// to sit above the GPS cluster + full-width bar) lifts the scale bar near
-    /// the top on the short landscape canvas, so shrink the reservation.
-    var compact: Bool = false
+    /// How far the bottom of the bar's row is above the bottom edge of the screen. The map
+    /// screen stacks it above the zoom and centre-on-me buttons (see MapChromeLayout).
+    var bottomInset: CGFloat = 225
     /// Called with the scale anchor, in the map view's own coordinate space,
     /// whenever the bar's place on screen changes: the middle of its maximum width,
     /// on its line's row. It is read from the bar's own frame, so it stays right in
@@ -56,7 +55,7 @@ struct ScaleBarView: View {
                         Spacer()
                     }
                     .padding(.leading, 16)
-                    .padding(.bottom, compact ? 110 : 225)
+                    .padding(.bottom, bottomInset)
                 }
                 .allowsHitTesting(false)
                 // The map fills the whole screen, safe areas included. Its frame is

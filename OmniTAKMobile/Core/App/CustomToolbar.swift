@@ -77,6 +77,13 @@ struct CustomToolbar: View {
                 barPill
             }
         }
+        // Measured before the padding: the bar's own edges (and its tip's), which is what the map's
+        // floating controls have to clear.
+        .background(
+            GeometryReader { bar in
+                Color.clear.preference(key: BottomBarFrameKey.self, value: bar.frame(in: .global))
+            }
+        )
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
     }

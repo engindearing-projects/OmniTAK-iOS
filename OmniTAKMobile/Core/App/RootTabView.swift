@@ -35,6 +35,8 @@ struct RootTabView: View {
     }
     @State private var showToolsLauncher = false
     @State private var showAddPalette = false
+    /// Where the bottom bar is, for the map's floating controls (see MapChromeLayout).
+    @State private var barMeasure = BottomBarMeasure()
 
     @AppStorage("mapEngine") private var mapEngineRaw: String = MapEngine.cesium3D.rawValue
     private var mapEngine: MapEngine { MapEngine(rawValue: mapEngineRaw) ?? .cesium3D }
@@ -48,6 +50,7 @@ struct RootTabView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             ATAKMapView()
+                .environment(\.bottomBarMeasure, barMeasure)
                 .tag(RootTab.map)
                 .ignoresSafeArea(edges: .bottom)
 
@@ -88,6 +91,29 @@ struct RootTabView: View {
                 statusDots: ["tab.mesh": meshLinkColor]
             )
         }
+        // The window's size and bottom safe area, and the bar's frame: the map's floating controls
+        // are stacked from where the bar (with its tip, when shown) really is.
+        // The reader respects the safe area: one that ignores it reads its insets as zero. The window's
+        // size is the reader's plus the insets.
+        .background(
+            GeometryReader { window in
+                let insets = window.safeAreaInsets
+                Color.clear.preference(
+                    key: WindowMeasureKey.self,
+                    value: WindowMeasure(
+                        size: CGSize(width: window.size.width + insets.leading + insets.trailing,
+                                     height: window.size.height + insets.top + insets.bottom),
+                        safeBottom: insets.bottom, safeLeft: insets.leading, safeRight: insets.trailing))
+            }
+        )
+        .onPreferenceChange(WindowMeasureKey.self) { measure in
+            guard let measure else { return }
+            barMeasure.window = measure.size
+            barMeasure.safeBottom = measure.safeBottom
+            barMeasure.safeLeft = measure.safeLeft
+            barMeasure.safeRight = measure.safeRight
+        }
+        .onPreferenceChange(BottomBarFrameKey.self) { barMeasure.bar = $0 }
         // Tools popup overlay (tap-outside-to-dismiss; map stays interactive).
         .overlay {
             if showToolsLauncher {
@@ -181,5 +207,48 @@ struct RootTabView: View {
                 toolbarStore.isEditing = true
             }
         }
+    }
+}
+
+// MARK: - The bottom bar, measured
+
+/// The bottom bar's frame in the window, with its first-run tip or edit header when shown.
+struct BottomBarFrameKey: PreferenceKey {
+    static var defaultValue: CGRect?
+    static func reduce(value: inout CGRect?, nextValue: () -> CGRect?) { value = nextValue() ?? value }
+}
+
+/// The window's size and safe areas.
+struct WindowMeasure: Equatable {
+    var size: CGSize
+    var safeBottom: CGFloat
+    var safeLeft: CGFloat = 0
+    var safeRight: CGFloat = 0
+}
+
+struct WindowMeasureKey: PreferenceKey {
+    static var defaultValue: WindowMeasure?
+    static func reduce(value: inout WindowMeasure?, nextValue: () -> WindowMeasure?) { value = nextValue() ?? value }
+}
+
+/// What the map screen needs to know to keep its floating controls clear of the bar. Handed down
+/// through the environment; empty until the first layout has measured, which MapChromeLayout
+/// answers with the estimate for a portrait phone.
+struct BottomBarMeasure: Equatable {
+    var bar: CGRect?
+    var window: CGSize?
+    var safeBottom: CGFloat = 0
+    var safeLeft: CGFloat = 0
+    var safeRight: CGFloat = 0
+}
+
+private struct BottomBarMeasureKey: EnvironmentKey {
+    static let defaultValue = BottomBarMeasure()
+}
+
+extension EnvironmentValues {
+    var bottomBarMeasure: BottomBarMeasure {
+        get { self[BottomBarMeasureKey.self] }
+        set { self[BottomBarMeasureKey.self] = newValue }
     }
 }

@@ -78,7 +78,8 @@ struct ATAKStatusBar: View {
                             }
                         }
                     }
-                    .foregroundColor(connected == total ? .green : (connected > 0 ? .yellow : .gray))
+                    .foregroundColor((connected == total ? StatusStripStyle.good
+                                      : (connected > 0 ? StatusStripStyle.warning : StatusStripStyle.quiet)).color)
                 } else {
                     HStack(spacing: 2) {
                         Image(systemName: "server.rack")
@@ -87,7 +88,7 @@ struct ATAKStatusBar: View {
                             .font(.system(size: 10, weight: .medium))
                             .lineLimit(1)
                     }
-                    .foregroundColor(isConnected ? .green : .gray)
+                    .foregroundColor((isConnected ? StatusStripStyle.good : StatusStripStyle.quiet).color)
                 }
             }
 
@@ -95,19 +96,19 @@ struct ATAKStatusBar: View {
             HStack(spacing: 2) {
                 Text("↓")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(Color(red: 0.13, green: 0.59, blue: 0.95))
+                    .foregroundColor(StatusStripStyle.received.color)
                 Text("\(messagesReceived)")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(Color(red: 0.13, green: 0.59, blue: 0.95))
+                    .foregroundColor(StatusStripStyle.received.color)
             }
 
             HStack(spacing: 2) {
                 Text("↑")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(Color(red: 1.0, green: 0.63, blue: 0.0))
+                    .foregroundColor(StatusStripStyle.sent.color)
                 Text("\(messagesSent)")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(Color(red: 1.0, green: 0.63, blue: 0.0))
+                    .foregroundColor(StatusStripStyle.sent.color)
             }
 
             Spacer()
@@ -119,12 +120,12 @@ struct ATAKStatusBar: View {
                 Text(String(format: "±%.0fm", gpsAccuracy))
                     .font(.system(size: 10, weight: .medium))
             }
-            .foregroundColor(gpsAccuracy < 10 ? .green : .yellow)
+            .foregroundColor((gpsAccuracy < 10 ? StatusStripStyle.good : StatusStripStyle.warning).color)
 
             // Time (compact) — 24h tactical, matches Android
             Text(ATAKStatusBar.timeLabelFormatter.string(from: Date()))
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(.white.opacity(0.9))
+                .foregroundColor(StatusStripStyle.text.color)
 
             // Hamburger Menu Button (compact)
             Button(action: onMenuTap) {
@@ -149,7 +150,7 @@ struct ATAKStatusBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.black.opacity(0.5))  // Translucent background
+        .background(Color.black.opacity(StatusStripStyle.backingOpacity))  // Translucent, dark enough to read on a pale map
     }
 }
 

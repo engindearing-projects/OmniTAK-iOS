@@ -206,6 +206,8 @@ struct ATAKMapView: View {
     // Detect device orientation
     @Environment(\.verticalSizeClass) var verticalSizeClass
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
+    /// Where the bottom bar is (with its tip, when shown): the floating controls are stacked above it.
+    @Environment(\.bottomBarMeasure) private var barMeasure
 
     var isLandscape: Bool {
         horizontalSizeClass == .regular || verticalSizeClass == .compact
@@ -218,17 +220,28 @@ struct ATAKMapView: View {
     // centered pill (see CustomToolbar), so the bottom corners are free and
     // the chrome only needs to clear the home indicator. These offsets shrink
     // the bottom reservations accordingly; portrait keeps its original values.
+    /// Where the floating controls sit above the bottom bar, from where the bar really is (see
+    /// MapChromeLayout). The 2D map's own logo and attribution button get a row under them.
+    private var chrome: MapChromeLayout.Placement {
+        MapChromeLayout.placement(
+            bar: barMeasure.bar,
+            window: barMeasure.window ?? UIScreen.main.bounds.size,
+            safeBottom: barMeasure.safeBottom,
+            safeLeft: barMeasure.safeLeft,
+            safeRight: barMeasure.safeRight,
+            ornaments: mapEngine == .mapbox2D)
+    }
     /// Bottom offset for the left zoom toolbar (above the GPS cluster).
     private var bottomToolbarBottomPad: CGFloat {
         if isCursorModeActive { return isLandscape ? 110 : 240 }
-        return isLandscape ? 64 : 140
+        return chrome.zoomBlockBottom
     }
     /// Bottom offset for the bottom-right callsign card.
-    private var callsignBottomPad: CGFloat { isLandscape ? 56 : 120 }
+    private var callsignBottomPad: CGFloat { chrome.cardBottom }
     /// Bottom offset for the left GPS/center cluster.
     private var gpsClusterBottomPad: CGFloat {
         if isCursorModeActive { return isLandscape ? 96 : 222 }
-        return isLandscape ? 56 : (showQuickActionToolbar ? 150 : 90)
+        return chrome.locateBottom
     }
 
     /// #135: the one multiplier for the names under markers and for the position
@@ -375,7 +388,11 @@ struct ATAKMapView: View {
             stalenessOverlay: stalenessOverlayEnabled && stalenessTick >= 0,
             // #135: names under markers at the phone's text size x Label size.
             labelFactor: labelFactor,
-            geofences: geofenceManager.geofences
+            geofences: geofenceManager.geofences,
+            // The map's logo and attribution button must stay visible and tappable: they sit
+            // just above the bar, with the controls stacked above them.
+            logoBottom: chrome.logoBottom ?? 4,
+            attributionBottom: chrome.attributionBottom ?? 8
         )
         .ignoresSafeArea()
         .onReceive(stalenessTimer) { _ in
@@ -635,12 +652,9 @@ struct ATAKMapView: View {
                                 }
                             },
                             labelFactor: labelFactor,
-                            maxWidth: CGFloat(PositionBoxStyle.maxWidth(
-                                screenWidth: Double(geo.size.width),
-                                leadingReserved: PositionBoxStyle.leadingReserved,
-                                trailing: PositionBoxStyle.trailingPadding))
+                            maxWidth: MapChromeLayout.cardWidth(availableWidth: geo.size.width)
                         )
-                        .padding(.trailing, CGFloat(PositionBoxStyle.trailingPadding))
+                        .padding(.trailing, MapChromeLayout.rightMargin)
                         .padding(.bottom, callsignBottomPad)
                     }
                 }
@@ -712,7 +726,7 @@ struct ATAKMapView: View {
         ScaleBarView(
             metersPerPoint: mapMetersPerPoint,
             isVisible: showScaleBar,
-            compact: isLandscape,
+            bottomInset: isCursorModeActive ? (isLandscape ? 110 : 225) : chrome.scaleBarBottom,
             onAnchorChange: { anchor in
                 if scaleAnchor != anchor { scaleAnchor = anchor }
             }

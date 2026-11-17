@@ -110,6 +110,11 @@ struct TacticalMapView: UIViewRepresentable {
     /// Every geofence. The ones switched on and with a shape are drawn: a light fill, an outline
     /// in their color and their name. Defaulted so other call sites are unchanged.
     var geofences: [Geofence] = []
+    /// How far above the bottom edge of the screen the map's own logo and attribution button
+    /// sit. The bottom bar floats over the map's lower edge, so their default place (a few points
+    /// above the edge) is under it, where they could not be seen or tapped.
+    var logoBottom: CGFloat = 4
+    var attributionBottom: CGFloat = 8
 
     // MARK: - UIViewRepresentable
 
@@ -319,6 +324,8 @@ struct TacticalMapView: UIViewRepresentable {
             }
         }
 
+        TacticalMapView.placeOrnaments(on: mapView, logoBottom: logoBottom, attributionBottom: attributionBottom)
+
         // Style swap on mapType change
         let desiredStyle = TacticalMapView.styleURI(for: mapType)
         if context.coordinator.lastAppliedStyle != desiredStyle {
@@ -407,6 +414,27 @@ struct TacticalMapView: UIViewRepresentable {
     static func moveCamera(of mapView: MapView, to center: CLLocationCoordinate2D, zoom: Double) {
         let state = mapView.mapboxMap.cameraState
         mapView.mapboxMap.setCamera(to: CameraOptions(center: center, zoom: zoom, bearing: state.bearing, pitch: state.pitch))
+    }
+
+    /// Puts the logo bottom-left and the attribution button bottom-right, each `bottom` points above
+    /// the bottom edge of the screen. The SDK measures from the safe area, so the view's own bottom
+    /// inset comes off.
+    static func placeOrnaments(on mapView: MapView, logoBottom: CGFloat, attributionBottom: CGFloat) {
+        let inset = mapView.safeAreaInsets.bottom
+        var logo = mapView.ornaments.options.logo
+        let logoMargins = CGPoint(x: 8, y: max(logoBottom - inset, 0))
+        if logo.position != .bottomLeading || logo.margins != logoMargins {
+            logo.position = .bottomLeading
+            logo.margins = logoMargins
+            mapView.ornaments.options.logo = logo
+        }
+        var attribution = mapView.ornaments.options.attributionButton
+        let attributionMargins = CGPoint(x: 8, y: max(attributionBottom - inset, 0))
+        if attribution.position != .bottomTrailing || attribution.margins != attributionMargins {
+            attribution.position = .bottomTrailing
+            attribution.margins = attributionMargins
+            mapView.ornaments.options.attributionButton = attribution
+        }
     }
 
     /// User-location puck honoring the Settings "Self-position marker"
