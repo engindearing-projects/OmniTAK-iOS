@@ -92,6 +92,7 @@ Backed by `UserDefaults`. Same ATAK-side aliases honoured.
 | `trailMaxLength` | int (10–500) | `100` |, |
 | `trailColorName` | string (`cyan`, `green`, `orange`, `red`, `blue`) | `cyan` |, |
 | `contactMaxAgeMinutes` | int (`5`, `10`, `15`, `30`, `60`, `120`; `0` = Never) | `30` |, |
+| `label_scale_percent` | int (`80`, `100`, `120`, `140`, `160`) | `100` |, |
 | `appMode` | string (`tactical`, `fire_rescue`, `sar`, `civilian`) | `tactical` |, |
 
 ### iOS Meshtastic device-config keys
