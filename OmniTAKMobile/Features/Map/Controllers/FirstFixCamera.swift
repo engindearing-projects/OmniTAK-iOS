@@ -53,6 +53,20 @@ enum FirstFixCamera {
     }
 }
 
+extension FirstFixCamera {
+    /// Moves the 2D map's camera to the operator for the first fix: the one place the post is made, so that a
+    /// test can send exactly what the map screen sends to the map that reads it. The camera is moved itself:
+    /// the region alone is skipped while the map is still settling at launch, and then written over by the
+    /// map's own camera events.
+    static func postMapMove(to coordinate: CLLocationCoordinate2D, center: NotificationCenter = .default) {
+        center.post(name: .mapboxMoveCamera, object: nil, userInfo: [
+            "lat": coordinate.latitude,
+            "lon": coordinate.longitude,
+            "zoom": mapZoom,
+        ])
+    }
+}
+
 /// What the globe opens on when its page is ready.
 enum GlobeStart {
     enum Plan: Equatable {
@@ -91,21 +105,39 @@ struct SavedGlobePose: Equatable {
     static let version = 2
     static let versionKey = "cesium.poseVersion"
 
+    private static let latitudeKey = "cesium.lastLat"
+    private static let longitudeKey = "cesium.lastLon"
+    private static let heightKey = "cesium.lastHeight"
+    private static let headingKey = "cesium.lastHeading"
+    private static let pitchKey = "cesium.lastPitch"
+
     /// The saved pose, or nil when there is none worth opening on: nothing saved by this version,
     /// or the pose every launch starts at (a camera nobody chose, so a new install is still a new
     /// install).
     static func load(from defaults: UserDefaults = .standard) -> SavedGlobePose? {
         guard defaults.integer(forKey: versionKey) >= version,
-              defaults.object(forKey: "cesium.lastLat") != nil,
-              defaults.object(forKey: "cesium.lastLon") != nil,
-              defaults.object(forKey: "cesium.lastHeight") != nil else { return nil }
+              defaults.object(forKey: latitudeKey) != nil,
+              defaults.object(forKey: longitudeKey) != nil,
+              defaults.object(forKey: heightKey) != nil else { return nil }
         let pose = SavedGlobePose(
-            latitude: defaults.double(forKey: "cesium.lastLat"),
-            longitude: defaults.double(forKey: "cesium.lastLon"),
-            height: defaults.double(forKey: "cesium.lastHeight"),
-            heading: defaults.double(forKey: "cesium.lastHeading"),
-            pitch: (defaults.object(forKey: "cesium.lastPitch") as? Double) ?? -60)
+            latitude: defaults.double(forKey: latitudeKey),
+            longitude: defaults.double(forKey: longitudeKey),
+            height: defaults.double(forKey: heightKey),
+            heading: defaults.double(forKey: headingKey),
+            pitch: (defaults.object(forKey: pitchKey) as? Double) ?? -60)
         return pose.isStartPose ? nil : pose
+    }
+
+    /// Keeps this camera for the next launch: the one writer, so the five values and this version's mark are
+    /// always written together. A camera saved without the mark reads back as no saved camera at all, and
+    /// then every launch flies in and no saved view is ever restored.
+    func save(to defaults: UserDefaults = .standard) {
+        defaults.set(latitude, forKey: Self.latitudeKey)
+        defaults.set(longitude, forKey: Self.longitudeKey)
+        defaults.set(height, forKey: Self.heightKey)
+        defaults.set(heading, forKey: Self.headingKey)
+        defaults.set(pitch, forKey: Self.pitchKey)
+        defaults.set(Self.version, forKey: Self.versionKey)
     }
 
     /// The whole-world pose the globe starts at: a camera nobody chose.

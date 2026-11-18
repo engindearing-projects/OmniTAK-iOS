@@ -26,6 +26,12 @@ struct ATAKMapView: View {
     // GeofenceBannerHost, which observes the geofence service itself.
     @ObservedObject private var geofenceManager = GeofenceManager.shared
     @StateObject private var locationManager = LocationManager()
+    /// Opens once the 2D map may be created and then stays open for the life of this screen: a later report of
+    /// "not determined" (an "Allow Once" session that ended) must not replace the live map. See MapboxStartGate.
+    @State private var mapboxGate = MapboxStartGate()
+    /// Whether the map is the screen being shown (the tabs keep their screens alive): the question is put
+    /// again to someone who is looking at the map, not to one on another tab.
+    @State private var isMapScreenShowing = false
     @StateObject private var drawingStore: DrawingStore
     @StateObject private var drawingManager: DrawingToolsManager
     // Issue #60 (move/reposition follow-up) — drives drawing reposition mode,
@@ -1247,6 +1253,7 @@ struct ATAKMapView: View {
         .background(errorOverlays)
         .background(lifecycleHandlers)
         .background(firstFixHandlers)
+        .background(permissionHandlers)
         // Marker radial Info / Share / Copy feedback (sheet + share sheet +
         // HUD toast). Bundled in a ViewModifier (type-checked independently)
         // and attached here so it covers BOTH engines.
@@ -1516,9 +1523,9 @@ struct ATAKMapView: View {
     @ViewBuilder
     private var mapboxEngineView: some View {
         ZStack {
-            // See MapboxStart: the map is created once the location permission is known and decided.
-            if MapboxStart.mayCreate(reported: locationManager.hasReportedAuthorization,
-                                     status: locationManager.authorizationStatus) {
+            // See MapboxStart and MapboxStartGate: the map is created once the location permission is known
+            // and decided, and then kept.
+            if mapboxGate.isOpen {
                 mainMapView
             } else {
                 Color.black.ignoresSafeArea()
@@ -1863,20 +1870,40 @@ struct ATAKMapView: View {
                 guard mapEngine == .mapbox2D, let location else { return }
                 let usable = FirstFixCamera.isUsable(location, now: Date())
                 guard FirstFixState.shared.claimMove(engineIsGlobe: false, fixIsUsable: usable) else { return }
-                // The camera is moved itself: the region alone is skipped while the map is still
-                // settling at launch, and then written over by the map's own camera events.
-                NotificationCenter.default.post(name: .mapboxMoveCamera, object: nil, userInfo: [
-                    "lat": location.coordinate.latitude,
-                    "lon": location.coordinate.longitude,
-                    "zoom": FirstFixCamera.mapZoom,
-                ])
+                // The camera is moved itself (see postMapMove), then the region follows.
+                FirstFixCamera.postMapMove(to: location.coordinate)
                 mapRegion = FirstFixCamera.mapRegion(centre: location.coordinate)
             }
+    }
+
+    /// The location permission as the system reports it to this running screen: it opens the 2D map's gate,
+    /// and when the answer is taken back ("Allow Once" has run out, or "Ask Next Time" was chosen in
+    /// Settings) the question is put again, while the live map stays. Mapbox's own location provider asks
+    /// only when its updates start, not when the status changes under it, so the one question is ours.
+    /// On a sibling view so the already-long `lifecycleHandlers` chain does not grow.
+    private var permissionHandlers: some View {
+        EmptyView()
+            .onChange(of: locationManager.hasReportedAuthorization) { _ in
+                mapboxGate.update(reported: locationManager.hasReportedAuthorization,
+                                  status: locationManager.authorizationStatus)
+            }
+            .onChange(of: locationManager.authorizationStatus) { status in
+                mapboxGate.update(reported: locationManager.hasReportedAuthorization,
+                                  status: locationManager.authorizationStatus)
+                if LocationPrompt.shouldAskAgain(status: status, mapScreenShowing: isMapScreenShowing,
+                                                 onboardingCompleted: UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")) {
+                    LocationManager.shared.ask(at: .mapAppeared, status: status)
+                }
+            }
+            .onDisappear { isMapScreenShowing = false }
     }
 
     private var lifecycleHandlers: some View {
         EmptyView()
             .onAppear {
+                isMapScreenShowing = true
+                mapboxGate.update(reported: locationManager.hasReportedAuthorization,
+                                  status: locationManager.authorizationStatus)
                 // At a first launch this screen is built under the onboarding cover, so the rules hold
                 // the question until onboarding is over; someone who skipped it is asked as it closes.
                 LocationManager.shared.ask(at: .mapAppeared)
@@ -2147,17 +2174,13 @@ struct ATAKMapView: View {
     // snapping to the hardcoded DC default. Defaults seed Washington DC
     // tilted 30°. Phase 4c will mirror these into the 2D Mapbox path's
     // mapRegion so cross-engine continuity is fully bidirectional.
-    // Updated on every Cesium camera-changed event. The defaults here are the pose every launch
-    // of an earlier version started at (New York, 50 km): they are never what a returning user's
-    // camera is restored from (see SavedGlobePose, which reads the keys itself and treats that
-    // pose as no camera at all).
+    // Where the globe's camera last was, kept on every Cesium camera-changed event by SavedGlobePose.save
+    // and read here. The defaults here are the pose every launch of an earlier version started at (New
+    // York, 50 km): they are never what a returning user's camera is restored from (see SavedGlobePose,
+    // which reads the keys itself and treats that pose as no camera at all).
     @AppStorage("cesium.lastLat")     private var cesiumLastLat: Double = 40.6413
     @AppStorage("cesium.lastLon")     private var cesiumLastLon: Double = -73.7781
     @AppStorage("cesium.lastHeight")  private var cesiumLastHeight: Double = 50000
-    @AppStorage("cesium.lastHeading") private var cesiumLastHeading: Double = 0
-    @AppStorage("cesium.lastPitch")   private var cesiumLastPitch: Double = -60
-    /// Tells a camera this version saved from one an earlier version did (see SavedGlobePose).
-    @AppStorage(SavedGlobePose.versionKey) private var cesiumPoseVersion: Int = 0
 
     private func handleCesiumMapEvent(_ event: CesiumMapEvent) {
         // A geofence is not a drawing, a contact or a marker: a tap or a long press that lands on
@@ -2169,12 +2192,8 @@ struct ATAKMapView: View {
             // The first camera event is about to overwrite the saved camera: have it read (once) first,
             // whenever the app happened to ask for it before.
             _ = FirstFixState.shared
-            cesiumLastLat = event.coordinate.latitude
-            cesiumLastLon = event.coordinate.longitude
-            cesiumLastHeight = cam.height
-            cesiumLastHeading = cam.heading
-            cesiumLastPitch = cam.pitch
-            cesiumPoseVersion = SavedGlobePose.version
+            SavedGlobePose(latitude: event.coordinate.latitude, longitude: event.coordinate.longitude,
+                           height: cam.height, heading: cam.heading, pitch: cam.pitch).save()
             // Issue #73 — mirror Cesium heading into mapBearing so the compass
             // overlay stays in sync with the 3D globe's rotation. When the lock
             // is engaged the JS side pins heading to 0° itself (setNorthLock),
