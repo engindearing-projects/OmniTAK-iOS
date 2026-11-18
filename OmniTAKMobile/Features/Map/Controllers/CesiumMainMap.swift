@@ -29,6 +29,8 @@ import UIKit
 struct CesiumMapEvent {
     enum Kind {
         case tap, longpress, cameraChanged, lasso, move
+        /// The operator is moving the map by hand (a drag of more than 8 px, or a pinch).
+        case userMoved
         // Issue #84 — vertex edit. `vertexDragStart` carries the touched globe
         // point (native hit-tests the grabbed handle); `vertexDrag` carries the
         // dragged point (native moves that vertex); `vertexDragEnd` releases it.
@@ -103,6 +105,33 @@ enum CesiumCameraMath {
         let metersVisible = region.span.latitudeDelta * 111_320.0
         let h = metersVisible / 1.15
         return min(max(h, 50.0), 20_000_000.0)
+    }
+
+    /// The 2D region that stands for a globe camera: centred on `centre` (the ground point under
+    /// the middle of the screen) and 1.15 times the camera's height tall. The 3D to 2D half of the
+    /// engine hand-over, and the inverse of `heightForRegion`.
+    static func region(centre: CLLocationCoordinate2D, cameraHeight: Double) -> MKCoordinateRegion {
+        let metersVisible = max(50.0, 1.15 * cameraHeight)
+        let latDelta = min(metersVisible / 111_320.0, 90.0)
+        let lonDelta = min(latDelta / max(cos(centre.latitude * .pi / 180), 0.01), 180.0)
+        return MKCoordinateRegion(
+            center: centre,
+            span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
+        )
+    }
+
+    /// The JS call that puts the globe's camera back on a pose kept from an earlier session,
+    /// exactly: the position, the height, the heading and the pitch.
+    static func poseJS(for pose: SavedGlobePose) -> String {
+        "window.OmniBridge.setCamera({lat:\(pose.latitude),lon:\(pose.longitude),height:\(pose.height),"
+            + "heading:\(pose.heading),pitch:\(pose.pitch)});"
+    }
+
+    /// The JS call for the first fix of a first launch: the operator in the middle of the screen,
+    /// seen from `FirstFixCamera.globeHeight` up at `FirstFixCamera.globePitch`, flown to.
+    static func firstFixJS(for coordinate: CLLocationCoordinate2D) -> String {
+        "window.OmniBridge.centerOnSelf({lat:\(coordinate.latitude),lon:\(coordinate.longitude),"
+            + "height:\(FirstFixCamera.globeHeight),heading:0,pitch:\(FirstFixCamera.globePitch),fly:true});"
     }
 
     /// A `window.OmniBridge.setCamera(…)` JS call string that positions the
@@ -396,6 +425,9 @@ struct CesiumMainMap: UIViewRepresentable {
                 webView.evaluateJavaScript("window.OmniBridge.setTrails(\(trailsJSON));", completionHandler: nil)
             }
 
+            // A first launch has no camera of its own: the first fix flies the globe in.
+            context.coordinator.offerFirstFix(selfLocation)
+
             // GPS follow mode — recenter the camera on the operator. `follow`
             // keeps the live camera's zoom/tilt/heading and only moves the
             // ground center, so the user can still rotate/tilt while tracked.
@@ -479,6 +511,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var parent: CesiumMainMap
         weak var webView: WKWebView?
         var isReady = false
+        /// How many times the page has said it is ready: more than once means it was reloaded.
+        var readyCount = 0
         var lastSnapshot: String = "[]"
         var lastDrawingsSnapshot: String = "[]"
         var lastMeasurementsSnapshot: String = "[]"
@@ -516,6 +550,15 @@ struct CesiumMainMap: UIViewRepresentable {
         /// hasn't signalled ready within the timeout, fall back to 2D rather
         /// than hang. Cancelled the instant `omniBridgeReady` fires.
         var loadWatchdog: Timer?
+
+        /// The first fix of a first launch flies the globe in to the operator, if the rules say so
+        /// (`FirstFixCamera.shouldMove`). Offered every fix; the rules take it once.
+        func offerFirstFix(_ location: CLLocation?) {
+            guard isReady, let location, let webView else { return }
+            let usable = FirstFixCamera.isUsable(location, now: Date())
+            guard FirstFixState.shared.claimMove(engineIsGlobe: true, fixIsUsable: usable) else { return }
+            webView.evaluateJavaScript(CesiumCameraMath.firstFixJS(for: location.coordinate), completionHandler: nil)
+        }
 
         func startLoadWatchdog() {
             loadWatchdog?.invalidate()
@@ -617,53 +660,39 @@ struct CesiumMainMap: UIViewRepresentable {
                     "window.OmniBridge.setTrails(\(lastTrailsSnapshot));",
                     completionHandler: nil
                 )
-                // Issue #62 — 2D→3D camera seed.
-                //
-                // Priority chain (highest wins):
-                //   1. cameraSeed present (operator just switched from 2D) — use
-                //      setCamera (instant, no animation) so the globe opens where
-                //      the 2D map was. Top-down pitch mirrors the 2D perspective.
-                //   2. ADSB center available — flyTo so aircraft on-screen match
-                //      the pill count (existing behaviour for cold-start / ADSB use).
-                //   3. Persisted Cesium pose (cesium.lastLat etc.) — flyTo to
-                //      restore the operator's last globe view (3D→2D→3D toggle).
-                //   4. Bootstrap — HTML's KJFK default (no native action needed).
-                //
-                // The 3D→2D direction is unaffected: mapRegion already mirrors
-                // the Cesium camera on every camerachanged event (MVC ~line 1820).
-                if let seed = parent.cameraSeed {
-                    // Operator switched from 2D — place the globe over the 2D view
-                    // instantly (setCamera = synchronous setView, no flyTo fight).
-                    webView?.evaluateJavaScript(
-                        CesiumCameraMath.seedJS(for: seed, bearing: parent.cameraSeedBearing),
-                        completionHandler: nil
-                    )
-                } else if let center = ADSBTrafficService.shared.searchCenterForBridge() {
-                    // Cold-start or non-engine-switch bridge init: align with ADSB
-                    // search center so aircraft in the pill count are visible on map.
-                    let h = max(20000.0, UserDefaults.standard.double(forKey: "cesium.lastHeight"))
-                    let hd = UserDefaults.standard.double(forKey: "cesium.lastHeading")
-                    let pt = UserDefaults.standard.object(forKey: "cesium.lastPitch") as? Double ?? -60
-                    webView?.evaluateJavaScript(
-                        "window.OmniBridge.flyTo({lat:\(center.latitude),lon:\(center.longitude),range:\(h),heading:\(hd),pitch:\(pt)});",
-                        completionHandler: nil
-                    )
-                } else {
-                    // No ADSB center — restore last Cesium pose (3D→2D→3D toggle
-                    // without an active cameraSeed, e.g. WebGL process restart).
-                    let d = UserDefaults.standard
-                    if d.object(forKey: "cesium.lastLat") != nil {
-                        let lat = d.double(forKey: "cesium.lastLat")
-                        let lon = d.double(forKey: "cesium.lastLon")
-                        let h   = d.double(forKey: "cesium.lastHeight")
-                        let hd  = d.double(forKey: "cesium.lastHeading")
-                        let pt  = d.double(forKey: "cesium.lastPitch")
+                // Where the globe opens. Highest wins:
+                //   1. The other engine's view (the operator has just switched from 2D): setCamera,
+                //      instant, top-down like the 2D map.
+                //   2. The camera it was left on in an earlier session, exactly.
+                //   3. Nothing: the page opens on the whole earth, and the first fix flies in.
+                // The aircraft feed's search centre decides nothing here. It used to sit between 1 and 2
+                // and was always set (to a fix, or to New York), so 2 was never reached.
+                // A page that reloads (the web view's process was killed) goes back to where the camera
+                // last was, not to a seed that is no longer true.
+                readyCount += 1
+                let launchPose = FirstFixState.shared.launchGlobePose
+                switch GlobeStart.plan(isReload: readyCount > 1, hasSeed: parent.cameraSeed != nil,
+                                       hasSavedPose: launchPose != nil) {
+                case .seed:
+                    if let seed = parent.cameraSeed {
                         webView?.evaluateJavaScript(
-                            "window.OmniBridge.flyTo({lat:\(lat),lon:\(lon),range:\(h),heading:\(hd),pitch:\(pt)});",
+                            CesiumCameraMath.seedJS(for: seed, bearing: parent.cameraSeedBearing),
                             completionHandler: nil
                         )
                     }
+                case .savedPose:
+                    if let pose = launchPose {
+                        webView?.evaluateJavaScript(CesiumCameraMath.poseJS(for: pose), completionHandler: nil)
+                    }
+                case .currentPose:
+                    if let pose = SavedGlobePose.load() {
+                        webView?.evaluateJavaScript(CesiumCameraMath.poseJS(for: pose), completionHandler: nil)
+                    }
+                case .startPose:
+                    break
                 }
+                // A phone that already knows where it is does not wait for the next location update.
+                offerFirstFix(parent.selfLocation)
             case "omniMapEvent":
                 // Body arrives as a JSON string from the HTML. Tolerate
                 // a dictionary body too in case a future WK build relaxes
@@ -686,6 +715,7 @@ struct CesiumMainMap: UIViewRepresentable {
                 case "camerachanged": kind = .cameraChanged
                 case "lasso": kind = .lasso
                 case "move": kind = .move
+                case "usermoved": kind = .userMoved
                 case "vertexdragstart": kind = .vertexDragStart
                 case "vertexdrag": kind = .vertexDrag
                 case "vertexdragend": kind = .vertexDragEnd

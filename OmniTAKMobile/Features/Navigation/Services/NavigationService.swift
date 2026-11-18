@@ -43,9 +43,6 @@ class NavigationService: NSObject, ObservableObject {
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 5.0  // Update every 5 meters
 
-        // Request authorization
-        locationManager.requestWhenInUseAuthorization()
-
         // Check if compass is available
         isCompassAvailable = CLLocationManager.headingAvailable()
     }

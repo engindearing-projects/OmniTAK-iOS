@@ -88,7 +88,6 @@ class RoutePlanningService: NSObject, ObservableObject {
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10 // Update every 10 meters
-        locationManager.requestWhenInUseAuthorization()
     }
 
     private func loadRoutes() {

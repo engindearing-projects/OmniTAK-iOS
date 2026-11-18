@@ -18,6 +18,11 @@ import UIKit
 extension Notification.Name {
     /// Posted by ATAKMapView to snap the Mapbox camera heading to 0° (north).
     static let mapboxResetNorth = Notification.Name("mapboxResetNorth")
+    /// Moves the 2D map's camera to a place and a zoom, keeping its tilt and bearing (the first fix of
+    /// a first launch). userInfo: "lat", "lon", "zoom": Double. Sent to the camera itself because the
+    /// region binding alone is skipped while the map is settling and then written over by its own
+    /// camera events.
+    static let mapboxMoveCamera = Notification.Name("mapboxMoveCamera")
     /// Issue #65 — posted when the operator taps their own self-position puck
     /// (either the Mapbox 2D puck or the Cesium 3D `__self__` entity). The
     /// MapViewController observes this and presents `SelfPositionEditSheet`.
@@ -149,6 +154,9 @@ struct TacticalMapView: UIViewRepresentable {
         mapView.gestures.options.pinchEnabled = true
         mapView.gestures.options.doubleTapToZoomInEnabled = true
         mapView.gestures.options.doubleTouchToZoomOutEnabled = true
+        // The operator's own pan, pinch, rotate, tilt and double tap are told to the first-fix rule
+        // (see Coordinator.gestureManager): the first fix must not take the map out from under them.
+        mapView.gestures.delegate = context.coordinator
 
         // Hide Mapbox's built-in top-leading scale-bar ornament. OmniTAK draws
         // its own toggleable scale bar (ScaleBarView, bottom-left), so the
@@ -284,6 +292,8 @@ struct TacticalMapView: UIViewRepresentable {
             ))
         }
 
+        coord.installMoveCameraObserver(on: mapView)
+
         // Issue #57 — reload the custom tile layer whenever Settings
         // persists a new URL, without requiring a full style reload.
         coord.customTileObserver = NotificationCenter.default.addObserver(
@@ -392,6 +402,12 @@ struct TacticalMapView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    /// Moves the camera to a place and a zoom, keeping its tilt and bearing.
+    static func moveCamera(of mapView: MapView, to center: CLLocationCoordinate2D, zoom: Double) {
+        let state = mapView.mapboxMap.cameraState
+        mapView.mapboxMap.setCamera(to: CameraOptions(center: center, zoom: zoom, bearing: state.bearing, pitch: state.pitch))
+    }
 
     /// User-location puck honoring the Settings "Self-position marker"
     /// picker:
@@ -504,7 +520,7 @@ struct TacticalMapView: UIViewRepresentable {
     /// observation tokens, lasso layer, marker image cache. The
     /// SwiftUI struct above only forwards bindings and triggers
     /// refreshes — every actual Mapbox call goes through this class.
-    class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    class Coordinator: NSObject, UIGestureRecognizerDelegate, GestureManagerDelegate {
         var parent: TacticalMapView
         weak var mapView: MapView?
         /// The scale anchor the last report was measured at.
@@ -531,6 +547,8 @@ struct TacticalMapView: UIViewRepresentable {
 
         // Issue #72/#73 — reset-north observer (removes itself on dealloc)
         var resetNorthObserver: NSObjectProtocol?
+        // The first fix's camera move (see .mapboxMoveCamera)
+        var moveCameraObserver: NSObjectProtocol?
         // Issue #57 — custom tile URL change observer
         var customTileObserver: NSObjectProtocol?
 
@@ -610,11 +628,41 @@ struct TacticalMapView: UIViewRepresentable {
 
         deinit {
             NotificationCenter.default.removeObserver(self)
+            if let moveCameraObserver { NotificationCenter.default.removeObserver(moveCameraObserver) }
         }
 
         @objc private func handleMemoryWarning() {
             symbolImageCache.removeAll(keepingCapacity: false)
         }
+
+        /// Listens for `.mapboxMoveCamera` and moves `mapView`'s camera as it says, whatever the map
+        /// is doing: while it is still settling at launch the region binding alone is skipped
+        /// (`isUserInteracting`) and then written over by the map's own camera events.
+        func installMoveCameraObserver(on mapView: MapView) {
+            moveCameraObserver = NotificationCenter.default.addObserver(
+                forName: .mapboxMoveCamera, object: nil, queue: .main
+            ) { [weak self, weak mapView] note in
+                guard let self = self, let mapView = mapView,
+                      let lat = note.userInfo?["lat"] as? Double,
+                      let lon = note.userInfo?["lon"] as? Double,
+                      let zoom = note.userInfo?["zoom"] as? Double else { return }
+                self.isProgrammaticUpdate = true
+                TacticalMapView.moveCamera(of: mapView, to: CLLocationCoordinate2D(latitude: lat, longitude: lon), zoom: zoom)
+                self.isProgrammaticUpdate = false
+            }
+        }
+
+        // MARK: - GestureManagerDelegate
+
+        func gestureManager(_ gestureManager: GestureManager, didBegin gestureType: GestureType) {
+            // A tap on the map is not moving it.
+            guard gestureType != .singleTap else { return }
+            FirstFixState.shared.operatorMovedMap()
+        }
+
+        func gestureManager(_ gestureManager: GestureManager, didEnd gestureType: GestureType, willAnimate: Bool) {}
+
+        func gestureManager(_ gestureManager: GestureManager, didEndAnimatingFor gestureType: GestureType) {}
 
         // MARK: - Terrain / atmosphere
 

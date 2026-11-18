@@ -72,9 +72,6 @@ class TrackRecordingService: NSObject, ObservableObject {
         locationManager.distanceFilter = kCLDistanceFilterNone
         locationManager.allowsBackgroundLocationUpdates = configuration.allowBackgroundUpdates
         locationManager.pausesLocationUpdatesAutomatically = configuration.pausesLocationUpdatesAutomatically
-
-        // Request authorization
-        locationManager.requestWhenInUseAuthorization()
     }
 
     private func createTracksDirectory() {

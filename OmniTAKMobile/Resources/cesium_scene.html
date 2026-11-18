@@ -116,11 +116,7 @@
   function _hideLoading(){const el=document.getElementById('loading');if(el)el.style.display='none';}
   function _signalReady(){
     _state.ready=true;
-    // Hide the spinner here too: the bootstrap flyTo's `complete`
-    // callback used to be the only place that hid it, but the
-    // native side immediately re-flies to a restored camera pose,
-    // interrupting the bootstrap flyTo so its complete never
-    // fires. Hide unconditionally once the viewer is ready.
+    // Hide the spinner as soon as the viewer is ready: the camera is already on its start pose.
     _hideLoading();
     try{if(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.omniBridgeReady)window.webkit.messageHandlers.omniBridgeReady.postMessage('ready')}catch(e){}
     try{if(window.OmniBridgeNative&&window.OmniBridgeNative.onReady)window.OmniBridgeNative.onReady()}catch(e){}
@@ -162,10 +158,40 @@
   // and a camera sent 37 km under the ground ends up lying on it.
   function _lookDownGround(h){return(typeof h==='number'&&isFinite(h)&&h>-1000&&h<10000)?h:0}
   // LOOKDOWN-END
+  // How far along the view from the camera to the operator puts the camera `height` metres above the ground when it
+  // looks down at `pitch` radians (negative is below the horizon): the height over the sine of the pitch, so it ends
+  // that high whatever its tilt (straight down, the range is the height itself). A flat view is capped at ten times the
+  // height. With no usable height the camera keeps the range it had.
+  // CENTER-RANGE-BEGIN (FirstFixCameraTests runs this function in JavaScriptCore)
+  function _centerRange(range,height,pitch){return(typeof height==='number'&&isFinite(height)&&height>0)?height/Math.max(Math.sin(-pitch),0.1):range}
+  // CENTER-RANGE-END
+  // The ground's height under {lat, lon} in metres above the ellipsoid, handed to cb once: the globe's own answer
+  // where its terrain is loaded (the camera is near), else the terrain service's (2 s at most, then sea level).
+  // `precise` goes to the terrain service always: the globe's answer for a place far from the camera comes from a
+  // coarse tile.
+  // Posts the camera to native once the next frame has been rendered with it. A measurement taken between a camera jump
+  // and that render reads the previous frame's depth (the globe from space) and posts a scale that is wrong until
+  // something else moves the camera.
+  function _postAfterRender(v){const once=function(){v.scene.postRender.removeEventListener(once);_postCameraChanged(v)};v.scene.postRender.addEventListener(once);v.scene.requestRender()}
+  // Stops a flight and any centring still waiting for the terrain's height: called by every native camera command, so
+  // an older one cannot start after a newer one.
+  function _cancelCentering(v){_state.centerSeq=(_state.centerSeq||0)+1;v.camera.cancelFlight()}
+  function _ground(v,lat,lon,cb,precise){let done=false;const go=function(h){if(done)return;done=true;cb(_lookDownGround(h))};
+    const c=Cesium.Cartographic.fromDegrees(lon,lat),g=precise?undefined:v.scene.globe.getHeight(c);
+    if(typeof g==='number'&&isFinite(g)){go(g);return}
+    if(v.terrainProvider&&Cesium.sampleTerrainMostDetailed){Cesium.sampleTerrainMostDetailed(v.terrainProvider,[c]).then(function(r){go(r[0]&&r[0].height)},function(){go(null)});setTimeout(function(){go(null)},2000);return}
+    go(null)}
   function _metersPerPoint(v){try{const cv=v.scene.canvas,s=_scaleSample(_state.scaleAnchor,cv.clientWidth,cv.clientHeight);if(!s)return null;
     const a=_cartoFor(v,new Cesium.Cartesian2(s.x0,s.y)),b=_cartoFor(v,new Cesium.Cartesian2(s.x1,s.y));if(!a||!b)return null;
     const d=new Cesium.EllipsoidGeodesic(Cesium.Cartographic.fromDegrees(a.lon,a.lat),Cesium.Cartographic.fromDegrees(b.lon,b.lat)).surfaceDistance;
     return(isFinite(d)&&d>0)?d/(s.x1-s.x0):null}catch(e){return null}}
+  // The scale is measured on a camera move, but the ground under the bar can change while the camera is still: the terrain for
+  // the view arrives after the camera has stopped (a jump to a saved view, the end of the first fix's flight), and until it does
+  // the picks land on the bare ellipsoid or on an old frame, and nothing measures again. So it is measured once a second too,
+  // and the camera is posted again when the scale differs from the last one posted by more than 1 percent (or appears or goes).
+  // SCALE-MOVED-BEGIN (FirstFixCameraTests runs this function in JavaScriptCore)
+  function _scaleMoved(prev,next){if(prev==null||next==null)return(prev==null)!==(next==null);return Math.abs(next-prev)/prev>0.01}
+  // SCALE-MOVED-END
   function _postCameraChanged(v){const cam=v.camera,carto=cam.positionCartographic;if(!carto)return;
     // Issue #72 — north-up lock guarantee. If the heading drifted off north
     // (e.g. a two-finger twist, which Cesium folds into the rotate gesture and
@@ -186,7 +212,7 @@
     // — distinct from the camera's sub-point when tilted. Used as the
     // point-drop coordinate and the region center.
     const cv=v.scene.canvas;const ctr=_cartoFor(v,new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2));
-    _postMapEvent({event:'camerachanged',lat:Cesium.Math.toDegrees(carto.latitude),lon:Cesium.Math.toDegrees(carto.longitude),height:carto.height,heading:Cesium.Math.toDegrees(cam.heading),pitch:Cesium.Math.toDegrees(cam.pitch),zoom:_zoomFromHeight(carto.height,carto.latitude),centerLat:ctr?ctr.lat:null,centerLon:ctr?ctr.lon:null,mpp:_metersPerPoint(v),bounds:r?{north:Cesium.Math.toDegrees(r.north),south:Cesium.Math.toDegrees(r.south),east:Cesium.Math.toDegrees(r.east),west:Cesium.Math.toDegrees(r.west)}:null})}
+    _postMapEvent({event:'camerachanged',lat:Cesium.Math.toDegrees(carto.latitude),lon:Cesium.Math.toDegrees(carto.longitude),height:carto.height,heading:Cesium.Math.toDegrees(cam.heading),pitch:Cesium.Math.toDegrees(cam.pitch),zoom:_zoomFromHeight(carto.height,carto.latitude),centerLat:ctr?ctr.lat:null,centerLon:ctr?ctr.lon:null,mpp:_state.scalePosted=_metersPerPoint(v),bounds:r?{north:Cesium.Math.toDegrees(r.north),south:Cesium.Math.toDegrees(r.south),east:Cesium.Math.toDegrees(r.east),west:Cesium.Math.toDegrees(r.west)}:null})}
   function _installInputHandlers(viewer){
     viewer.camera.moveEnd.addEventListener(function(){_postCameraChanged(viewer)});
     // Fire during continuous gestures (pinch-zoom / drag) too, so the
@@ -199,6 +225,15 @@
     h.setInputAction(function(down){pressStart=down.position;if(pressTimer)clearTimeout(pressTimer);pressTimer=setTimeout(function(){if(!pressStart)return;const p=_cartoFor(viewer,pressStart);if(!p)return;_postMapEvent({event:'longpress',lat:p.lat,lon:p.lon,hae:p.hae,screenX:pressStart.x,screenY:pressStart.y,uid:_pickedUid(viewer,pressStart)});pressStart=null},500)},Cesium.ScreenSpaceEventType.LEFT_DOWN);
     h.setInputAction(function(){if(pressTimer){clearTimeout(pressTimer);pressTimer=null}pressStart=null},Cesium.ScreenSpaceEventType.LEFT_UP);
     h.setInputAction(function(m){if(!pressStart)return;const dx=m.endPosition.x-pressStart.x,dy=m.endPosition.y-pressStart.y;if(Math.hypot(dx,dy)>8&&pressTimer){clearTimeout(pressTimer);pressTimer=null;pressStart=null}},Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+    // The operator is moving the map by hand: one pointer (a finger, a mouse, a trackpad) more than 8 px, or two. Native is
+    // told once (the first fix of a first launch must never take the map out from under them), and any flight or centring
+    // native started stops.
+    const cv=viewer.scene.canvas,down=new Map();let umSent=false;
+    const umMoved=function(){_cancelCentering(viewer);if(umSent)return;umSent=true;_postMapEvent({event:'usermoved',lat:0,lon:0})};
+    cv.addEventListener('pointerdown',function(e){down.set(e.pointerId,{x:e.clientX,y:e.clientY});if(down.size>1)umMoved()},{passive:true});
+    cv.addEventListener('pointermove',function(e){const d=down.get(e.pointerId);if(d&&Math.hypot(e.clientX-d.x,e.clientY-d.y)>8)umMoved()},{passive:true});
+    const umEnd=function(e){down.delete(e.pointerId)};
+    cv.addEventListener('pointerup',umEnd,{passive:true});cv.addEventListener('pointercancel',umEnd,{passive:true});
   }
   window.OmniBridge={
     upsertEntity(arg){const e=_parse(arg);if(!e||!e.uid||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
@@ -243,6 +278,7 @@
     removeEntity(uid){const v=_state.viewer;if(!v)return;const e=_state.entities.get(uid);if(e){v.entities.remove(e);_state.entities.delete(uid);}const lid=uid+':leader';const l=_state.leaders.get(lid);if(l){v.entities.remove(l);_state.leaders.delete(lid);}},
     removeAll(){const v=_state.viewer;if(!v)return;v.entities.removeAll();_state.entities.clear();_state.leaders.clear();},
     flyTo(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
+      _state.centerSeq=(_state.centerSeq||0)+1;
       v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,(typeof e.range==='number')?e.range:5000),
         orientation:{heading:Cesium.Math.toRadians(e.heading||0),pitch:Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-30),roll:0},duration:1.2});
     },
@@ -252,6 +288,7 @@
     // (globe.getHeight) is only good where the camera already is. The service gets 2 s; with no answer the
     // ground is taken as sea level and the globe is still flown there.
     lookDown(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
+      _state.centerSeq=(_state.centerSeq||0)+1;
       const f=v.camera.frustum,agl=_lookDownAgl(typeof e.width==='number'?e.width:600,f.aspectRatio,f.fovy);if(agl===null)return;
       let flown=false;
       const go=function(ground){if(flown)return;flown=true;
@@ -271,8 +308,23 @@
       const h=typeof e.height==='number'?Math.max(50,e.height):5000;
       const hd=Cesium.Math.toRadians(typeof e.heading==='number'?e.heading:0);
       const pt=Cesium.Math.toRadians(typeof e.pitch==='number'?e.pitch:-90);
+      _cancelCentering(v);
       v.camera.setView({destination:Cesium.Cartesian3.fromDegrees(e.lon,e.lat,h),orientation:{heading:hd,pitch:pt,roll:0}});
-      v.scene.requestRender();
+      _hideLoading();_postAfterRender(v);
+    },
+    // "Center on me" and the first fix: the operator in the middle of the screen. `height` is how high above the ground
+    // there the camera ends up whatever its tilt (see _centerRange); without one the camera keeps the distance it had.
+    // `heading` and `pitch` (degrees) default to the camera's own. fly:true flies there from wherever the camera is (the
+    // first fix of a first launch, in from the whole earth); otherwise the camera jumps. A touch on the map stops it.
+    centerOnSelf(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
+      const cam=v.camera;_cancelCentering(v);const seq=_state.centerSeq;
+      const hd=typeof e.heading==='number'?Cesium.Math.toRadians(e.heading):cam.heading,pt=typeof e.pitch==='number'?Cesium.Math.toRadians(e.pitch):cam.pitch,fly=e.fly===true;
+      const go=function(ground){if(seq!==_state.centerSeq)return;const target=Cesium.Cartesian3.fromDegrees(e.lon,e.lat,ground);
+        let range=Cesium.Cartesian3.distance(cam.positionWC,target);if(!isFinite(range)||range<=0)range=cam.positionCartographic.height||5000;
+        range=_centerRange(range,e.height,pt);
+        if(fly){cam.flyToBoundingSphere(new Cesium.BoundingSphere(target,0),{offset:new Cesium.HeadingPitchRange(hd,pt,range),duration:1.8})}
+        else{cam.lookAt(target,new Cesium.HeadingPitchRange(hd,pt,range));cam.lookAtTransform(Cesium.Matrix4.IDENTITY);_postAfterRender(v)}};
+      if(typeof e.height==='number')_ground(v,e.lat,e.lon,go,fly);else go(0);
     },
     // GPS follow — frame the operator at SCREEN CENTER even when the
     // globe is tilted. Placing the camera straight over the user with
@@ -281,6 +333,7 @@
     // current heading/pitch and the current camera-to-target distance
     // (so zoom/tilt are preserved and the marker stays centered).
     follow(arg){const e=_parse(arg);if(!e||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
+      _cancelCentering(v);
       const target=Cesium.Cartesian3.fromDegrees(e.lon,e.lat,0);
       let range=Cesium.Cartesian3.distance(v.camera.positionWC,target);
       if(!isFinite(range)||range<=0)range=v.camera.positionCartographic.height||5000;
@@ -296,7 +349,7 @@
     zoomBy(arg){const e=_parse(arg);if(!e)return;const v=_state.viewer;if(!v)return;
       const f=(typeof e.factor==='number'&&e.factor>0)?e.factor:1;
       const h=v.camera.positionCartographic.height;const amount=Math.abs(h-h*f);
-      if(amount<1)return;
+      if(amount<1)return;_state.centerSeq=(_state.centerSeq||0)+1;
       if(f<1)v.camera.zoomIn(amount);else v.camera.zoomOut(amount);
     },
     // Issue #72/#73 — rotate the globe to the requested heading (degrees CW
@@ -565,12 +618,12 @@
     // heavy GPU/network layer (slow to sharpen + can exhaust the mobile
     // WebGL process). They load on demand via setBaseLayer('photoreal')
     // from the Layers panel. Default base = World Imagery + terrain.
-    // Bootstrap camera over KJFK to match the ADSB pre-GPS
-    // fallback — first-launch users land on a scene where the
-    // aircraft data they're seeing in the pill actually appears
-    // around them. 50km altitude with a steep look-down so a
-    // whole metropolitan area's traffic fits in frame.
-    v.camera.flyTo({destination:Cesium.Cartesian3.fromDegrees(-73.7781,40.6413,50000),orientation:{heading:0,pitch:Cesium.Math.toRadians(-60),roll:0},duration:1.5,complete:_hideLoading});
+    // Every launch starts on the whole earth from straight above, with nothing in flight. Native then puts the camera on
+    // the view it was left on, on the view the other engine had, or (a first launch) flies it in to the operator at the
+    // first fix. The flight that used to start here (over New York) was not cancelled by setView, so it overrode a switch
+    // from 2D: the globe opened over New York.
+    setInterval(function(){if(document.hidden)return;const m=_metersPerPoint(v);if(_scaleMoved(_state.scalePosted,m))_postCameraChanged(v)},1000);
+    v.camera.setView({destination:Cesium.Cartesian3.fromDegrees(0,0,20000000),orientation:{heading:0,pitch:Cesium.Math.toRadians(-90),roll:0}});
     _signalReady();
   })().catch(e=>{const el=document.getElementById('loading');if(el)el.innerHTML='<div class="label">3D scene failed: '+(e&&e.message?e.message:'unknown')+'</div>';});
 </script></body></html>

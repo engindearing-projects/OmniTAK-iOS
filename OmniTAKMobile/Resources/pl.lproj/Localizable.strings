@@ -16,6 +16,13 @@
 "onboarding.page1.feature3" = "Świadomość sytuacyjna na mapie";
 "onboarding.page1.feature4" = "Obsługa wielu platform";
 
+/* --- Onboarding: location (the page after Welcome) --- */
+"onboarding.location.title" = "Znajdź siebie na mapie";
+"onboarding.location.desc" = "OmniTAK używa Twojej lokalizacji, aby pokazać, gdzie jesteś na mapie, a po połączeniu z serwerem TAK także, aby udostępnić Twoją pozycję zespołowi.";
+"onboarding.location.feature1" = "Twoja pozycja na mapie";
+"onboarding.location.feature2" = "Udostępniana zespołowi po połączeniu";
+"onboarding.location.feature3" = "Możesz to zmienić w dowolnym momencie w Ustawieniach";
+
 /* --- Onboarding page 2: Secure & Certified --- */
 "onboarding.page2.title" = "Bezpieczny i certyfikowany";
 "onboarding.page2.desc" = "OmniTAK obsługuje uwierzytelnianie oparte na certyfikatach dla bezpiecznych połączeń z serwerami TAK.";

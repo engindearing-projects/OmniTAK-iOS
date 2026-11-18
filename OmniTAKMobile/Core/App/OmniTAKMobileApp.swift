@@ -25,6 +25,10 @@ struct OmniTAKMobileApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        // Read the globe's saved camera now, before anything can write over it: a camera from an
+        // earlier session is what tells a returning user from a new one (see FirstFixState).
+        _ = FirstFixState.shared
+
         // Eagerly initialize the Meshtastic manager so its COT bridge is wired
         // into TAKService at launch. Without this, mesh nodes would only
         // appear on the map after a Meshtastic view is opened.
@@ -162,6 +166,11 @@ struct OmniTAKMobileApp: App {
                     // Handle tak:// deep links (QR code enrollment)
                     deepLinkHandler.handleURL(url)
                 }
+            }
+            // Someone who skipped onboarding never reached the page that explains the location
+            // question: it is asked as onboarding closes (nothing is asked if it has an answer).
+            .onChange(of: hasCompletedOnboarding) { completed in
+                if completed { LocationManager.shared.ask(at: .onboardingFinished) }
             }
             .fullScreenCover(isPresented: Binding(
                 get: { !hasCompletedOnboarding },
