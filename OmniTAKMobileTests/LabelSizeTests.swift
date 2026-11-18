@@ -460,15 +460,18 @@ final class MapLabelStyleTests: XCTestCase {
     }
 
     func testThePositionBoxStopsShortOfTheMapButtonsOnTheLeft() {
-        // 393 pt wide phone: 16 from the right edge, 90 reserved on the left.
-        XCTAssertEqual(PositionBoxStyle.maxWidth(screenWidth: 393,
-                                                 leadingReserved: PositionBoxStyle.leadingReserved,
-                                                 trailing: PositionBoxStyle.trailingPadding), 287)
-        XCTAssertEqual(PositionBoxStyle.maxWidth(screenWidth: 852,
-                                                 leadingReserved: PositionBoxStyle.leadingReserved,
-                                                 trailing: PositionBoxStyle.trailingPadding), 746)
-        // The scale bar chip (82 pt) and the buttons (56 pt) are both left of where the box may start.
-        XCTAssertGreaterThan(PositionBoxStyle.leadingReserved, 82)
+        // 393 pt wide phone: 16 from the right edge, the left column of controls (132 pt) and a gap on the left.
+        XCTAssertEqual(MapChromeLayout.cardWidth(availableWidth: 393), 237)
+        // on a wide screen it is capped (it was 746 wide and lay across the whole screen)
+        XCTAssertEqual(MapChromeLayout.cardWidth(availableWidth: 852), MapChromeLayout.cardMaxWidth)
+        // wherever it is not at its floor it starts to the right of the left column
+        for width in stride(from: 360.0, through: 1200.0, by: 20.0) {
+            let box = MapChromeLayout.cardWidth(availableWidth: CGFloat(width))
+            XCTAssertGreaterThanOrEqual(CGFloat(width) - MapChromeLayout.rightMargin - box,
+                                        MapChromeLayout.leftColumnWidth + MapChromeLayout.gap, "\(width) pt")
+        }
+        // and the rule it is built from stays what it says
+        XCTAssertEqual(PositionBoxStyle.maxWidth(screenWidth: 393, leadingReserved: 90, trailing: 16), 287)
     }
 
     func testThePositionBoxIsNeverNarrowerThanItsFloor() {

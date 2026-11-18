@@ -63,7 +63,10 @@ struct CustomToolbar: View {
     var body: some View {
         VStack(spacing: 8) {
             if store.isEditing {
-                editHeader
+                // On a phone held on its side the header hugs its text like the pill and the tip do, so
+                // the measured bar is not window-wide and the map's corner controls only clear what is
+                // across from them (a window-wide header lifted both columns off the screen).
+                editHeader.fixedSize(horizontal: isLandscape, vertical: false)
             } else if showCoachmark {
                 coachmark
             }
@@ -77,6 +80,13 @@ struct CustomToolbar: View {
                 barPill
             }
         }
+        // Measured before the padding: the bar's own edges (and its tip's), which is what the map's
+        // floating controls have to clear.
+        .background(
+            GeometryReader { bar in
+                Color.clear.preference(key: BottomBarFrameKey.self, value: bar.frame(in: .global))
+            }
+        )
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
     }

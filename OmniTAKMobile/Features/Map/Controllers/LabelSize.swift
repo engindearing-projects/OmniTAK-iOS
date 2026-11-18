@@ -241,19 +241,12 @@ struct PositionBoxStyle: Equatable {
     static let designCoordinates = 12.0
     static let designDetail = 11.0
 
-    /// Where the box may start, measured from the left edge: the scale bar chip above
-    /// the zoom and locate buttons ends about 82 pt in (the buttons themselves end at
-    /// 56 pt), plus an 8 pt gap. Before #135 the box stretched across almost the whole
-    /// width and sat on top of those buttons.
-    static let leadingReserved = 90.0
-    /// The box's own distance from the right edge.
-    static let trailingPadding = 16.0
-
     /// The widest the box may be on a screen `screenWidth` wide: it stops short of the
     /// map buttons on the left (`leadingReserved`, their right edge plus a gap) and
     /// keeps its own distance from the right edge (`trailing`), so long lines wrap
     /// instead of running under the buttons. Never narrower than `minimum`, so a very
-    /// narrow screen still shows something readable.
+    /// narrow screen still shows something readable. The numbers it is called with are
+    /// the map layout's (`MapChromeLayout.cardWidth`).
     static func maxWidth(screenWidth: Double, leadingReserved: Double, trailing: Double,
                          minimum: Double = 160) -> Double {
         max(minimum, screenWidth - leadingReserved - trailing)
