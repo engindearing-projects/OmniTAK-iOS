@@ -59,3 +59,32 @@ enum MapboxStart {
         reported && status != .notDetermined
     }
 }
+
+/// `MapboxStart.mayCreate` as a latch: once the 2D map may be created it stays created for the life of the
+/// screen. The rule is a statement about the start: evaluated live on every render it would turn false again
+/// whenever the system reports "not determined" to a running app (an "Allow Once" session that has ended, or
+/// "Ask Next Time Or When I Share" chosen in Settings), and the live map, with its tilt, bearing and
+/// annotations, would be replaced by a black view that nothing brings back. The question is put again by
+/// `LocationPrompt.shouldAskAgain`; the map is not touched.
+struct MapboxStartGate: Equatable {
+    /// True once `MapboxStart.mayCreate` has been true. Never goes back to false.
+    private(set) var isOpen = false
+
+    /// Hands the gate the permission as the system last reported it.
+    mutating func update(reported: Bool, status: CLAuthorizationStatus) {
+        if !isOpen, MapboxStart.mayCreate(reported: reported, status: status) {
+            isOpen = true
+        }
+    }
+}
+
+extension LocationPrompt {
+    /// Whether to put the question again to a running app that the system has just reported `status` to: only
+    /// when the answer has been taken back ("not determined" again), the map screen is the one showing and
+    /// onboarding is over. That is the `.mapAppeared` moment: the operator who comes back to the map after an
+    /// "Allow Once" session is asked, as they would be on opening it. Another screen waits until the map is
+    /// back (its appearance asks).
+    static func shouldAskAgain(status: CLAuthorizationStatus, mapScreenShowing: Bool, onboardingCompleted: Bool) -> Bool {
+        mapScreenShowing && shouldAskWhenInUse(at: .mapAppeared, status: status, onboardingCompleted: onboardingCompleted)
+    }
+}

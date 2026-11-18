@@ -223,6 +223,44 @@ final class FirstFixCameraTests: XCTestCase {
         ])))
     }
 
+    // MARK: - What the globe writes for the next launch
+
+    func testAViewThatIsSavedIsReadBackExactlyAtTheNextLaunch() {
+        // the writer the camera events use and the reader the launch uses, with nothing written by hand between
+        let suite = defaults([:])
+        Self.spokanePose.save(to: suite)
+        XCTAssertEqual(SavedGlobePose.load(from: suite), Self.spokanePose)
+        XCTAssertTrue(FirstFixState(defaults: suite).hasSavedGlobeCamera, "a returning user is not flown in again")
+    }
+
+    func testASaveAlwaysCarriesThisVersionsMarkSoItCanNeverBeReadAsNoSavedView() {
+        // without the mark every launch counts as a first launch: it flies in and no saved view is ever restored
+        for stale in [nil, 0, SavedGlobePose.version - 1] as [Int?] {
+            let suite = defaults([:])
+            if let stale { suite.set(stale, forKey: SavedGlobePose.versionKey) }
+            Self.spokanePose.save(to: suite)
+            XCTAssertEqual(suite.integer(forKey: SavedGlobePose.versionKey), SavedGlobePose.version,
+                           "stale mark \(String(describing: stale))")
+            XCTAssertEqual(SavedGlobePose.load(from: suite), Self.spokanePose, "stale mark \(String(describing: stale))")
+        }
+    }
+
+    func testASaveWritesTheFiveValuesUnderTheKeysTheLaunchReads() {
+        let suite = defaults([:])
+        SavedGlobePose(latitude: 1, longitude: 2, height: 3, heading: 4, pitch: -5).save(to: suite)
+        XCTAssertEqual(suite.double(forKey: "cesium.lastLat"), 1)
+        XCTAssertEqual(suite.double(forKey: "cesium.lastLon"), 2)
+        XCTAssertEqual(suite.double(forKey: "cesium.lastHeight"), 3)
+        XCTAssertEqual(suite.double(forKey: "cesium.lastHeading"), 4)
+        XCTAssertEqual(suite.double(forKey: "cesium.lastPitch"), -5)
+    }
+
+    func testTheWholeWorldViewTheGlobeStartsAtIsStillNoSavedViewAfterASave() {
+        let suite = defaults([:])
+        SavedGlobePose(latitude: 0, longitude: 0, height: 20_000_000, heading: 0, pitch: -90).save(to: suite)
+        XCTAssertNil(SavedGlobePose.load(from: suite), "a camera nobody chose is saved too, and is still no saved view")
+    }
+
     // MARK: - The hand-over between the engines
 
     func testTheGlobeCameraBecomesA2DViewCentredOnTheGroundUnderTheMiddleOfTheScreen() {
@@ -333,9 +371,8 @@ final class FirstFixCameraTests: XCTestCase {
         coordinator.installMoveCameraObserver(on: mapView)
         coordinator.isUserInteracting = true
 
-        // what MapViewController posts for the first fix
-        NotificationCenter.default.post(name: .mapboxMoveCamera, object: nil, userInfo: [
-            "lat": spokane.latitude, "lon": spokane.longitude, "zoom": FirstFixCamera.mapZoom])
+        // what MapViewController posts for the first fix: the same function, not a notification made by hand
+        FirstFixCamera.postMapMove(to: spokane)
         var state = mapView.mapboxMap.cameraState
         XCTAssertEqual(state.center.latitude, spokane.latitude, accuracy: 1e-6, "moved although the map was interacting")
         XCTAssertEqual(state.center.longitude, spokane.longitude, accuracy: 1e-6)
@@ -353,6 +390,23 @@ final class FirstFixCameraTests: XCTestCase {
         XCTAssertEqual(state.pitch, 60, accuracy: 1e-6)
         XCTAssertEqual(region.center.latitude, spokane.latitude, accuracy: 1e-4, "the binding ends where the camera is")
         XCTAssertEqual(region.center.longitude, spokane.longitude, accuracy: 1e-4)
+    }
+
+    func testTheFirstFixPostCarriesWhatTheMapReads() {
+        // the one function the map screen posts the first fix with: a private centre, so nothing else sees it
+        let center = NotificationCenter()
+        var info: [AnyHashable: Any]?
+        var posts = 0
+        let token = center.addObserver(forName: .mapboxMoveCamera, object: nil, queue: nil) { note in
+            info = note.userInfo
+            posts += 1
+        }
+        defer { center.removeObserver(token) }
+        FirstFixCamera.postMapMove(to: spokane, center: center)
+        XCTAssertEqual(posts, 1)
+        XCTAssertEqual(info?["lat"] as? Double, spokane.latitude)
+        XCTAssertEqual(info?["lon"] as? Double, spokane.longitude)
+        XCTAssertEqual(info?["zoom"] as? Double, FirstFixCamera.mapZoom)
     }
 
     // MARK: - The globe page's centring
@@ -441,5 +495,291 @@ final class FirstFixCameraTests: XCTestCase {
                                              cameraHeight: 20_000_000)
         XCTAssertLessThanOrEqual(region.span.latitudeDelta, 90)
         XCTAssertLessThanOrEqual(region.span.longitudeDelta, 180)
+    }
+}
+
+// MARK: - The page's wiring
+
+/// The page's calls that only the page's own events reach: which listeners it installs on the canvas and the
+/// camera, what it posts to the app and when. The pure rules above (`_scaleMoved`, `_centerRange`) were run in
+/// JavaScriptCore; these run the functions that call them, against a stand-in for the few browser and Cesium
+/// objects they touch, so a listener or a call that is dropped from the page fails a test.
+final class CesiumPageWiringTests: XCTestCase {
+
+    /// The text of the page between a pair of marker comments.
+    private func block(_ name: String) throws -> String {
+        let html = CesiumMainMap.html
+        let begin = try XCTUnwrap(html.range(of: "// \(name)-BEGIN"), "marker \(name) missing from cesium_scene.html")
+        let end = try XCTUnwrap(html.range(of: "// \(name)-END"), "marker \(name) missing from cesium_scene.html")
+        let start = try XCTUnwrap(html[begin.upperBound...].firstIndex(of: "\n"))
+        return String(html[start..<end.lowerBound])
+    }
+
+    private func context(_ standIn: String, blocks: [String], then script: String = "") throws -> JSContext {
+        let context = try XCTUnwrap(JSContext())
+        context.exceptionHandler = { _, error in XCTFail("page script threw: \(String(describing: error))") }
+        context.evaluateScript(standIn)
+        for name in blocks { context.evaluateScript(try block(name)) }
+        if !script.isEmpty { context.evaluateScript(script) }
+        return context
+    }
+
+    private func int(_ c: JSContext, _ expression: String) -> Int { Int(c.evaluateScript(expression).toInt32()) }
+
+    // MARK: - The listeners the page installs
+
+    /// A canvas that records its listeners, a camera with two events, and the page's own functions the handlers call.
+    private static let inputStandIn = #"""
+    var Cesium = {
+      ScreenSpaceEventHandler: function(canvas) { this.setInputAction = function() {}; },
+      ScreenSpaceEventType: {}
+    };
+    var _state = {centerSeq: 0};
+    var posted = [], cameraPosts = [], cancelled = 0;
+    function _postMapEvent(e) { posted.push(e); }
+    function _postCameraChanged(v, moving) { cameraPosts.push(moving === undefined ? 'at rest' : moving); }
+    function _cancelCentering(v) { cancelled++; }
+    function _cartoFor() { return null; }
+    function _pickedUid() { return null; }
+    function emitter() {
+      var fns = [];
+      return {addEventListener: function(fn) { fns.push(fn); },
+              fire: function() { fns.forEach(function(fn) { fn(); }); }};
+    }
+    var listeners = {};
+    var canvas = {addEventListener: function(type, fn, opts) { (listeners[type] = listeners[type] || []).push({fn: fn, opts: opts}); }};
+    var viewer = {camera: {moveEnd: emitter(), changed: emitter()}, scene: {canvas: canvas}};
+    function fire(type, e) { (listeners[type] || []).forEach(function(l) { l.fn(e || {}); }); }
+    function userMoved() { return posted.filter(function(e) { return e.event === 'usermoved'; }).length; }
+    """#
+
+    private func inputContext() throws -> JSContext {
+        try context(Self.inputStandIn, blocks: ["INPUT-HANDLERS"], then: "_installInputHandlers(viewer);")
+    }
+
+    func testAMouseWheelOrTrackpadScrollIsTheOperatorMovingTheMap() throws {
+        // an iPad with a trackpad zooms the globe by scrolling: without this the first fix of a first launch
+        // flew the camera in over the zoom the operator had just made
+        let c = try inputContext()
+        XCTAssertEqual(int(c, "(listeners.wheel || []).length"), 1, "the page listens for the wheel")
+        XCTAssertTrue(c.evaluateScript("listeners.wheel.every(function(l) { return !!l.opts && l.opts.passive === true; })").toBool(),
+                      "passive: it must never hold up the scroll")
+        c.evaluateScript("fire('wheel', {deltaY: 120});")
+        XCTAssertEqual(int(c, "userMoved()"), 1, "native is told the operator moved the map")
+        XCTAssertEqual(int(c, "cancelled"), 1, "and any flight or centring native started stops")
+        c.evaluateScript("fire('wheel', {deltaY: -40}); fire('wheel', {deltaY: 10});")
+        XCTAssertEqual(int(c, "userMoved()"), 1, "native is told once")
+        XCTAssertEqual(int(c, "cancelled"), 3, "every turn of the wheel stops a centring that started since")
+    }
+
+    func testOneFingerMovingMoreThanEightPixelsIsTheOperatorMovingTheMap() throws {
+        let c = try inputContext()
+        c.evaluateScript("fire('pointerdown', {pointerId: 1, clientX: 100, clientY: 100});")
+        c.evaluateScript("fire('pointermove', {pointerId: 1, clientX: 104, clientY: 103});")
+        XCTAssertEqual(int(c, "userMoved()"), 0, "5 px is a tap that wobbled")
+        c.evaluateScript("fire('pointermove', {pointerId: 1, clientX: 112, clientY: 100});")
+        XCTAssertEqual(int(c, "userMoved()"), 1)
+        XCTAssertEqual(int(c, "cancelled"), 1)
+    }
+
+    func testTwoFingersAreTheOperatorMovingTheMapAtOnce() throws {
+        let c = try inputContext()
+        c.evaluateScript("fire('pointerdown', {pointerId: 1, clientX: 100, clientY: 100});")
+        XCTAssertEqual(int(c, "userMoved()"), 0)
+        c.evaluateScript("fire('pointerdown', {pointerId: 2, clientX: 200, clientY: 100});")
+        XCTAssertEqual(int(c, "userMoved()"), 1)
+    }
+
+    func testAFingerThatHasLeftTheScreenIsForgotten() throws {
+        let c = try inputContext()
+        c.evaluateScript("fire('pointerdown', {pointerId: 1, clientX: 100, clientY: 100}); fire('pointerup', {pointerId: 1});")
+        c.evaluateScript("fire('pointermove', {pointerId: 1, clientX: 300, clientY: 300});")
+        XCTAssertEqual(int(c, "userMoved()"), 0)
+        c.evaluateScript("fire('pointerdown', {pointerId: 3, clientX: 100, clientY: 100}); fire('pointercancel', {pointerId: 3});")
+        c.evaluateScript("fire('pointermove', {pointerId: 3, clientX: 300, clientY: 300});")
+        XCTAssertEqual(int(c, "userMoved()"), 0)
+    }
+
+    func testTheCameraPostsItselfWhenItStopsAndWhileItMoves() throws {
+        let c = try inputContext()
+        XCTAssertEqual(c.evaluateScript("viewer.camera.percentageChanged").toDouble(), 0.05,
+                       "a camera event for every 5 percent of movement, so the bar tracks live")
+        c.evaluateScript("viewer.camera.moveEnd.fire();")
+        c.evaluateScript("viewer.camera.changed.fire();")
+        XCTAssertEqual(c.evaluateScript("JSON.stringify(cameraPosts)").toString(), "[\"at rest\",true]",
+                       "the end of a move is read at rest, a change on the way is read quickly")
+    }
+
+    // MARK: - What a camera post does
+
+    private static let afterRenderStandIn = #"""
+    var _state = {centerSeq: 0};
+    var camPosts = [];
+    function _postCameraChanged(v) { camPosts.push(v.name); }
+    function emitter() {
+      var fns = [];
+      return {addEventListener: function(fn) { fns.push(fn); },
+              removeEventListener: function(fn) { var i = fns.indexOf(fn); if (i >= 0) fns.splice(i, 1); },
+              fire: function() { fns.slice().forEach(function(fn) { fn(); }); },
+              count: function() { return fns.length; }};
+    }
+    var v = {name: 'v', renders: 0, flights: 0,
+             scene: {postRender: emitter(), requestRender: function() { v.renders++; }},
+             camera: {cancelFlight: function() { v.flights++; }}};
+    """#
+
+    func testTheCameraIsPostedOnceAfterTheNextFrameHasBeenRendered() throws {
+        // a measurement taken between a camera jump and its render reads the previous frame's depth
+        let c = try context(Self.afterRenderStandIn, blocks: ["POST-AFTER-RENDER"])
+        c.evaluateScript("_postAfterRender(v);")
+        XCTAssertEqual(int(c, "camPosts.length"), 0, "not before the frame")
+        XCTAssertEqual(int(c, "v.renders"), 1, "a frame is asked for")
+        XCTAssertEqual(int(c, "v.scene.postRender.count()"), 1)
+        c.evaluateScript("v.scene.postRender.fire();")
+        XCTAssertEqual(c.evaluateScript("JSON.stringify(camPosts)").toString(), "[\"v\"]")
+        XCTAssertEqual(int(c, "v.scene.postRender.count()"), 0, "once")
+        c.evaluateScript("v.scene.postRender.fire();")
+        XCTAssertEqual(int(c, "camPosts.length"), 1)
+    }
+
+    func testStoppingACentringStopsTheFlightAndInvalidatesAnythingStillWaiting() throws {
+        // a centring waits for the ground's height and checks its number when it gets it
+        let c = try context(Self.afterRenderStandIn, blocks: ["POST-AFTER-RENDER"])
+        c.evaluateScript("_cancelCentering(v); _cancelCentering(v);")
+        XCTAssertEqual(int(c, "_state.centerSeq"), 2)
+        XCTAssertEqual(int(c, "v.flights"), 2)
+    }
+
+    private static let postCameraStandIn = #"""
+    var Cesium = {Math: {toDegrees: function(r) { return r * 180 / Math.PI; }},
+                  Cartesian2: function(x, y) { this.x = x; this.y = y; }};
+    var _state = {};
+    var posted = [], measured = [];
+    function _postMapEvent(e) { posted.push(e); }
+    function _cartoFor(v, p) { return {lat: 47.6, lon: -117.4, hae: 0}; }
+    function _zoomFromHeight(h, lat) { return 15; }
+    function _scaleMpp(v, quick) { measured.push(quick); return 4.25; }
+    var v = {camera: {positionCartographic: {latitude: 0.83, longitude: -2.05, height: 3218},
+                      heading: 0, pitch: -Math.PI / 2, computeViewRectangle: function() { return null; }},
+             scene: {canvas: {clientWidth: 402, clientHeight: 874}, globe: {ellipsoid: {}}}};
+    """#
+
+    func testTheScalePostedIsTheOneTheNextTickComparesAgainst() throws {
+        // the once-a-second tick posts again only when the scale differs from the last one posted, by whatever
+        // path it was posted: the event must record it
+        let c = try context(Self.postCameraStandIn, blocks: ["POST-CAMERA"])
+        c.evaluateScript("_postCameraChanged(v, false, 3.5);")
+        XCTAssertEqual(c.evaluateScript("posted[0].mpp").toDouble(), 3.5, "the scale handed in is the one posted")
+        XCTAssertEqual(c.evaluateScript("_state.scalePosted").toDouble(), 3.5)
+        XCTAssertEqual(int(c, "measured.length"), 0, "and it is not measured twice")
+        c.evaluateScript("_postCameraChanged(v);")
+        XCTAssertEqual(c.evaluateScript("posted[1].mpp").toDouble(), 4.25)
+        XCTAssertEqual(c.evaluateScript("_state.scalePosted").toDouble(), 4.25)
+        XCTAssertEqual(c.evaluateScript("JSON.stringify(measured)").toString(), "[false]", "at rest: the full measurement")
+        c.evaluateScript("_postCameraChanged(v, true);")
+        XCTAssertEqual(c.evaluateScript("JSON.stringify(measured)").toString(), "[false,true]", "while moving: the quick one")
+        c.evaluateScript("_postCameraChanged(v, false, null);")
+        XCTAssertTrue(c.evaluateScript("posted[3].mpp === null").toBool(), "a scale that has gone is posted as gone")
+        XCTAssertTrue(c.evaluateScript("_state.scalePosted === null").toBool(), "and remembered as gone")
+    }
+
+    func testACameraPostCarriesWhereTheCameraIs() throws {
+        let c = try context(Self.postCameraStandIn, blocks: ["POST-CAMERA"])
+        c.evaluateScript("_postCameraChanged(v, false, 3.5);")
+        XCTAssertEqual(c.evaluateScript("posted[0].event").toString(), "camerachanged")
+        XCTAssertEqual(c.evaluateScript("posted[0].height").toDouble(), 3218)
+        XCTAssertEqual(c.evaluateScript("posted[0].zoom").toDouble(), 15)
+        XCTAssertEqual(c.evaluateScript("posted[0].centerLat").toDouble(), 47.6)
+        c.evaluateScript("v.camera.positionCartographic = undefined; _postCameraChanged(v, false, 3.5);")
+        XCTAssertEqual(int(c, "posted.length"), 1, "no camera position, nothing to post")
+    }
+
+    // MARK: - Who stops a centring that is waiting
+
+    func testEveryNativeCameraCommandStopsACentringThatIsStillWaiting() throws {
+        // each command moves the camera itself, so a centring that was waiting for the ground's height must not
+        // land afterwards and take the camera back
+        let html = CesiumMainMap.html
+        for command in ["flyTo", "lookDown", "setCamera", "centerOnSelf", "follow", "zoomBy"] {
+            let start = try XCTUnwrap(html.range(of: "\n    \(command)(arg){"), "\(command) is not in the page")
+            let rest = html[start.upperBound...]
+            let end = rest.range(of: #"\n    [A-Za-z]+\(arg\)\{"#, options: .regularExpression)?.lowerBound ?? rest.endIndex
+            let body = String(rest[..<end])
+            XCTAssertTrue(body.contains("_cancelCentering(") || body.contains("_state.centerSeq=(_state.centerSeq||0)+1"),
+                          "\(command) does not stop a centring that is waiting")
+        }
+    }
+}
+
+// MARK: - The call sites
+
+/// The map screen and the app's start are SwiftUI and cannot be built in a test, so a rule that is tested can
+/// still be left out of them. This reads the two files and checks that each rule is called, and the old way
+/// of doing it is gone. It skips where the source is not on disk (a test run on a device).
+final class MapScreenCallSiteTests: XCTestCase {
+
+    private static let screen = "OmniTAKMobile/Features/Map/Controllers/MapViewController.swift"
+    private static let app = "OmniTAKMobile/Core/App/OmniTAKMobileApp.swift"
+
+    private func source(_ path: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let url = root.appendingPathComponent(path)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            throw XCTSkip("the source is not on disk here: \(url.path)")
+        }
+        return text
+    }
+
+    private func count(_ pattern: String, in text: String) throws -> Int {
+        let regex = try NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators])
+        return regex.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
+    }
+
+    func testTheMapScreenCreatesThe2DMapOnlyThroughTheLatchedGate() throws {
+        let text = try source(Self.screen)
+        XCTAssertEqual(try count(#"@State private var mapboxGate\b"#, in: text), 1)
+        XCTAssertEqual(try count(#"if\s+mapboxGate\.isOpen\s*\{\s*mainMapView"#, in: text), 1,
+                       "the map is shown while the gate is open")
+        XCTAssertEqual(try count(#"MapboxStart\.mayCreate\("#, in: text), 0,
+                       "the live rule decides again on every render: a later report of 'not determined' replaces the live map with a black view")
+        XCTAssertGreaterThanOrEqual(
+            try count(#"mapboxGate\.update\(reported:\s*locationManager\.hasReportedAuthorization,\s*status:\s*locationManager\.authorizationStatus\)"#, in: text),
+            2, "the gate is fed when the screen appears and when the system reports")
+        XCTAssertEqual(try count(#"\.onChange\(of:\s*locationManager\.hasReportedAuthorization\)"#, in: text), 1)
+    }
+
+    func testTheMapScreenPutsTheQuestionAgainWhenTheStatusGoesBackToNotAsked() throws {
+        let text = try source(Self.screen)
+        XCTAssertEqual(try count(#"@State private var isMapScreenShowing\b"#, in: text), 1)
+        XCTAssertEqual(try count(#"\.onChange\(of:\s*locationManager\.authorizationStatus\)"#, in: text), 1)
+        XCTAssertEqual(try count(#"LocationPrompt\.shouldAskAgain\(status:\s*status,\s*mapScreenShowing:\s*isMapScreenShowing,"#, in: text), 1)
+        XCTAssertEqual(try count(#"LocationManager\.shared\.ask\(at:\s*\.mapAppeared,\s*status:\s*status\)"#, in: text), 1,
+                       "asked through the long-lived manager, with the status that was just reported")
+    }
+
+    func testTheFirstFixMovesThe2DMapThroughTheOneFunction() throws {
+        let text = try source(Self.screen)
+        XCTAssertEqual(try count(#"FirstFixCamera\.postMapMove\(to:\s*location\.coordinate\)"#, in: text), 1)
+        XCTAssertEqual(try count(#"post\(\s*name:\s*\.mapboxMoveCamera"#, in: text), 0,
+                       "a notification made by hand here is one the tests do not see")
+    }
+
+    func testTheCameraEventHandlerReadsTheLaunchViewThenSavesThroughTheOneWriter() throws {
+        let text = try source(Self.screen)
+        let start = try XCTUnwrap(text.range(of: "case .cameraChanged:"))
+        let end = try XCTUnwrap(text.range(of: "case .longpress:", range: start.upperBound..<text.endIndex))
+        let handler = String(text[start.upperBound..<end.lowerBound])
+        let read = try XCTUnwrap(handler.range(of: "_ = FirstFixState.shared"),
+                                 "the camera saved at launch must be read before the first event writes over it")
+        let save = try XCTUnwrap(handler.range(of: ").save()"), "the view is saved through SavedGlobePose.save")
+        XCTAssertLessThan(read.lowerBound, save.lowerBound)
+        XCTAssertEqual(try count(#"cesiumPoseVersion|SavedGlobePose\.versionKey"#, in: text), 0,
+                       "the version mark is written by SavedGlobePose.save and nowhere else")
+    }
+
+    func testTheAppReadsTheSavedCameraBeforeAnythingCanWriteOverIt() throws {
+        let text = try source(Self.app)
+        XCTAssertEqual(try count(#"init\(\)\s*\{[^}]*?_ = FirstFixState\.shared[^}]*?_ = MeshtasticManager\.shared"#, in: text), 1,
+                       "first in App.init, before the managers that start the map and the location")
     }
 }

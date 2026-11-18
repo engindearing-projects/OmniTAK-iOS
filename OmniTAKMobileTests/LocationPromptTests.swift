@@ -63,6 +63,33 @@ final class LocationPromptTests: XCTestCase {
             XCTAssertFalse(asks(moment, .authorizedWhenInUse), "\(moment)")
         }
     }
+
+    // MARK: - The system takes the answer back while the app is running
+
+    private func asksAgain(_ status: CLAuthorizationStatus, showing: Bool = true, done: Bool = true) -> Bool {
+        LocationPrompt.shouldAskAgain(status: status, mapScreenShowing: showing, onboardingCompleted: done)
+    }
+
+    func testTheQuestionIsPutAgainWhenTheStatusGoesBackToNotAskedWhileTheMapIsShowing() {
+        // "Allow Once" runs out after the app has sat in the background, or "Ask Next Time Or When I Share"
+        // is chosen in Settings: the system reports "not determined" to the running app
+        XCTAssertTrue(asksAgain(.notDetermined))
+    }
+
+    func testNothingIsAskedAgainWhileAnotherScreenIsShowing() {
+        // the map's own appearance asks when the operator comes back to it
+        XCTAssertFalse(asksAgain(.notDetermined, showing: false))
+    }
+
+    func testNothingIsAskedAgainBeforeOnboardingIsOver() {
+        XCTAssertFalse(asksAgain(.notDetermined, done: false))
+    }
+
+    func testAnAnswerIsNeverAskedAgainEvenWhileTheMapIsShowing() {
+        for status in everyStatus where status != .notDetermined {
+            XCTAssertFalse(asksAgain(status), "status \(status.rawValue)")
+        }
+    }
 }
 
 final class MapboxStartTests: XCTestCase {
@@ -87,6 +114,62 @@ final class MapboxStartTests: XCTestCase {
         for status in everyStatus where status != .notDetermined {
             XCTAssertTrue(MapboxStart.mayCreate(reported: true, status: status), "status \(status.rawValue)")
         }
+    }
+}
+
+/// The 2D map is created once the permission is decided and then kept. The rule above is evaluated live on
+/// every render, so when the system reported "not determined" to a running app (an "Allow Once" session that
+/// ended, or "Ask Next Time" chosen in Settings) the live map was replaced by a black view: tilt, bearing and
+/// annotations lost, and nothing put the question again.
+final class MapboxStartGateTests: XCTestCase {
+
+    private let everyStatus: [CLAuthorizationStatus] =
+        [.notDetermined, .restricted, .denied, .authorizedAlways, .authorizedWhenInUse]
+
+    func testAFreshGateFollowsTheStartRuleUntilItOpens() {
+        for reported in [false, true] {
+            for status in everyStatus {
+                var gate = MapboxStartGate()
+                XCTAssertFalse(gate.isOpen)
+                gate.update(reported: reported, status: status)
+                XCTAssertEqual(gate.isOpen, MapboxStart.mayCreate(reported: reported, status: status),
+                               "reported \(reported), status \(status.rawValue)")
+            }
+        }
+    }
+
+    func testOnceOpenTheGateStaysOpenWhateverTheSystemReportsLater() {
+        for first in everyStatus where first != .notDetermined {
+            var gate = MapboxStartGate()
+            gate.update(reported: true, status: first)
+            XCTAssertTrue(gate.isOpen)
+            for later in everyStatus {
+                gate.update(reported: true, status: later)
+                XCTAssertTrue(gate.isOpen, "closed by status \(later.rawValue) after \(first.rawValue)")
+            }
+            gate.update(reported: false, status: .notDetermined)
+            XCTAssertTrue(gate.isOpen, "closed by a report that has not come")
+        }
+    }
+
+    func testTheMapIsKeptWhenAnAllowOnceSessionEnds() {
+        // the sequence the system reports to one running app: undecided, then "while using", then undecided again
+        var gate = MapboxStartGate()
+        var shown: [Bool] = []
+        for (reported, status) in [(false, CLAuthorizationStatus.notDetermined), (true, .notDetermined),
+                                   (true, .authorizedWhenInUse), (true, .notDetermined), (true, .notDetermined)] {
+            gate.update(reported: reported, status: status)
+            shown.append(gate.isOpen)
+        }
+        XCTAssertEqual(shown, [false, false, true, true, true])
+    }
+
+    func testTheGateIsPerScreenSoANewScreenWaitsForTheAnswerAgain() {
+        var first = MapboxStartGate()
+        first.update(reported: true, status: .authorizedWhenInUse)
+        let second = MapboxStartGate()
+        XCTAssertTrue(first.isOpen)
+        XCTAssertFalse(second.isOpen)
     }
 }
 
@@ -188,6 +271,42 @@ final class LocationManagerWiringTests: XCTestCase {
             XCTAssertEqual(service.whenInUseRequests, 0, "status \(answer.rawValue)")
             XCTAssertEqual(service.alwaysRequests, 0, "someone who chose always keeps it and is never asked to change it")
         }
+    }
+
+    // MARK: - The system takes the answer back while the app is running
+
+    private func reportStatus(_ status: CLAuthorizationStatus, to manager: LocationManager, from service: RecordingLocationService) {
+        service.status = status
+        manager.locationManagerDidChangeAuthorization(CLLocationManager())
+        settle()
+    }
+
+    func testWhenTheStatusGoesBackToNotAskedTheQuestionIsPutOnceAndByUsOnly() {
+        let service = RecordingLocationService()
+        let manager = LocationManager(service: service)
+        reportStatus(.authorizedWhenInUse, to: manager, from: service)
+        manager.ask(at: .mapAppeared, status: manager.authorizationStatus, onboardingCompleted: true)
+        XCTAssertEqual(service.whenInUseRequests, 0, "an answer is not asked for again")
+        // "Allow Once" has run out: the system reports the question as not answered, to the running app
+        reportStatus(.notDetermined, to: manager, from: service)
+        XCTAssertEqual(manager.authorizationStatus, .notDetermined)
+        XCTAssertEqual(service.whenInUseRequests, 0, "the manager itself asks for nothing when the status changes")
+        manager.ask(at: .mapAppeared, status: manager.authorizationStatus, onboardingCompleted: true)
+        XCTAssertEqual(service.whenInUseRequests, 1, "one question, put by LocationPrompt's rule")
+        XCTAssertEqual(service.alwaysRequests, 0, "always is not asked for at all")
+    }
+
+    func testTheStatusJustReportedDecidesAndNotTheOneThisManagerStillHolds() {
+        // the screen sees the change through its own manager; this one (the long-lived one that puts the
+        // question) may not have taken the report yet
+        let service = RecordingLocationService()
+        let manager = LocationManager(service: service)
+        reportStatus(.authorizedWhenInUse, to: manager, from: service)
+        XCTAssertEqual(manager.authorizationStatus, .authorizedWhenInUse, "still the old answer here")
+        manager.ask(at: .mapAppeared, status: .notDetermined, onboardingCompleted: true)
+        XCTAssertEqual(service.whenInUseRequests, 1)
+        manager.ask(at: .mapAppeared, status: .authorizedWhenInUse, onboardingCompleted: true)
+        XCTAssertEqual(service.whenInUseRequests, 1, "a status that is an answer asks nothing")
     }
 }
 

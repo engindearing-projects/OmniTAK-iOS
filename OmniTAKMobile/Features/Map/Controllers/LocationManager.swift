@@ -71,9 +71,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     /// Puts the location question to the user if `LocationPrompt` says this is the moment. Asked
     /// through one long-lived manager: a question put by a manager that goes away is withdrawn.
+    /// `reported` is the status the system has just reported to a screen's own manager, for a caller
+    /// that must not wait for this one to take the same report: this manager holds the previous answer
+    /// until its own callback has run.
     func ask(at moment: LocationPrompt.Moment,
+             status reported: CLAuthorizationStatus? = nil,
              onboardingCompleted done: Bool = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")) {
-        if LocationPrompt.shouldAskWhenInUse(at: moment, status: authorizationStatus, onboardingCompleted: done) {
+        if LocationPrompt.shouldAskWhenInUse(at: moment, status: reported ?? authorizationStatus, onboardingCompleted: done) {
             manager.requestWhenInUseAuthorization()
         }
     }

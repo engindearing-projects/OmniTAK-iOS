@@ -173,10 +173,12 @@
   // Posts the camera to native once the next frame has been rendered with it. A measurement taken between a camera jump
   // and that render reads the previous frame's depth (the globe from space) and posts a scale that is wrong until
   // something else moves the camera.
+  // POST-AFTER-RENDER-BEGIN (CesiumPageWiringTests runs these functions in JavaScriptCore)
   function _postAfterRender(v){const once=function(){v.scene.postRender.removeEventListener(once);_postCameraChanged(v)};v.scene.postRender.addEventListener(once);v.scene.requestRender()}
   // Stops a flight and any centring still waiting for the terrain's height: called by every native camera command, so
   // an older one cannot start after a newer one.
   function _cancelCentering(v){_state.centerSeq=(_state.centerSeq||0)+1;v.camera.cancelFlight()}
+  // POST-AFTER-RENDER-END
   function _ground(v,lat,lon,cb,precise){let done=false;const go=function(h){if(done)return;done=true;cb(_lookDownGround(h))};
     const c=Cesium.Cartographic.fromDegrees(lon,lat),g=precise?undefined:v.scene.globe.getHeight(c);
     if(typeof g==='number'&&isFinite(g)){go(g);return}
@@ -234,6 +236,7 @@
     _state.measurements.forEach(function(r){(r.vertexEntities||[]).forEach(hide)})}
   // FAR-SIDE-END
   // `moving`: the camera is in motion (see _scaleMpp's `quick`). `mpp`: a scale just measured, handed in so it is not measured twice.
+  // POST-CAMERA-BEGIN (CesiumPageWiringTests runs this function in JavaScriptCore)
   function _postCameraChanged(v,moving,mpp){const cam=v.camera,carto=cam.positionCartographic;if(!carto)return;
     // Issue #72 — north-up lock guarantee. If the heading drifted off north
     // (e.g. a two-finger twist, which Cesium folds into the rotate gesture and
@@ -255,6 +258,8 @@
     // point-drop coordinate and the region center.
     const cv=v.scene.canvas;const ctr=_cartoFor(v,new Cesium.Cartesian2(cv.clientWidth/2,cv.clientHeight/2));
     _postMapEvent({event:'camerachanged',lat:Cesium.Math.toDegrees(carto.latitude),lon:Cesium.Math.toDegrees(carto.longitude),height:carto.height,heading:Cesium.Math.toDegrees(cam.heading),pitch:Cesium.Math.toDegrees(cam.pitch),zoom:_zoomFromHeight(carto.height,carto.latitude),centerLat:ctr?ctr.lat:null,centerLon:ctr?ctr.lon:null,mpp:_state.scalePosted=(arguments.length>2?mpp:_scaleMpp(v,moving===true)),bounds:r?{north:Cesium.Math.toDegrees(r.north),south:Cesium.Math.toDegrees(r.south),east:Cesium.Math.toDegrees(r.east),west:Cesium.Math.toDegrees(r.west)}:null})}
+  // POST-CAMERA-END
+  // INPUT-HANDLERS-BEGIN (CesiumPageWiringTests runs this function in JavaScriptCore)
   function _installInputHandlers(viewer){
     viewer.camera.moveEnd.addEventListener(function(){_postCameraChanged(viewer)});
     // Fire during continuous gestures (pinch-zoom / drag) too, so the
@@ -267,16 +272,18 @@
     h.setInputAction(function(down){pressStart=down.position;if(pressTimer)clearTimeout(pressTimer);pressTimer=setTimeout(function(){if(!pressStart)return;const p=_cartoFor(viewer,pressStart);if(!p)return;_postMapEvent({event:'longpress',lat:p.lat,lon:p.lon,hae:p.hae,screenX:pressStart.x,screenY:pressStart.y,uid:_pickedUid(viewer,pressStart)});pressStart=null},500)},Cesium.ScreenSpaceEventType.LEFT_DOWN);
     h.setInputAction(function(){if(pressTimer){clearTimeout(pressTimer);pressTimer=null}pressStart=null},Cesium.ScreenSpaceEventType.LEFT_UP);
     h.setInputAction(function(m){if(!pressStart)return;const dx=m.endPosition.x-pressStart.x,dy=m.endPosition.y-pressStart.y;if(Math.hypot(dx,dy)>8&&pressTimer){clearTimeout(pressTimer);pressTimer=null;pressStart=null}},Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-    // The operator is moving the map by hand: one pointer (a finger, a mouse, a trackpad) more than 8 px, or two. Native is
-    // told once (the first fix of a first launch must never take the map out from under them), and any flight or centring
-    // native started stops.
+    // The operator is moving the map by hand: one pointer (a finger, a mouse, a trackpad) more than 8 px, or two, or a turn of
+    // the wheel (a mouse wheel, a trackpad scroll: how an iPad with a trackpad zooms). Native is told once (the first fix of a
+    // first launch must never take the map out from under them), and any flight or centring native started stops.
     const cv=viewer.scene.canvas,down=new Map();let umSent=false;
     const umMoved=function(){_cancelCentering(viewer);if(umSent)return;umSent=true;_postMapEvent({event:'usermoved',lat:0,lon:0})};
     cv.addEventListener('pointerdown',function(e){down.set(e.pointerId,{x:e.clientX,y:e.clientY});if(down.size>1)umMoved()},{passive:true});
     cv.addEventListener('pointermove',function(e){const d=down.get(e.pointerId);if(d&&Math.hypot(e.clientX-d.x,e.clientY-d.y)>8)umMoved()},{passive:true});
     const umEnd=function(e){down.delete(e.pointerId)};
     cv.addEventListener('pointerup',umEnd,{passive:true});cv.addEventListener('pointercancel',umEnd,{passive:true});
+    cv.addEventListener('wheel',umMoved,{passive:true});
   }
+  // INPUT-HANDLERS-END
   window.OmniBridge={
     upsertEntity(arg){const e=_parse(arg);if(!e||!e.uid||typeof e.lat!=='number'||typeof e.lon!=='number')return;const v=_state.viewer;if(!v)return;
       const hae=(typeof e.hae==='number'&&isFinite(e.hae))?e.hae:0;const useGround=hae<=0;const airborne=!useGround;
