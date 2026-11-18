@@ -33,6 +33,88 @@ final class CesiumCameraSeedTests: XCTestCase {
     // Tolerance used for floating-point comparisons.
     private let eps = 1e-3
 
+    // MARK: - "Center on me" from far out
+
+    private let spokane = CLLocationCoordinate2D(latitude: 47.6588, longitude: -117.426)
+
+    func testStreetZoomIsAbout3200MetresUpAtSpokane() {
+        let h = CesiumCameraMath.height(forZoom: CesiumCameraMath.operatorZoom, latitude: spokane.latitude)
+        XCTAssertEqual(h, 3_219, accuracy: 5)
+        XCTAssertEqual(CesiumCameraMath.zoom(forHeight: h, latitude: spokane.latitude), 15, accuracy: 1e-9)
+    }
+
+    func testCenterOnMeFromWholeEarthViewComesInToStreetLevel() {
+        for far in [20_000_000.0, 2_000_000, 100_000, 30_000] {
+            let h = CesiumCameraMath.heightForOperator(currentHeight: far, latitude: spokane.latitude)
+            XCTAssertEqual(try XCTUnwrap(h), 3_219, accuracy: 5, "from \(far) m")
+        }
+    }
+
+    func testCenterOnMeKeepsTheHeightTheOperatorChoseWhenCloseEnough() {
+        // zoom 12 and nearer is a view the operator chose: the camera keeps its height (a hair inside zoom 12, so that
+        // rounding in the zoom and back cannot decide it)
+        let zoom12 = CesiumCameraMath.height(forZoom: 12.001, latitude: spokane.latitude)
+        XCTAssertNil(CesiumCameraMath.heightForOperator(currentHeight: zoom12, latitude: spokane.latitude))
+        for near in [25_000.0, 6_000, 3_000, 800] {
+            XCTAssertNil(CesiumCameraMath.heightForOperator(currentHeight: near, latitude: spokane.latitude), "\(near) m")
+        }
+        let justFar = CesiumCameraMath.height(forZoom: 11.99, latitude: spokane.latitude)
+        XCTAssertNotNil(CesiumCameraMath.heightForOperator(currentHeight: justFar, latitude: spokane.latitude))
+    }
+
+    func testCenterOnMeNeverSendsTheCameraUp() {
+        // the street height is lower than every camera that is further out than zoom 12, and a closer camera keeps its own
+        for far in stride(from: 30_000.0, through: 20_000_000, by: 337_000) {
+            let h = try? XCTUnwrap(CesiumCameraMath.heightForOperator(currentHeight: far, latitude: spokane.latitude))
+            XCTAssertLessThan(h ?? .infinity, far, "from \(far) m")
+        }
+        for near in [100.0, 500, 3_000, 6_000] {
+            XCTAssertNil(CesiumCameraMath.heightForOperator(currentHeight: near, latitude: spokane.latitude), "\(near) m")
+        }
+    }
+
+    func testTheCenterOnMeNotificationCarriesAHeightOnlyFromFarOut() {
+        let far = CesiumCameraMath.centerOnSelfInfo(for: spokane, cameraHeight: 20_000_000)
+        XCTAssertEqual(far["lat"] as? Double, spokane.latitude)
+        XCTAssertEqual(far["lon"] as? Double, spokane.longitude)
+        XCTAssertEqual(try XCTUnwrap(far["height"] as? Double), 3_219, accuracy: 5)
+        let near = CesiumCameraMath.centerOnSelfInfo(for: spokane, cameraHeight: 3_000)
+        XCTAssertEqual(near["lat"] as? Double, spokane.latitude)
+        XCTAssertNil(near["height"], "the operator chose that height")
+    }
+
+    // MARK: - Follow commands
+
+    func testAFollowCommandIsSentOncePerCoordinate() {
+        var follow = FollowDedupe()
+        XCTAssertTrue(follow.shouldSend(latitude: 47.6588, longitude: -117.426))
+        XCTAssertFalse(follow.shouldSend(latitude: 47.6588, longitude: -117.426), "a re-render of the same place")
+        XCTAssertTrue(follow.shouldSend(latitude: 47.6589, longitude: -117.426), "a new fix")
+    }
+
+    func testTheCenterOnMePressCountsAsTheFollowCommandForItsOwnCoordinate() {
+        // the press centres the globe itself, and the follow command the same press would send next cancels a centring that is
+        // waiting for the ground's height: so it must not be sent for that coordinate, but must for the next fix
+        var follow = FollowDedupe()
+        follow.noteSent(latitude: 47.6588, longitude: -117.426)
+        XCTAssertFalse(follow.shouldSend(latitude: 47.6588, longitude: -117.426))
+        XCTAssertTrue(follow.shouldSend(latitude: 47.6590, longitude: -117.427))
+    }
+
+    func testFollowModeEndingSendsTheNextCoordinate() {
+        var follow = FollowDedupe()
+        XCTAssertTrue(follow.shouldSend(latitude: 1, longitude: 2))
+        follow.reset()
+        XCTAssertTrue(follow.shouldSend(latitude: 1, longitude: 2))
+    }
+
+    func testTheCenterOnMeCallCarriesAHeightOnlyFromFarOut() {
+        XCTAssertEqual(CesiumCameraMath.centerOnSelfJS(for: spokane, height: 3219.5),
+                       "window.OmniBridge.centerOnSelf({lat:47.6588,lon:-117.426,height:3219.5});")
+        XCTAssertEqual(CesiumCameraMath.centerOnSelfJS(for: spokane, height: nil),
+                       "window.OmniBridge.centerOnSelf({lat:47.6588,lon:-117.426});")
+    }
+
     // MARK: - heightForRegion
 
     // The conversion must be the exact inverse of the JS _zoomFromHeight formula

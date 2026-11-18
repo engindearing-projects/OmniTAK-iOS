@@ -63,9 +63,10 @@ struct CesiumMapEvent {
         let heading: Double     // degrees CW from north
         let pitch: Double       // degrees (negative = looking down)
         let zoom: Double        // Mapbox-style zoom, derived from height
-        /// Ground metres per screen point at the scale bar, measured on the globe
-        /// between the two points 50 CSS px either side of `scaleAnchor` on its row
-        /// (tilt and terrain included). nil when a sample point misses the globe.
+        /// Ground metres per screen point at the scale bar, measured on the globe along the
+        /// row of `scaleAnchor`: the median of four pairs over five points 25 CSS px apart at
+        /// rest, the outer two points (50 px either side) while the camera is moving (tilt and
+        /// terrain included). nil when too many sample points miss the globe.
         /// Feeds the scale bar. On a tilted globe this is not the scale at the
         /// screen center, by design.
         var metersPerPoint: Double? = nil
@@ -105,6 +106,50 @@ enum CesiumCameraMath {
         let metersVisible = region.span.latitudeDelta * 111_320.0
         let h = metersVisible / 1.15
         return min(max(h, 50.0), 20_000_000.0)
+    }
+
+    /// The page's zoom for a camera height (its `_zoomFromHeight`): the 2D map's rule, 256 px tiles.
+    static func zoom(forHeight height: Double, latitude: Double) -> Double {
+        let c = max(cos(latitude * .pi / 180), 0.01)
+        let metersPerPixel = (height * 256) / 1000.0
+        return min(max(log2(40_075_017 * c / max(metersPerPixel, 1)), 0), 22)
+    }
+
+    /// The camera height for a zoom: the inverse of `zoom(forHeight:latitude:)`.
+    static func height(forZoom zoom: Double, latitude: Double) -> Double {
+        let c = max(cos(latitude * .pi / 180), 0.01)
+        return (40_075_017 * c / pow(2, zoom)) * 1000.0 / 256
+    }
+
+    /// From further out than this zoom, "Center on me" also comes in to street level.
+    static let operatorFarOutZoom = 12.0
+    /// Street level: the zoom a camera that was far out goes to.
+    static let operatorZoom = 15.0
+
+    /// The camera height "Center on me" comes in to when the camera is as high as `currentHeight`
+    /// (the Android globe's rule; the 2D map also comes in from far out): from far out (below
+    /// `operatorFarOutZoom`) the height of `operatorZoom` (about 3.2 km at Spokane), otherwise nil:
+    /// the camera keeps the height the operator chose. That height is always lower than the camera was.
+    static func heightForOperator(currentHeight: Double, latitude: Double) -> Double? {
+        guard zoom(forHeight: currentHeight, latitude: latitude) < operatorFarOutZoom else { return nil }
+        return height(forZoom: operatorZoom, latitude: latitude)
+    }
+
+    /// What the "Center on me" notification carries: where the operator is and, from far out, the height to
+    /// come in to.
+    static func centerOnSelfInfo(for coordinate: CLLocationCoordinate2D, cameraHeight: Double) -> [String: Any] {
+        var info: [String: Any] = ["lat": coordinate.latitude, "lon": coordinate.longitude]
+        if let height = heightForOperator(currentHeight: cameraHeight, latitude: coordinate.latitude) {
+            info["height"] = height
+        }
+        return info
+    }
+
+    /// The JS call for "Center on me": the operator in the middle of the screen, keeping the camera's tilt
+    /// and heading, and coming in to `height` when one is given.
+    static func centerOnSelfJS(for coordinate: CLLocationCoordinate2D, height: Double?) -> String {
+        let h = height.map { ",height:\($0)" } ?? ""
+        return "window.OmniBridge.centerOnSelf({lat:\(coordinate.latitude),lon:\(coordinate.longitude)\(h)});"
     }
 
     /// The 2D region that stands for a globe camera: centred on `centre` (the ground point under
@@ -174,6 +219,8 @@ extension Notification.Name {
     /// When on, the globe stays north-up (heading pinned to 0°) while pan/zoom/
     /// tilt stay live; the JS side instantly re-snaps any heading drift.
     static let cesiumSetNorthLock = Notification.Name("cesiumSetNorthLock")
+    /// "Center on me" on the globe. userInfo: "lat", "lon": Double and, from far out, "height": Double.
+    static let cesiumCenterOnSelf = Notification.Name("cesiumCenterOnSelf")
 }
 
 struct CesiumMainMap: UIViewRepresentable {
@@ -353,6 +400,22 @@ struct CesiumMainMap: UIViewRepresentable {
             }
         }
 
+        // "Center on me": the operator in the middle of the screen; from far out it comes in to street level.
+        context.coordinator.centerOnSelfObserver = NotificationCenter.default.addObserver(
+            forName: .cesiumCenterOnSelf, object: nil, queue: .main
+        ) { [weak coordinator = context.coordinator] note in
+            guard let coordinator, coordinator.isReady, let wv = coordinator.webView,
+                  let lat = note.userInfo?["lat"] as? Double, let lon = note.userInfo?["lon"] as? Double else { return }
+            let height = note.userInfo?["height"] as? Double
+            // This press already turns the globe to the operator: the follow command the same press
+            // would send next must not (it cancels a centring that is waiting for the ground's height,
+            // and the camera would never come in).
+            coordinator.followDedupe.noteSent(latitude: lat, longitude: lon)
+            wv.evaluateJavaScript(
+                CesiumCameraMath.centerOnSelfJS(for: CLLocationCoordinate2D(latitude: lat, longitude: lon), height: height),
+                completionHandler: nil)
+        }
+
         // Issue #72/#73 — snap the globe heading to north (0°). Preserves the
         // current center, altitude, and pitch so only the rotation changes.
         context.coordinator.resetNorthObserver = NotificationCenter.default.addObserver(
@@ -434,9 +497,8 @@ struct CesiumMainMap: UIViewRepresentable {
             // Dedup on coordinate so unrelated re-renders don't re-issue it.
             if isFollowing, let loc = selfLocation {
                 context.coordinator.wasFollowing = true
-                let key = "\(loc.coordinate.latitude),\(loc.coordinate.longitude)"
-                if key != context.coordinator.lastFollowKey {
-                    context.coordinator.lastFollowKey = key
+                if context.coordinator.followDedupe.shouldSend(latitude: loc.coordinate.latitude,
+                                                              longitude: loc.coordinate.longitude) {
                     webView.evaluateJavaScript(
                         "window.OmniBridge.follow({lat:\(loc.coordinate.latitude),lon:\(loc.coordinate.longitude)});",
                         completionHandler: nil
@@ -449,7 +511,7 @@ struct CesiumMainMap: UIViewRepresentable {
                     context.coordinator.wasFollowing = false
                     webView.evaluateJavaScript("window.OmniBridge.unfollow();", completionHandler: nil)
                 }
-                context.coordinator.lastFollowKey = nil
+                context.coordinator.followDedupe.reset()
             }
 
             // Lasso mode toggle — push to the bridge on transitions only.
@@ -519,8 +581,8 @@ struct CesiumMainMap: UIViewRepresentable {
         /// Last in-progress drawing preview pushed to the globe (issue #63).
         var lastTempDrawingSnapshot: String = "[]"
         var lastTrailsSnapshot: String = "[]"
-        /// Last coordinate we recentered on in follow mode (dedupe key).
-        var lastFollowKey: String?
+        /// Last coordinate we recentered on in follow mode (dedupe).
+        var followDedupe = FollowDedupe()
         /// Whether follow was active last render (to release lookAt on exit).
         var wasFollowing = false
         /// Whether lasso mode was active last render (to toggle on transition).
@@ -535,6 +597,8 @@ struct CesiumMainMap: UIViewRepresentable {
         var zoomObserver: NSObjectProtocol?
         /// Observer token for "Show on Map" (contact-centering) commands.
         var centerOnObserver: NSObjectProtocol?
+        /// Observer token for "Center on me" commands.
+        var centerOnSelfObserver: NSObjectProtocol?
         /// Observer token for issue #72/#73 north-snap commands.
         var resetNorthObserver: NSObjectProtocol?
         /// Observer token for issue #72 north-lock engage/release commands.
@@ -597,6 +661,7 @@ struct CesiumMainMap: UIViewRepresentable {
         deinit {
             if let zoomObserver { NotificationCenter.default.removeObserver(zoomObserver) }
             if let centerOnObserver { NotificationCenter.default.removeObserver(centerOnObserver) }
+            if let centerOnSelfObserver { NotificationCenter.default.removeObserver(centerOnSelfObserver) }
             if let resetNorthObserver { NotificationCenter.default.removeObserver(resetNorthObserver) }
             if let northLockObserver { NotificationCenter.default.removeObserver(northLockObserver) }
             loadWatchdog?.invalidate()
@@ -782,7 +847,7 @@ struct CesiumMainMap: UIViewRepresentable {
             let centerLat: Double?
             let centerLon: Double?
             // Ground metres per screen point at the scale bar, measured on the
-            // globe (see _metersPerPoint). null when a sample point missed the
+            // globe (see _scaleMpp). null when too many sample points missed the
             // globe; the scale bar is then hidden.
             let mpp: Double?
             // Freehand lasso polygon as [[lat,lon],...] for a 'lasso' event.
@@ -1418,4 +1483,26 @@ struct CesiumMainMap: UIViewRepresentable {
         }
         return template.replacingOccurrences(of: "__CESIUM_ION_TOKEN__", with: cesiumIonToken)
     }
+}
+
+/// The follow command is sent once per coordinate, not on every re-render. The "Center on me" press also
+/// counts as sent: it turns the globe to the operator itself.
+struct FollowDedupe {
+    private var lastKey: String?
+
+    private static func key(_ latitude: Double, _ longitude: Double) -> String { "\(latitude),\(longitude)" }
+
+    /// True the first time `latitude`, `longitude` is asked about since the last one that differs.
+    mutating func shouldSend(latitude: Double, longitude: Double) -> Bool {
+        let key = Self.key(latitude, longitude)
+        if key == lastKey { return false }
+        lastKey = key
+        return true
+    }
+
+    /// The globe was turned to this coordinate by something other than a follow command.
+    mutating func noteSent(latitude: Double, longitude: Double) { lastKey = Self.key(latitude, longitude) }
+
+    /// Follow mode ended: the next coordinate is sent.
+    mutating func reset() { lastKey = nil }
 }

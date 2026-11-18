@@ -2707,6 +2707,14 @@ struct ATAKMapView: View {
                     mapRegion.center = location.coordinate
                     mapRegion.span = MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
                 }
+                if mapEngine == .cesium3D {
+                    // The globe turns to the operator, and from far out comes in to street level (as the
+                    // 2D map does from far out, and Android's globe): follow alone keeps the camera's
+                    // distance, so whole-earth stayed whole-earth.
+                    NotificationCenter.default.post(
+                        name: .cesiumCenterOnSelf, object: nil,
+                        userInfo: CesiumCameraMath.centerOnSelfInfo(for: location.coordinate, cameraHeight: cesiumLastHeight))
+                }
                 trackingMode = .follow
             }
         }
