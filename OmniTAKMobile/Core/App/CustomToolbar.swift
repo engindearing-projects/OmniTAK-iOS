@@ -57,7 +57,7 @@ struct CustomToolbar: View {
     private var cellWidth: CGFloat {
         // In landscape the pill hugs its content, so reorder math keys off the
         // fixed compact cell width rather than the (now content-sized) bar.
-        isLandscape ? compactCellWidth : max(1, barWidth / CGFloat(max(totalCells, 1)))
+        (isLandscape || barWidth < 1) ? compactCellWidth : barWidth / CGFloat(max(totalCells, 1))
     }
 
     var body: some View {
@@ -269,6 +269,9 @@ struct CustomToolbar: View {
             }
         }
         .frame(maxWidth: isLandscape ? compactCellWidth : .infinity)
+        // The button is hit-test disabled while editing, so without this only the
+        // remove badge would catch touches and the reorder drag would rarely start.
+        .contentShape(Rectangle())
         .rotationEffect(.degrees(store.isEditing && !isDragging ? (wigglePhase ? 1.6 : -1.6) : 0))
         .scaleEffect(isDragging ? 1.12 : 1)
         .offset(x: offsetX)
@@ -327,7 +330,10 @@ struct CustomToolbar: View {
     // MARK: - Reorder gesture
 
     private func reorderGesture(item: BarItem, displayIndex: Int) -> some Gesture {
-        DragGesture(minimumDistance: 6)
+        // Global coordinates: the dragged item itself moves one cell each
+        // time it is reordered, so a translation measured in its own (local)
+        // space compounded and flung it to the end of the bar.
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
             .onChanged { value in
                 guard store.isEditing else { return }
                 if draggingID == nil {
@@ -335,12 +341,18 @@ struct CustomToolbar: View {
                     dragStartIndex = displayIndex
                 }
                 dragTranslation = value.translation.width
-                let cur = store.itemIDs.firstIndex(of: item.id) ?? displayIndex
-                let target = max(0, min(store.items.count - 1,
+                // Work in VISIBLE positions, then map to the saved list:
+                // itemIDs can also hold hidden (plugin-disabled) shortcuts, so
+                // its indices differ from what's on screen.
+                let visible = store.items.map(\.id)
+                guard let cur = visible.firstIndex(of: item.id) else { return }
+                let target = max(0, min(visible.count - 1,
                                         dragStartIndex + Int((value.translation.width / cellWidth).rounded())))
-                if target != cur {
+                if target != cur,
+                   let from = store.itemIDs.firstIndex(of: item.id),
+                   let to = store.itemIDs.firstIndex(of: visible[target]) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        store.move(from: cur, to: target)
+                        store.move(from: from, to: to)
                     }
                 }
             }
@@ -359,6 +371,8 @@ struct CustomToolbar: View {
 }
 
 private struct BarWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 1
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+    static var defaultValue: CGFloat = 0
+    // max, not last-wins: sibling views that don't measure report the default and
+    // would otherwise overwrite the real width, leaving every cell 1pt wide.
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
