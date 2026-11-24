@@ -46,7 +46,22 @@ final class BLEPTTManager: NSObject, ObservableObject {
         /// AINA V1 (APTT1) exposes the same BLE button service as V2 and was
         /// verified on device, so one code path serves both.
         var displayName: String { self == .ainaV2 ? "AINA APTT (V1/V2)" : rawValue }
+        /// A full speaker-mic (audio + buttons) rather than a button-only puck.
+        var isSpeakerMic: Bool { self != .pryme }
+        /// What it is, for the settings UI.
+        var deviceWord: String { isSpeakerMic ? "Speaker-mic" : "PTT button" }
+        /// Which PTT each of its buttons keys.
+        var talksOn: String {
+            switch self {
+            case .ainaV2: return "Main PTT → PTT 1, secondary PTT → PTT 2, emergency key"
+            case .bt02: return "PTT → PTT 1, emergency key"
+            case .pryme: return "PTT 1 only"
+            }
+        }
     }
+
+    /// The kind of the device that is connected right now, if any.
+    var connectedKind: Kind? { connectedName == nil ? nil : kind }
 
     struct Discovered: Identifiable, Equatable {
         let id: UUID
@@ -170,7 +185,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
         guard isScanning else { return }
         central?.stopScan()
         isScanning = false
-        if connectedName == nil { status = discovered.isEmpty ? "No PTT buttons found" : "Pick a button" }
+        if connectedName == nil { status = discovered.isEmpty ? "Nothing found" : "Pick a device" }
     }
 
     private func connect(_ d: Discovered) {
@@ -188,7 +203,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
         peripheral = nil; kind = nil; connectedName = nil
         savedPeripheralId = nil
         autoConnectName = nil
-        status = "No button paired"
+        status = "Nothing paired"
     }
 
     private func reconnectSaved() {
@@ -197,7 +212,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
               let raw = UserDefaults.standard.string(forKey: Self.savedKey + ".kind"),
               let k = Kind(rawValue: raw),
               let p = c.retrievePeripherals(withIdentifiers: [id]).first else {
-            if central?.state == .poweredOn, savedPeripheralId == nil { status = "No button paired" }
+            if central?.state == .poweredOn, savedPeripheralId == nil { status = "Nothing paired" }
             return
         }
         attach(p, kind: k)
@@ -284,7 +299,7 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         }
         switch c.state {
         case .poweredOn:
-            status = savedPeripheralId == nil ? "No button paired" : "Reconnecting…"
+            status = savedPeripheralId == nil ? "Nothing paired" : "Reconnecting…"
             guard wantRunning else { break }
             reconnectSaved()
             if autoConnectName != nil, connectedName == nil, !isScanning {
@@ -325,7 +340,7 @@ extension BLEPTTManager: CBCentralManagerDelegate {
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
         connectedName = p.name ?? kind?.rawValue
         print("[BLEPTT] connected \(connectedName ?? "?")")
-        status = "Connected: \(connectedName ?? "button")"
+        status = "Connected: \(connectedName ?? "device")"
         p.discoverServices(nil)
     }
 

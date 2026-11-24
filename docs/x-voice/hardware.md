@@ -14,7 +14,7 @@ A Bluetooth speaker-mic has two separate parts:
    connects to these **directly**: you don't pair them in iOS Settings.
    X Voice connects them automatically in two cases only: the buttons of the
    speaker-mic iOS is using for audio (matched by name), and a button you
-   connected before. Anything else needs one tap in *Scan for PTT buttons*.
+   connected before. Anything else needs one tap in *Scan for speaker-mics and buttons*.
    X Voice never connects to "whatever is nearby": a wrong device could key
    your microphone.
 
@@ -62,8 +62,8 @@ cancelled from OmniTAK. The top and side buttons are not mapped. See the
 
 1. **Don't pair it in iOS Settings.** If it's listed there, tap ⓘ → *Forget
    This Device*.
-2. First time: turn it on, open **X Voice → Bluetooth PTT button → Scan for
-   PTT buttons**, and tap `PTT-Z`. After that X Voice reconnects to it on its
+2. First time: turn it on, open **X Voice → Bluetooth speaker-mic or PTT button → Scan for
+   speaker-mics and buttons**, and tap `PTT-Z`. After that X Voice reconnects to it on its
    own whenever it's on and in range.
 
 A device is only offered as a Pryme if its name says so (`PTT-Z`, `BT-PTT`,

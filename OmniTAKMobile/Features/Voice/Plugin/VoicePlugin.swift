@@ -112,11 +112,13 @@ struct VoicePluginSettingsView: View {
             }
 
             Section {
-                row("Button", controller.blePTT.connectedName ?? "None")
-                row("Talks on", (controller.blePTT.connectedName ?? "").uppercased().hasPrefix("APTT")
-                    ? "PTT 1 (secondary button: PTT 2)" : "PTT 1 only")
+                row(controller.blePTT.connectedKind?.deviceWord ?? "Device", controller.blePTT.connectedName ?? "None")
+                if let kind = controller.blePTT.connectedKind {
+                    row("Type", kind.displayName)
+                    row("Buttons", kind.talksOn)
+                }
                 row("Status", controller.blePTT.status)
-                Button(controller.blePTT.isScanning ? "Scanning…" : "Scan for PTT buttons") {
+                Button(controller.blePTT.isScanning ? "Scanning…" : "Scan for speaker-mics and buttons") {
                     controller.blePTT.startScan()
                 }
                 .disabled(controller.blePTT.isScanning)
@@ -127,7 +129,7 @@ struct VoicePluginSettingsView: View {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(d.name).foregroundColor(.primary)
-                                Text(d.kind.displayName).font(.caption).foregroundColor(.secondary)
+                                Text("\(d.kind.deviceWord) · \(d.kind.displayName)").font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
                             Text("\(d.rssi) dBm").font(.caption).foregroundColor(.secondary)
@@ -135,12 +137,12 @@ struct VoicePluginSettingsView: View {
                     }
                 }
                 if controller.blePTT.savedPeripheralId != nil {
-                    Button("Forget button", role: .destructive) { controller.blePTT.forget() }
+                    Button("Forget this device", role: .destructive) { controller.blePTT.forget() }
                 }
             } header: {
-                Text("Bluetooth PTT button — PTT 1 only")
+                Text("Bluetooth speaker-mic or PTT button")
             } footer: {
-                Text("Bluetooth buttons talk on voice slot 1 (PTT 1) only. They never key PTT 2 — use the on-screen PTT 2 button for the second channel. The one exception is the AINA's secondary button, which keys PTT 2.\n\nSupported: AINA APTT V1 and V2, Pryme BT-PTT-Z, Inrico BT02 — connected automatically when the speaker-mic is in use. Pair a speaker-mic's audio in iOS Settings → Bluetooth; voice then uses it automatically. Don't pair a Pryme button in iOS Settings: X Voice connects to it directly.")
+                Text("One device at a time: a speaker-mic (AINA APTT V1/V2, Inrico BT02) or a standalone PTT button (Pryme BT-PTT-Z).\n\nSpeaker-mic: pair its audio in iOS Settings → Bluetooth. X Voice then uses it for audio and connects its buttons automatically. The AINA's main PTT keys PTT 1 and its secondary PTT keys PTT 2; the Inrico's PTT keys PTT 1.\n\nStandalone button: don't pair it in iOS Settings. Tap Scan and pick it once; it reconnects by itself after that. It keys PTT 1 only — use the on-screen PTT 2 button for the second channel.\n\nA speaker-mic in use for audio takes priority over a standalone button.")
             }
 
             Section {

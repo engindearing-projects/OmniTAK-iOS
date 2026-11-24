@@ -68,12 +68,15 @@ Rules:
 - With nothing heard or sent for a few seconds, X Voice hands the audio back to
   iOS. Your speaker-mic stops hissing and music and other apps play normally.
 
-### Bluetooth buttons talk on PTT 1 only
+### Which button talks on which channel
 
-Every Bluetooth button and speaker-mic PTT key talks on **PTT 1** (voice
-slot 1). They never key PTT 2: use the on-screen PTT 2 button for the second
-channel. The one exception is the **AINA's secondary PTT button**, which keys
-PTT 2. The Bluetooth button screen shows this under **Talks on**.
+| Device | PTT 1 | PTT 2 |
+|---|---|---|
+| AINA APTT (speaker-mic) | Main PTT | Secondary PTT |
+| Inrico BT02 (speaker-mic) | PTT | On-screen button only |
+| Pryme BT-PTT-Z (standalone button) | Its button | On-screen button only |
+
+The settings screen shows this for the connected device under **Buttons**.
 
 ## Settings reference
 
@@ -105,15 +108,19 @@ doesn't add a talk-permit tone (that's an Android feature).
 
 **Side**: put the PTT buttons on the right (default) or left edge of the map.
 
-### Bluetooth PTT button
+### Bluetooth speaker-mic or PTT button
+
+One device at a time: a speaker-mic, or a standalone PTT button. A speaker-mic
+in use for audio takes priority over a standalone button.
 
 | Item | Meaning |
 |---|---|
-| Button | The connected button or speaker-mic |
-| Talks on | *PTT 1 only*, or *PTT 1 (secondary button: PTT 2)* for an AINA |
+| Speaker-mic / PTT button | The connected device, labelled by what it is |
+| Type | The model, for example *AINA APTT (V1/V2)* |
+| Buttons | Which PTT each of its buttons keys |
 | Status | Scanning, connecting, connected… |
-| Scan for PTT buttons | Lists supported buttons nearby; tap one to connect |
-| Forget button | Disconnects the button and stops auto-connecting to it until you pick it from the scan list again |
+| Scan for speaker-mics and buttons | Lists supported devices nearby; tap one to connect |
+| Forget this device | Disconnects it and stops auto-connecting to it until you pick it from the scan list again |
 
 See [Hardware](hardware.md) for pairing each device.
 
