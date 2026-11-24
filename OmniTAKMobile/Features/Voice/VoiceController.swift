@@ -34,8 +34,10 @@ import Foundation
 import AVFoundation
 import Combine
 import UIKit
+import PushToTalk
 
-enum PTTSource: Hashable { case onScreen, bluetooth }
+/// `system`: the PushToTalk system UI Talk button or a hands-free accessory.
+enum PTTSource: Hashable { case onScreen, bluetooth, system }
 
 final class VoiceController: ObservableObject {
     enum ConnState: Equatable { case off, noServer, noCertificate, connecting, connected, reconnecting, failed }
@@ -70,6 +72,10 @@ final class VoiceController: ObservableObject {
     var isTransmitting: Bool { transmittingSlot != nil }
 
     let blePTT = BLEPTTManager()
+    /// Apple PushToTalk integration (system channel, audio session, Talk button).
+    let nativePTT = NativePTTManager()
+    /// True while the current burst asked the system to transmit.
+    private var requestedSystemTX = false
 
     private static func channelKey(_ slot: Int) -> String { "voice.lastChannel.vs\(slot)" }
     private static func channelIdKey(_ slot: Int) -> String { "voice.lastChannelId.vs\(slot)" }
@@ -139,6 +145,7 @@ final class VoiceController: ObservableObject {
             }
         }
         bleCancellable = blePTT.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        wireNativePTT()
         audio.onEngineRestart = { [weak self] reason in
             guard let self = self else { return }
             if self.txState != .idle {
@@ -158,6 +165,77 @@ final class VoiceController: ObservableObject {
     }
 
     deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
+
+    // MARK: - Apple PushToTalk bridge
+
+    private func wireNativePTT() {
+        // The channel manager must exist from launch (plugin activation).
+        nativePTT.setUp()
+        nativePTT.onAudioActivated = { [weak self] in self?.audio.systemDidActivate() }
+        nativePTT.onAudioDeactivated = { [weak self] in
+            guard let self = self else { return }
+            if self.txState != .idle {
+                print("[Voice] system deactivated audio mid-burst — ending it")
+                self.held = [1: [], 2: []]
+                self.stopBurst()
+            }
+            self.audio.systemDidDeactivate()
+        }
+        nativePTT.onTransmitBegan = { [weak self] source in
+            guard let self = self else { return }
+            // Our own requests come back as .developerRequest; the system Talk
+            // button and hands-free buttons start a burst on PTT 1.
+            if source != .developerRequest && self.txState == .idle && self.pressedSlot == nil {
+                self.pttDown(slot: 1, source: .system)
+            }
+        }
+        nativePTT.onTransmitEnded = { [weak self] source in
+            guard let self = self else { return }
+            self.requestedSystemTX = false
+            if self.held[1, default: []].contains(.system) || self.held[2, default: []].contains(.system) {
+                self.pttUp(slot: self.pressedSlot ?? 1, source: .system)
+            } else if source != .developerRequest, self.txState != .idle {
+                // The system ended our transmission (e.g. a phone call).
+                self.held = [1: [], 2: []]
+                self.stopBurst()
+            }
+        }
+        nativePTT.onTransmitFailed = { [weak self] error in
+            guard let self = self else { return }
+            self.requestedSystemTX = false
+            guard self.txState != .idle else { return }
+            print("[Voice] system refused to transmit: \(error.localizedDescription)")
+            self.notice = "Couldn't start transmitting: \(error.localizedDescription)"
+            self.held = [1: [], 2: []]
+            self.stopBurst()
+        }
+        nativePTT.onLeftChannel = { [weak self] reason in
+            // The operator left X Voice from the system UI: stop voice.
+            if reason == .userRequest { self?.stop() }
+        }
+        audio.onSessionNeeded = { [weak self] _ in
+            guard let self = self else { return }
+            self.nativePTT.setActiveRemoteParticipant(self.currentTalkerName())
+        }
+        audio.onSessionIdle = { [weak self] in
+            self?.nativePTT.setActiveRemoteParticipant(nil)
+        }
+    }
+
+    /// Name shown by the system while someone is talking.
+    private func currentTalkerName() -> String {
+        guard let first = activeSpeakers.first else { return "X Voice" }
+        // activeSpeakers entries are "<slot>: <name>"
+        return first.split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? first
+    }
+
+    /// System channel title: X Voice and the channel(s) the slots are in.
+    private func systemChannelName() -> String {
+        var parts = [slots[0].currentChannelName]
+        if isSlot2Enabled, slots[1].currentChannelId != nil { parts.append(slots[1].currentChannelName) }
+        let names = parts.filter { $0 != "—" }
+        return names.isEmpty ? "X Voice" : "X Voice · " + names.joined(separator: " / ")
+    }
 
     // MARK: - Status chirps (TAK-XVoice StatusTones)
     //  join (ascending) when a slot lands in a channel, leave (descending)
@@ -376,6 +454,8 @@ final class VoiceController: ObservableObject {
         if burstSlot != nil { endTX() }
         held = [1: [], 2: []]
         clients[2]?.stop(); clients[1]?.stop()   // slot 2 first, like Android
+        nativePTT.setActiveRemoteParticipant(nil)
+        nativePTT.leave()
         clients.removeAll()
         audio.stop()
         blePTT.stop()
@@ -602,15 +682,24 @@ final class VoiceController: ObservableObject {
         armTxTimeout()
         burstHFP = hfp
         burstCold = hfp && standby
+        // Apple PushToTalk: every burst is a system transmission; the system
+        // activates the audio session (didActivate → engine) when it begins.
+        if source != .system && !dryRun {
+            requestedSystemTX = true
+            nativePTT.beginTransmitting()
+        }
         if standby {
-            // ACQUIRING: wake the audio path (mic + Bluetooth link) first, up
-            // to 3 s (Android SCO_WARMUP), then PRIMING.
+            // ACQUIRING: wait for the system to activate audio (mic + Bluetooth
+            // link), up to 3 s (Android SCO_WARMUP), then PRIMING.
             txState = .acquiring
-            print("[Voice] \(Self.ts()) ACQUIRING audio (waking from standby)")
+            print("[Voice] \(Self.ts()) ACQUIRING audio (waiting for the system)")
             let timeout = DispatchWorkItem { [weak self] in
                 guard let self = self, self.txState == .acquiring else { return }
-                print("[Voice] audio wake-up took > 3 s — priming anyway")
-                self.startPriming()
+                print("[Voice] the system didn't activate audio within 3 s — giving up")
+                self.notice = "Couldn't start transmitting (audio not available)."
+                self.audio.cancelActivationWaiters()
+                self.held = [1: [], 2: []]
+                self.stopBurst()
             }
             acquireTimer = timeout
             DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timeout)
@@ -747,6 +836,10 @@ final class VoiceController: ObservableObject {
         }
         audio.setDucked(slot: 1, false)
         audio.setDucked(slot: 2, false)
+        if requestedSystemTX || nativePTT.isTransmitting {
+            requestedSystemTX = false
+            nativePTT.stopTransmitting()
+        }
         txState = .idle
         transmittingSlot = nil
         pressedSlot = nil
@@ -822,7 +915,12 @@ final class VoiceController: ObservableObject {
         let names = speakerLastHeard.values
             .sorted { ($0.slot, $0.session) < ($1.slot, $1.session) }
             .map { "\($0.slot): " + (clients[$0.slot]?.userName($0.session) ?? "Session \($0.session)") }
-        if names != activeSpeakers { activeSpeakers = names }
+        if names != activeSpeakers {
+            activeSpeakers = names
+            if !names.isEmpty, nativePTT.hasRemoteParticipant {
+                nativePTT.setActiveRemoteParticipant(currentTalkerName())
+            }
+        }
     }
 }
 
@@ -834,7 +932,11 @@ extension VoiceController: MumbleClientDelegate {
         case .idle: break
         case .connecting: setSlot(slot, .connecting, "Connecting…")
         case .connected:
-            if slot == 1 { slot1WasConnected = true }
+            if slot == 1 {
+                slot1WasConnected = true
+                nativePTT.join(name: systemChannelName())
+                nativePTT.setServiceStatus(.ready)
+            }
             setSlot(slot, .connected, "Connected")
             #if DEBUG
             if slot == 1 { runSelfTestIfRequested() }
@@ -847,6 +949,7 @@ extension VoiceController: MumbleClientDelegate {
             if slot == 1 && slot1WasConnected { playStatus(.voiceLost) }
             if slot == 1 { slot1WasConnected = false; lastChannelBySlot = [:] }
             setSlot(slot, .reconnecting, "Reconnecting in \(secs)s")
+            if slot == 1 { nativePTT.setServiceStatus(.connecting) }
             slots[slot - 1].settled = false
             if slot == 1 { parkSlot2(isSlot2Enabled ? "Waiting for PTT 1" : "Off") }
         case .failed(let why):
@@ -854,6 +957,7 @@ extension VoiceController: MumbleClientDelegate {
             if slot == 1 && slot1WasConnected { playStatus(.voiceLost) }
             if slot == 1 { slot1WasConnected = false; lastChannelBySlot = [:] }
             setSlot(slot, why.contains("certificate") ? .noCertificate : .failed, why)
+            if slot == 1 { nativePTT.setServiceStatus(.unavailable) }
             if slot == 1 { parkSlot2(isSlot2Enabled ? "Waiting for PTT 1" : "Off") }
         }
     }
@@ -879,6 +983,7 @@ extension VoiceController: MumbleClientDelegate {
             playStatus(.join)
         }
         refreshStatusLine(slot)
+        nativePTT.updateDescriptor(name: systemChannelName())
         if slot == 1 { maybeStartSlot2() }
         checkSameChannel()
         // If the slot that owns the mic just became listen-only, stop.

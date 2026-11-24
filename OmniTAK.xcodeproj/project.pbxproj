@@ -119,6 +119,7 @@
 		313ED296B36807D143EFF3F9 /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2053F4BA9520CBA9176AF8D8 /* DiagnosticsLog.swift */; };
 		3192FC7F36458549D30B2536 /* OpenDroneIdMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA945C069E5E828101C96C /* OpenDroneIdMessage.swift */; };
 		323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A42F35542E714D9F02B359A /* AppPluginHost.swift */; };
+		9D4EFAE35F91677D04367286 /* NativePTTManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */; };
 		B07D60593A0D37A15DC8A39E /* IconImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08D87E68781371B6D34EAE93 /* IconImage.swift */; };
 		F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */; };
 		4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8082169F4979938A0F7FA324 /* VoiceTones.swift */; };
@@ -639,6 +640,7 @@
 		397C16C7CEF45EB144B930F7 /* MeshTopologyView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshTopologyView.swift; path = OmniTAKMobile/Features/Meshtastic/Views/MeshTopologyView.swift; sourceTree = "<group>"; };
 		39F6E5D7A7C95BE91E8BE483 /* QuickActionToolbar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickActionToolbar.swift; path = OmniTAKMobile/Shared/UI/Components/QuickActionToolbar.swift; sourceTree = "<group>"; };
 		3A42F35542E714D9F02B359A /* AppPluginHost.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppPluginHost.swift; path = OmniTAKMobile/Core/Plugin/AppPluginHost.swift; sourceTree = "<group>"; };
+		9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NativePTTManager.swift; path = OmniTAKMobile/Features/Voice/NativePTT/NativePTTManager.swift; sourceTree = "<group>"; };
 		08D87E68781371B6D34EAE93 /* IconImage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconImage.swift; path = OmniTAKMobile/Shared/UI/Components/IconImage.swift; sourceTree = "<group>"; };
 		F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmergencyPressTracker.swift; path = OmniTAKMobile/Features/Voice/Bluetooth/EmergencyPressTracker.swift; sourceTree = "<group>"; };
 		8082169F4979938A0F7FA324 /* VoiceTones.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceTones.swift; path = OmniTAKMobile/Features/Voice/Audio/VoiceTones.swift; sourceTree = "<group>"; };
@@ -2264,6 +2266,7 @@
 				4F6A1EA71D839AA2F8A09BAE /* PluginHost.swift */,
 				1D95E31A4FB55F17B88EDA43 /* PluginRegistry.swift */,
 				3A42F35542E714D9F02B359A /* AppPluginHost.swift */,
+				9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */,
 				08D87E68781371B6D34EAE93 /* IconImage.swift */,
 				F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */,
 				8082169F4979938A0F7FA324 /* VoiceTones.swift */,
@@ -3429,6 +3432,7 @@
 				7E5C86C855523AF841D45383 /* PluginHost.swift in Sources */,
 				DFE366B176992E3CE85E10BF /* PluginRegistry.swift in Sources */,
 				323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */,
+				9D4EFAE35F91677D04367286 /* NativePTTManager.swift in Sources */,
 				B07D60593A0D37A15DC8A39E /* IconImage.swift in Sources */,
 				F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */,
 				4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */,
@@ -3521,7 +3525,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = OmniTAKMobileUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3544,7 +3548,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = OmniTAKMobileUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3569,7 +3573,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OmniTAKMobileTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3639,7 +3643,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -3699,7 +3703,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -3730,6 +3734,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/OmniTAKMobile/ThirdParty/Unishox2",
 				);
+				CODE_SIGN_ENTITLEMENTS = OmniTAKMobile/OmniTAKMobile.entitlements;
 				INFOPLIST_FILE = OmniTAKMobile/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = OmniTAK;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -3744,7 +3749,7 @@
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3783,6 +3788,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/OmniTAKMobile/ThirdParty/Unishox2",
 				);
+				CODE_SIGN_ENTITLEMENTS = OmniTAKMobile/OmniTAKMobile.entitlements;
 				INFOPLIST_FILE = OmniTAKMobile/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = OmniTAK;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -3797,7 +3803,7 @@
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3825,7 +3831,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OmniTAKMobileTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

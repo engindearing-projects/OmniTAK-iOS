@@ -201,6 +201,49 @@ final class VoiceAudioEngine {
 
     /// True when the engine is in standby (a PTT press is a "cold" start).
     var isStandby: Bool { queue.sync { profile == .standby } }
+
+    // MARK: System-managed session (Apple PushToTalk)
+    // The app never activates/deactivates the audio session: the PushToTalk
+    // system does, when a transmission starts or a remote participant is set.
+    // The engine builds on systemDidActivate() and tears down on
+    // systemDidDeactivate(). Received audio in standby asks for a session;
+    // the idle timer asks for it to be released.
+    enum SessionNeed { case receive }
+    /// Main thread: received audio arrived in standby — set a remote participant.
+    var onSessionNeeded: ((SessionNeed) -> Void)?
+    /// Main thread: idle (no TX 5 s, no RX 8 s) — clear the remote participant.
+    var onSessionIdle: (() -> Void)?
+    private var idleNotified = false
+    private var sessionRequested = false
+
+    /// The PushToTalk system activated the audio session: build the engine.
+    func systemDidActivate() {
+        queue.async {
+            guard self.running else { return }
+            self.sessionRequested = false
+            self.idleNotified = false
+            if self.profile == .active && self.engine.isRunning {
+                let w = self.activateWaiters; self.activateWaiters.removeAll()
+                w.forEach { DispatchQueue.main.async(execute: $0) }
+                self.flushPendingRX()
+                return
+            }
+            self.switchProfile(.active, reason: "system activated the audio session")
+        }
+    }
+
+    /// The PushToTalk system deactivated the audio session: tear down.
+    func systemDidDeactivate() {
+        queue.async {
+            guard self.running, self.profile == .active else { return }
+            self.switchProfile(.standby, reason: "system deactivated the audio session")
+        }
+    }
+
+    /// Drop waiters of a wake-up that won't happen (e.g. transmit refused).
+    func cancelActivationWaiters() {
+        queue.async { self.activateWaiters.removeAll() }
+    }
     /// True when the speaker-mic path is Bluetooth HFP.
     var usesBluetoothHFP: Bool { queue.sync { hfpOnLastActiveRoute } }
 
@@ -209,11 +252,12 @@ final class VoiceAudioEngine {
         queue.sync {
             guard !running else { return }
             do {
-                // Start ACTIVE once so the route (HFP or not) is learned, then the
-                // idle timer drops to standby.
-                profile = .active
+                // PushToTalk: set the category only; the system activates the
+                // session (and we build the engine) when audio is needed.
+                profile = .standby
                 try configureSession(.active)
-                try buildAndStart(.active)
+                let r = AVAudioSession.sharedInstance().currentRoute
+                hfpOnLastActiveRoute = (r.inputs + r.outputs).contains { $0.portType == .bluetoothHFP }
                 running = true
                 lastTxActivity = Date()
                 startSweep()
@@ -234,13 +278,14 @@ final class VoiceAudioEngine {
             pendingRX.removeAll(); pendingRXSamples = 0
             sweepTimer?.cancel(); sweepTimer = nil
             teardownGraph()
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            // The PushToTalk system owns session activation.
         }
     }
 
     func setBusy(_ b: Bool) {
         queue.async {
             self.busy = b
+            self.idleNotified = false
             self.lastTxActivity = Date()
         }
     }
@@ -256,8 +301,10 @@ final class VoiceAudioEngine {
                 if let c = completion { DispatchQueue.main.async(execute: c) }
                 return
             }
+            // The session is activated by the PushToTalk system (the caller
+            // has requested a transmission); run `completion` when it is.
             if let c = completion { self.activateWaiters.append(c) }
-            self.switchProfile(.active, reason: reason)
+            print("[VoiceAudio] waiting for the system to activate audio — \(reason)")
         }
     }
 
@@ -274,8 +321,7 @@ final class VoiceAudioEngine {
         tonePlayer = AVAudioPlayerNode()
         profile = p
         if p == .standby {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            print("[VoiceAudio] standby: engine stopped, audio session released")
+            print("[VoiceAudio] standby: engine stopped")
             return
         }
         do {
@@ -303,7 +349,7 @@ final class VoiceAudioEngine {
             try session.setCategory(.playback, mode: .default, options: [])
         }
         try? session.setPreferredSampleRate(Self.sampleRate)
-        try session.setActive(true)
+        // No setActive: the PushToTalk system activates the session.
     }
 
     /// Build the graph for the CURRENT route and start it. Must run on `queue`.
@@ -443,9 +489,8 @@ final class VoiceAudioEngine {
     /// when that was reported. A newer tone cancels an older one's completion.
     func playTone(_ samples: [Float], padded: Bool = false, completion: ((UInt64) -> Void)? = nil) {
         queue.async {
-            if self.running, self.profile == .standby, !samples.isEmpty {
-                self.switchProfile(.active, reason: "tone")
-            }
+            // Standby: no audio session (the system owns it) — cues are
+            // skipped; the system plays its own PTT sounds.
             guard self.running, self.engine.isRunning, !samples.isEmpty else {
                 let now = mach_absolute_time()
                 DispatchQueue.main.async { completion?(now) }; return
@@ -729,8 +774,17 @@ final class VoiceAudioEngine {
             while pendingRXSamples > Self.maxPendingRXSamples, !pendingRX.isEmpty {
                 pendingRXSamples -= Self.opusSamples(pendingRX.removeFirst().packet) ?? 960
             }
-            if pendingRX.count == 1 { switchProfile(.active, reason: "incoming audio") }
+            if !sessionRequested {
+                sessionRequested = true
+                print("[VoiceAudio] incoming audio in standby — asking the system for a session")
+                DispatchQueue.main.async { self.onSessionNeeded?(.receive) }
+            }
             return
+        }
+        if idleNotified {
+            // Talk resumed after we asked to release: name the talker again.
+            idleNotified = false
+            DispatchQueue.main.async { self.onSessionNeeded?(.receive) }
         }
         guard engine.isRunning else { return }
         guard let samples = Self.opusSamples(packet) else {
@@ -810,7 +864,11 @@ final class VoiceAudioEngine {
                now.timeIntervalSince(self.lastTxActivity) > Self.txHoldSeconds,
                now.timeIntervalSince(self.lastRxActivity) > Self.rxHoldSeconds,
                self.speakers.values.allSatisfy({ $0.queued == 0 }) {
-                self.switchProfile(.standby, reason: "idle (no TX \(Int(Self.txHoldSeconds)) s, no RX \(Int(Self.rxHoldSeconds)) s)")
+                if !self.idleNotified {
+                    self.idleNotified = true
+                    print("[VoiceAudio] idle (no TX \(Int(Self.txHoldSeconds)) s, no RX \(Int(Self.rxHoldSeconds)) s) — releasing the session")
+                    DispatchQueue.main.async { self.onSessionIdle?() }
+                }
                 return
             }
             for (k, s) in self.speakers where now.timeIntervalSince(s.lastHeard) > 10 && s.queued == 0 {

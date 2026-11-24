@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Apple PushToTalk framework (X Voice): system-managed PTT channel,
+	     audio session, lock-screen Talk button and background transmit/receive. -->
+	<key>com.apple.developer.push-to-talk</key>
+	<true/>
+	<!-- Required by the PushToTalk framework (it refuses to start without
+	     it). X Voice receives over its live Mumble connection, not APNs PTT
+	     pushes; automatic signing uses "production" for App Store builds. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

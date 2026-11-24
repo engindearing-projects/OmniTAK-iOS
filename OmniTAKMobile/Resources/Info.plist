@@ -80,11 +80,11 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 		<string>processing</string>
-		<!-- Keeps the push-to-talk voice audio session alive with the screen
-		     off / app backgrounded (Mumble PTT via the voice plugin). This is
-		     the plain `audio` background mode — NOT PushToTalk.framework, which
-		     would need a separate Apple-gated entitlement. -->
-		<string>audio</string>
+		<!-- X Voice uses Apple's PushToTalk framework: the system owns the PTT
+		     channel and activates the audio session for transmit/receive, so
+		     the plain `audio` background mode is not used. Requires the
+		     com.apple.developer.push-to-talk entitlement. -->
+		<string>push-to-talk</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, and detects nearby drones broadcasting FAA Remote ID.</string>
