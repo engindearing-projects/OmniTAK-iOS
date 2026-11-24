@@ -108,6 +108,20 @@ enum VoiceTones {
         return beep + [Float](repeating: 0, count: Int(sampleRate * 0.090)) + beep
     }
 
+    /// Emergency-sent cue for a speaker-mic key: alternating 1000 / 700 Hz,
+    /// 120 ms each with 60 ms gaps, twice (~1 s), at a MODERATE peak (0.3,
+    /// about -10 dBFS) — clearly an alert, but not the full-volume system
+    /// alert sound blasting into the speaker-mic.
+    static func emergencyCue() -> [Float] {
+        let n = Int(sampleRate * 0.120)
+        let gap = [Float](repeating: 0, count: Int(sampleRate * 0.060))
+        let a = Int(sampleRate * 0.004), r = Int(sampleRate * 0.010)
+        let hi = sine(1000, n: n, peak: 0.3, attack: a, release: r)
+        let lo = sine(700, n: n, peak: 0.3, attack: a, release: r)
+        let once = hi + gap + lo + gap
+        return once + once
+    }
+
     /// TX-timeout cutoff: 500 Hz for 1.2 s, 25 ms attack, 80 ms release, peak 0.80.
     static func timeoutCutoff() -> [Float] {
         sine(500, n: Int(sampleRate * 1.2), peak: 0.80,

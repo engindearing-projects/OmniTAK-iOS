@@ -335,6 +335,9 @@ final class VoiceController: ObservableObject {
         case .fire:
             print("[Voice] emergency \(detail) — FIRE")
             bridge?.setEmergency(active: true, reason: "speaker-mic emergency button")
+            // The beacon is started without its full-volume system sound;
+            // confirm with a moderate cue in the speaker-mic instead.
+            audio.playCue(VoiceTones.emergencyCue())
             notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
         case .cancel:
             print("[Voice] emergency \(detail) — CANCEL")

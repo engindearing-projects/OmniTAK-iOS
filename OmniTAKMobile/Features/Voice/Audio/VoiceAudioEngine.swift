@@ -501,6 +501,59 @@ final class VoiceAudioEngine {
     /// `completion(hostTime)` runs on main once the WHOLE buffer has actually
     /// been played (.dataPlayedBack, Android's AudioTrack marker); hostTime is
     /// when that was reported. A newer tone cancels an older one's completion.
+    /// A cue that must be heard even while idle (e.g. emergency sent). If PTT
+    /// audio is live it plays through the engine; in standby — no session
+    /// under PushToTalk — it briefly activates the app's own session for a
+    /// short in-memory clip and releases it afterwards. iOS only allows that
+    /// in the foreground; in the background the caller's vibration remains.
+    private var cuePlayer: AVAudioPlayer?
+
+    func playCue(_ samples: [Float]) {
+        queue.async {
+            if self.running, self.profile == .active, self.engine.isRunning {
+                DispatchQueue.main.async { self.playTone(samples) }
+                return
+            }
+            let wav = Self.wavData(samples)
+            DispatchQueue.main.async {
+                do {
+                    let session = AVAudioSession.sharedInstance()
+                    try session.setActive(true)
+                    let p = try AVAudioPlayer(data: wav)
+                    p.prepareToPlay()
+                    p.play()
+                    self.cuePlayer = p
+                    let secs = Double(samples.count) / Self.sampleRate + 0.25
+                    DispatchQueue.main.asyncAfter(deadline: .now() + secs) {
+                        self.cuePlayer = nil
+                        let standby = self.queue.sync { self.profile == .standby }
+                        if standby { try? session.setActive(false, options: .notifyOthersOnDeactivation) }
+                    }
+                    print("[VoiceAudio] cue played outside PTT (\(Int(secs * 1000)) ms)")
+                } catch {
+                    print("[VoiceAudio] cue not playable now (\(error.localizedDescription)) — vibration only")
+                }
+            }
+        }
+    }
+
+    /// 16-bit mono PCM WAV at 48 kHz from float samples.
+    static func wavData(_ samples: [Float]) -> Data {
+        var d = Data()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        let dataBytes = UInt32(samples.count * 2)
+        d.append(contentsOf: Array("RIFF".utf8)); u32(36 + dataBytes)
+        d.append(contentsOf: Array("WAVE".utf8)); d.append(contentsOf: Array("fmt ".utf8))
+        u32(16); u16(1); u16(1); u32(UInt32(sampleRate)); u32(UInt32(sampleRate) * 2); u16(2); u16(16)
+        d.append(contentsOf: Array("data".utf8)); u32(dataBytes)
+        for x in samples {
+            let v = Int16(max(-1, min(1, x)) * 32767)
+            withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) }
+        }
+        return d
+    }
+
     func playTone(_ samples: [Float], padded: Bool = false, completion: ((UInt64) -> Void)? = nil) {
         queue.async {
             // Standby: no audio session (the system owns it) — cues are
