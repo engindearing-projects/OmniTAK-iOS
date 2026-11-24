@@ -159,6 +159,34 @@ final class VoiceController: ObservableObject {
 
     deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
 
+    // MARK: - Status chirps (TAK-XVoice StatusTones)
+    //  join (ascending) when a slot lands in a channel, leave (descending)
+    //  when PTT 2 is turned off, voice-lost (double 850 Hz) when slot 1's
+    //  connection drops unexpectedly — which also cuts off a burst in
+    //  progress. 5 s cooldown per kind. Setting "voice.statusTones" (default on).
+
+    enum StatusTone: String { case join, leave, voiceLost }
+    static let statusTonesKey = "voice.statusTones"
+    private var lastStatusTone: [StatusTone: Date] = [:]
+    private var lastChannelBySlot: [Int: UInt32] = [:]
+    private var slot1WasConnected = false
+
+    private func playStatus(_ kind: StatusTone) {
+        let enabled = UserDefaults.standard.object(forKey: Self.statusTonesKey) as? Bool ?? true
+        guard enabled, !dryRun else { return }
+        let now = Date()
+        if let last = lastStatusTone[kind], now.timeIntervalSince(last) < 5 {
+            print("[Voice] status tone \(kind) suppressed (cooldown)"); return
+        }
+        lastStatusTone[kind] = now
+        print("[Voice] status tone: \(kind)")
+        switch kind {
+        case .join: audio.playTone(VoiceTones.joinChirp())
+        case .leave: audio.playTone(VoiceTones.leaveChirp())
+        case .voiceLost: audio.playTone(VoiceTones.voiceLost())
+        }
+    }
+
     // MARK: - Emergency button (ported from TAK-XVoice EmergencyController)
     //
     //  PRESS:                    arm, schedule CANCEL at 1 s.
@@ -378,8 +406,10 @@ final class VoiceController: ObservableObject {
     /// nil to turn slot 2 off.
     func setSecondChannel(_ channelId: UInt32?) {
         guard let id = channelId else {
+            if clients[2] != nil { playStatus(.leave) }
             parkSlot2("Off")
             clearChannel(2)
+            lastChannelBySlot[2] = nil
             notice = nil
             objectWillChange.send()
             print("[Voice VS2] off")
@@ -800,18 +830,25 @@ extension VoiceController: MumbleClientDelegate {
         case .idle: break
         case .connecting: setSlot(slot, .connecting, "Connecting…")
         case .connected:
+            if slot == 1 { slot1WasConnected = true }
             setSlot(slot, .connected, "Connected")
             #if DEBUG
             if slot == 1 { runSelfTestIfRequested() }
             #endif
             if slot == 1 { maybeStartSlot2() }
         case .reconnecting(let secs, _):
+            let wasTX = txState == .transmitting && burstSlot == slot
             if burstSlot == slot { endTX() }
+            if wasTX { audio.playTone(VoiceTones.timeoutCutoff()) }   // dropped mid-burst
+            if slot == 1 && slot1WasConnected { playStatus(.voiceLost) }
+            if slot == 1 { slot1WasConnected = false; lastChannelBySlot = [:] }
             setSlot(slot, .reconnecting, "Reconnecting in \(secs)s")
             slots[slot - 1].settled = false
             if slot == 1 { parkSlot2(isSlot2Enabled ? "Waiting for PTT 1" : "Off") }
         case .failed(let why):
             if burstSlot == slot { endTX() }
+            if slot == 1 && slot1WasConnected { playStatus(.voiceLost) }
+            if slot == 1 { slot1WasConnected = false; lastChannelBySlot = [:] }
             setSlot(slot, why.contains("certificate") ? .noCertificate : .failed, why)
             if slot == 1 { parkSlot2(isSlot2Enabled ? "Waiting for PTT 1" : "Off") }
         }
@@ -832,6 +869,10 @@ extension VoiceController: MumbleClientDelegate {
         // refused or missing target must not overwrite the operator's choice.
         if slot == 1, settled, onTarget, current != nil {
             saveChannel(1, id: current!, name: st.currentChannelName)
+        }
+        if settled, let cur = current, lastChannelBySlot[slot] != cur {
+            lastChannelBySlot[slot] = cur
+            playStatus(.join)
         }
         refreshStatusLine(slot)
         if slot == 1 { maybeStartSlot2() }

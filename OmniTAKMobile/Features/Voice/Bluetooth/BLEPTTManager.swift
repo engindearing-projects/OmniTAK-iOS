@@ -158,7 +158,9 @@ final class BLEPTTManager: NSObject, ObservableObject {
 
     static func classify(name: String?, services: [CBUUID]) -> Kind? {
         let n = (name ?? "").lowercased()
-        if n.hasPrefix("aptt") { return .ainaV2 }
+        // AINA: by name ("APTT…", V2 and — if it exposes the same BLE button
+        // service — V1), or by advertising the AINA GATT service.
+        if n.hasPrefix("aptt") || services.contains(UUIDs.ainaService) { return .ainaV2 }
         if n.hasPrefix("b02ptt") { return .bt02 }
         if n.contains("pryme") || n.contains("bt-ptt") || n.contains("ptt-z") || services.contains(UUIDs.prymeService) { return .pryme }
         return nil
@@ -275,7 +277,14 @@ extension BLEPTTManager: CBCentralManagerDelegate {
 
 extension BLEPTTManager: CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) {
-        for s in p.services ?? [] { p.discoverCharacteristics(nil, for: s) }
+        let found = p.services ?? []
+        print("[BLEPTT] \(p.name ?? "?") services: \(found.map { $0.uuid.uuidString }.joined(separator: ", "))")
+        if kind == .ainaV2, !found.contains(where: { $0.uuid == UUIDs.ainaService }) {
+            // e.g. an AINA V1 that only does Classic SPP — iOS can't read that.
+            print("[BLEPTT] AINA button service 127FACE1 NOT present on \(p.name ?? "?") — its PTT can't be read over BLE")
+            status = "This AINA doesn't expose the BLE button service (SPP-only V1?)"
+        }
+        for s in found { p.discoverCharacteristics(nil, for: s) }
     }
 
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {

@@ -52,6 +52,7 @@ struct VoicePluginSettingsView: View {
     @AppStorage("voice.panelSide") private var panelSide = "right"
     @AppStorage(TalkPermitTone.settingsKey) private var tptTone = TalkPermitTone.default.rawValue
     @AppStorage(VoiceController.txTimeoutKey) private var txTimeout = VoiceController.defaultTxTimeout
+    @AppStorage(VoiceController.statusTonesKey) private var statusTones = true
 
     var body: some View {
         Form {
@@ -89,6 +90,7 @@ struct VoicePluginSettingsView: View {
                 Picker("Talk permit tone", selection: $tptTone) {
                     ForEach(TalkPermitTone.allCases) { Text($0.displayName).tag($0.rawValue) }
                 }
+                Toggle("Status tones (join / leave / voice lost)", isOn: $statusTones)
                 Picker("Transmit time limit", selection: $txTimeout) {
                     Text("Off").tag(0)
                     Text("30 s").tag(30)

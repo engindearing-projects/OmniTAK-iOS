@@ -87,6 +87,19 @@ enum VoiceTones {
         return one + [Float](repeating: 0, count: Int(sampleRate * 0.05)) + one
     }
 
+    /// Status chirps (TAK-XVoice StatusTones): two 60 ms beeps at -9 dBFS.
+    /// Join = ascending 660 → 880 Hz ("you're in"), leave = descending.
+    static func joinChirp() -> [Float] { twoBeep(660, 880) }
+    static func leaveChirp() -> [Float] { twoBeep(880, 660) }
+    /// Voice lost / channel lost use the same double 850 Hz warning chirp.
+    static func voiceLost() -> [Float] { timeoutWarning() }
+
+    private static func twoBeep(_ a: Double, _ b: Double) -> [Float] {
+        let n = Int(sampleRate * 0.060)
+        let att = min(n / 8, Int(sampleRate * 0.002)), rel = min(n / 4, Int(sampleRate * 0.004))
+        return sine(a, n: n, peak: 0.355, attack: att, release: rel) + sine(b, n: n, peak: 0.355, attack: att, release: rel)
+    }
+
     /// TX-timeout warning, 5 s before cutoff: two 850 Hz beeps, 50 ms each,
     /// 90 ms apart (190 ms), peak 0.80.
     static func timeoutWarning() -> [Float] {

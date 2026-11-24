@@ -331,4 +331,16 @@ final class VoicePluginTests: XCTestCase {
         XCTAssertEqual(VoiceTones.durationMs(VoiceTones.timeoutCutoff()), 1200)
         XCTAssertLessThanOrEqual(VoiceTones.timeoutCutoff().map(abs).max() ?? 0, 0.81)
     }
+
+    func testStatusChirps() {
+        XCTAssertEqual(VoiceTones.durationMs(VoiceTones.joinChirp()), 120)
+        XCTAssertEqual(VoiceTones.durationMs(VoiceTones.leaveChirp()), 120)
+        XCTAssertLessThanOrEqual(VoiceTones.joinChirp().map(abs).max() ?? 0, 0.36)
+        XCTAssertEqual(VoiceTones.durationMs(VoiceTones.voiceLost()), 190)
+    }
+
+    func testAinaClassifiedByService() {
+        XCTAssertEqual(BLEPTTManager.classify(name: "Unnamed",
+                       services: [CBUUID(string: "127FACE1-CB21-11E5-93D0-0002A5D5C51B")]), .ainaV2)
+    }
 }

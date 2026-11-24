@@ -56,7 +56,20 @@ was fixed overnight; this run confirms it). No line should say `TONE LEAK`.
 | 2.5 | Emergency hold ≥ 1 s | Cancels the alert at the 1 s mark (low double tone) |
 | 2.6 | Turn the AINA off while holding PTT | TX stops (never stuck) |
 
-AINA V1 (Bluetooth Classic SPP) — see the note at the end.
+## 2b. AINA Voice Responder V1 (APTT1) — find out if it can work
+
+iOS has no API for the V1's Bluetooth Classic SPP channel (needs Apple MFi).
+There is indirect evidence the V1 ALSO exposes AINA's BLE button service
+(`127FACE1-CB21-11E5-93D0-0002A5D5C51B`, the one V2 uses). If it does, it
+already works through the V2 code path.
+
+1. Disconnect the V1 from any Android phone (AINA pairs with one device).
+2. Launch the app with the console log; X Voice → Bluetooth PTT button → Scan.
+3. If the V1 shows up (as "APTT…" or by the AINA service), connect it and read the log:
+   - `[BLEPTT] … services: …127FACE1…` → BLE is present; press PTT → `pttDown(slot: 1)`. **V1 works.**
+   - `AINA button service 127FACE1 NOT present` → SPP-only; iOS can't read its PTT.
+4. If it never shows up in the scan, it has no BLE → SPP-only.
+   (Optional cross-check: the free nRF Connect app → Scanner → look for the V1.)
 
 ## 3. Channels and dual PTT
 
@@ -74,9 +87,10 @@ AINA V1 (Bluetooth Classic SPP) — see the note at the end.
 | 4.3 | Connect/disconnect a Bluetooth headset mid-session | `rebuilding engine: audio route changed`; mic keeps working (`mic format now …`) |
 | 4.4 | Lock the phone, have someone talk | Audio plays (background). Note: in standby the app relies on its location/Bluetooth background modes to stay alive — **verify RX still arrives after several minutes locked** |
 | 4.5 | Toggle Wi-Fi off/on | Slot 1 reconnects first, slot 2 follows; channel choices kept |
+| 4.6a | Status tones: change channel; turn PTT 2 off; kill Wi-Fi | Ascending chirp on join, descending on PTT 2 off, double beep when voice drops (mid-burst: cutoff tone). Toggle: X Voice → Tones → Status tones |
 | 4.6 | Full duplex on the phone speaker | People talking while you transmit are heard, and they don't hear themselves echoed |
 
 ## Known gaps
 
-- Private calls / VX call signaling, status chirps (join/leave/voice lost) — not ported.
-- AINA V1 (SPP) — needs Apple MFi / ExternalAccessory; see the PR notes.
+- Private calls / VX call signaling — not ported.
+- AINA V1 over SPP — impossible on iOS without MFi; BLE path untested (section 2b).
