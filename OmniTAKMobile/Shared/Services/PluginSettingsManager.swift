@@ -127,6 +127,7 @@ class PluginSettingsManager: ObservableObject {
     /// features. ADS-B is intentionally absent → defaults ON.
     private static let registeredDisabledByDefault: Set<String> = [
         "soy.engindearing.diagnostics",   // internal SDK probe, never on for shipping users
+        "com.atakmap.android.xv.plugin",  // voice (PTT): opt-in, uses the microphone
     ]
 
     /// One-time migration: copy any legacy fixed-capability ADS-B enable flag
