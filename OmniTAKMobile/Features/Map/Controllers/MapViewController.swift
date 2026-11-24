@@ -203,7 +203,11 @@ struct ATAKMapView: View {
     @State private var showCallsignPanel = true  // ATAK-style: Enabled by default in bottom-right
     @State private var isNavigationPanelExpanded = false  // Route navigation panel state
 
-    init() {
+    /// Whether the Map tab is the selected one (see `mapTabAppeared`).
+    private let isSelectedTab: Bool
+
+    init(isSelectedTab: Bool = true) {
+        self.isSelectedTab = isSelectedTab
         let store = DrawingStore()
         _drawingStore = StateObject(wrappedValue: store)
         _drawingManager = StateObject(wrappedValue: DrawingToolsManager(drawingStore: store))
@@ -1896,7 +1900,10 @@ struct ATAKMapView: View {
                     LocationManager.shared.ask(at: .mapAppeared, status: status)
                 }
             }
-            .onDisappear { isMapScreenShowing = false }
+            // The tab, not `onDisappear`, says when the map is left: see `mapTabAppeared`.
+            .onChange(of: isSelectedTab) { selected in
+                if selected { mapTabAppeared() } else { isMapScreenShowing = false }
+            }
     }
 
     /// Observers for map actions posted from elsewhere in the app: the bar's Drop Pin, an overlay's
@@ -1966,35 +1973,45 @@ struct ATAKMapView: View {
             }
     }
 
+    /// What the map does when it comes on screen, once for each visit to the Map tab.
+    ///
+    /// `onAppear` alone cannot say when that is. On iOS 18, once another tab has been selected, the
+    /// handler views behind the map are sent `onAppear` and `onDisappear` again each time this view
+    /// updates, on the Map tab or off it. The work below publishes to objects this view observes, so
+    /// each pass caused the next: the main thread did nothing else and the app froze. So the selected
+    /// tab decides, and `isMapScreenShowing` is cleared only when the tab is left.
+    private func mapTabAppeared() {
+        guard isSelectedTab, !isMapScreenShowing else { return }
+        isMapScreenShowing = true
+        mapboxGate.update(reported: locationManager.hasReportedAuthorization,
+                          status: locationManager.authorizationStatus)
+        // At a first launch this screen is built under the onboarding cover, so the rules hold
+        // the question until onboarding is over; someone who skipped it is asked as it closes.
+        LocationManager.shared.ask(at: .mapAppeared)
+        setupTAKConnection()
+        startLocationUpdates()
+        configureRadialServices()
+        positionBroadcastService.configure(takService: takService, locationManager: locationManager)
+        positionBroadcastService.isEnabled = true
+        overlayCoordinator.loadSettings()
+        mapStateManager.loadPreferences()
+        mapStateManager.updateMapRegion(mapRegion)
+
+        // Hook up self-healing route callback
+        routeService.onRouteOverlayUpdate = { [weak routeOverlayCoordinator] route, currentLocation, waypointIndex in
+            DispatchQueue.main.async {
+                routeOverlayCoordinator?.updateSelfHealingRoute(
+                    route: route,
+                    currentLocation: currentLocation,
+                    currentWaypointIndex: waypointIndex
+                )
+            }
+        }
+    }
+
     private var lifecycleHandlers: some View {
         EmptyView()
-            .onAppear {
-                isMapScreenShowing = true
-                mapboxGate.update(reported: locationManager.hasReportedAuthorization,
-                                  status: locationManager.authorizationStatus)
-                // At a first launch this screen is built under the onboarding cover, so the rules hold
-                // the question until onboarding is over; someone who skipped it is asked as it closes.
-                LocationManager.shared.ask(at: .mapAppeared)
-                setupTAKConnection()
-                startLocationUpdates()
-                configureRadialServices()
-                positionBroadcastService.configure(takService: takService, locationManager: locationManager)
-                positionBroadcastService.isEnabled = true
-                overlayCoordinator.loadSettings()
-                mapStateManager.loadPreferences()
-                mapStateManager.updateMapRegion(mapRegion)
-
-                // Hook up self-healing route callback
-                routeService.onRouteOverlayUpdate = { [weak routeOverlayCoordinator] route, currentLocation, waypointIndex in
-                    DispatchQueue.main.async {
-                        routeOverlayCoordinator?.updateSelfHealingRoute(
-                            route: route,
-                            currentLocation: currentLocation,
-                            currentWaypointIndex: waypointIndex
-                        )
-                    }
-                }
-            }
+            .onAppear { mapTabAppeared() }
             .onChange(of: isCursorModeActive) { newValue in
                 DispatchQueue.main.async {
                     if newValue {
