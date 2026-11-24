@@ -152,7 +152,7 @@ struct VoicePluginSettingsView: View {
             } header: {
                 Text("Audio levels")
             } footer: {
-                Text("Applied on top of iOS voice processing (echo cancellation, noise suppression, automatic gain), with a soft limiter so loud speech isn't distorted. An Inrico BT02 gets an extra +5 dB on its mic automatically. While voice is active, the phone's volume buttons also set the speaker-mic / call volume.")
+                Text("Applied with a soft limiter so loud speech isn't distorted. On the iPhone's own mic and speaker, iOS voice processing (echo cancellation, noise suppression, automatic gain) is also on; a Bluetooth speaker-mic handles echo itself, so it's off there. An Inrico BT02 gets an extra +5 dB on its mic automatically. While voice is active, the phone's volume buttons also set the speaker-mic / call volume.")
             }
             .onChange(of: micBoost) { _ in controller.reloadAudioLevels() }
             .onChange(of: rxBoost) { _ in controller.reloadAudioLevels() }
