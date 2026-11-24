@@ -91,5 +91,4 @@ voiced 0% means silence was sent.
 
 ## Known gaps
 
-- Direct (private) calls: not ported.
 - AINA V1's Classic SPP channel isn't used (needs MFi); V1 works over BLE.
