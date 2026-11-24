@@ -152,6 +152,9 @@ final class VoiceAudioEngine {
     private var lastRxActivity = Date.distantPast
     /// Whether the most recent ACTIVE route used Bluetooth HFP (a speaker-mic).
     private var hfpOnLastActiveRoute = false
+    /// Set by the controller for the whole of a PTT press (ACQUIRING through
+    /// release): the engine never drops to standby while it is true.
+    private var busy = false
     static let txHoldSeconds: TimeInterval = 5
     static let rxHoldSeconds: TimeInterval = 8
     static let maxPendingRXSamples = 4 * 48_000
@@ -195,11 +198,20 @@ final class VoiceAudioEngine {
         }
     }
 
+    func setBusy(_ b: Bool) {
+        queue.async {
+            self.busy = b
+            self.lastTxActivity = Date()
+        }
+    }
+
     /// Bring the engine to ACTIVE (mic + HFP). `completion` runs on main once
-    /// it is (immediately if it already is).
+    /// it is (immediately if it already is). Counts as TX activity so the idle
+    /// timer can't drop back to standby between the wake and PRIMING.
     func activate(_ reason: String, completion: (() -> Void)? = nil) {
         queue.async {
             guard self.running else { return }
+            self.lastTxActivity = Date()
             if self.profile == .active && self.engine.isRunning {
                 if let c = completion { DispatchQueue.main.async(execute: c) }
                 return
@@ -233,6 +245,7 @@ final class VoiceAudioEngine {
             print("[VoiceAudio] \(p) start failed: \(error)")
         }
         if p == .active {
+            lastTxActivity = Date()
             let waiters = activateWaiters; activateWaiters.removeAll()
             waiters.forEach { w in DispatchQueue.main.async(execute: w) }
             flushPendingRX()
@@ -415,6 +428,7 @@ final class VoiceAudioEngine {
             all.withUnsafeBufferPointer { buf.floatChannelData![0].update(from: $0.baseAddress!, count: all.count) }
             self.toneToken += 1
             let token = self.toneToken
+            self.lastTxActivity = Date()   // a playing tone keeps the engine awake
             let player = self.tonePlayer
             if !player.isPlaying { player.play() }
             let started = mach_absolute_time()
@@ -740,7 +754,7 @@ final class VoiceAudioEngine {
         t.setEventHandler { [weak self] in
             guard let self = self else { return }
             let now = Date()
-            if self.profile == .active, self.micMode == .off, self.activateWaiters.isEmpty,
+            if self.profile == .active, !self.busy, self.micMode == .off, self.activateWaiters.isEmpty,
                now.timeIntervalSince(self.lastTxActivity) > Self.txHoldSeconds,
                now.timeIntervalSince(self.lastRxActivity) > Self.rxHoldSeconds,
                self.speakers.values.allSatisfy({ $0.queued == 0 }) {

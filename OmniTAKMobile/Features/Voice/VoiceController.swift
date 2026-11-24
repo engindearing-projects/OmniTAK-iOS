@@ -596,6 +596,7 @@ final class VoiceController: ObservableObject {
 
         pressedSlot = slot
         burstSlot = target
+        audio.setBusy(true)
         armTxTimeout()
         burstHFP = hfp
         burstCold = hfp && standby
@@ -749,6 +750,7 @@ final class VoiceController: ObservableObject {
         pressedSlot = nil
         burstSlot = nil
         lastStopAt = Date()
+        audio.setBusy(false)
     }
 
     /// Kept for existing callers: end whatever burst is in progress.
