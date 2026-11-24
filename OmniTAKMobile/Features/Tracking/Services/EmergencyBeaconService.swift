@@ -173,7 +173,12 @@ class EmergencyBeaconService: ObservableObject {
 
     // MARK: - Emergency Activation
 
-    func activateEmergency(type: EmergencyType, message: String? = nil) {
+    /// - Parameter playSound: false for a hardware trigger (e.g. a speaker-mic
+    ///   emergency key): the system alert sound plays at full volume through
+    ///   the active audio route — straight into the operator's speaker-mic —
+    ///   and a man-down / covert trigger shouldn't sound at all. The phone
+    ///   still vibrates.
+    func activateEmergency(type: EmergencyType, message: String? = nil, playSound: Bool = true) {
         let finalMessage = message ?? type.defaultMessage
 
         emergencyState = EmergencyState(
@@ -190,7 +195,8 @@ class EmergencyBeaconService: ObservableObject {
 
         // Provide haptic feedback
         provideHapticFeedback(.heavy)
-        playAlertSound()
+        if playSound { playAlertSound() }
+        else { AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate)) }
 
         // Send initial broadcast immediately
         sendEmergencyBroadcast()

@@ -158,7 +158,9 @@ extension AppPluginHost: VoiceHostBridge {
                     return
                 }
                 print("[VoiceHostBridge] emergency START — \(reason)")
-                svc.activateEmergency(type: .alert911)
+                // From a speaker-mic key: no alert sound (it would blast into
+                // the speaker-mic); the phone vibrates.
+                svc.activateEmergency(type: .alert911, playSound: false)
             } else {
                 print("[VoiceHostBridge] emergency CANCEL — \(reason)")
                 svc.cancelEmergency()
