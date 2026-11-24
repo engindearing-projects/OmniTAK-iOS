@@ -109,15 +109,15 @@ enum VoiceTones {
     }
 
     /// Emergency-sent cue for a speaker-mic key: alternating 1000 / 700 Hz,
-    /// 120 ms each with 60 ms gaps, twice (~1 s), at a MODERATE peak (0.3,
-    /// about -10 dBFS) — clearly an alert, but not the full-volume system
-    /// alert sound blasting into the speaker-mic.
+    /// 120 ms each with 60 ms gaps, twice (~1 s), at a LOW peak (0.12, about
+    /// -18 dBFS). It plays at the speaker-mic's call volume, which on an
+    /// Inrico BT02 is very loud — 0.3 was still painful on device.
     static func emergencyCue() -> [Float] {
         let n = Int(sampleRate * 0.120)
         let gap = [Float](repeating: 0, count: Int(sampleRate * 0.060))
         let a = Int(sampleRate * 0.004), r = Int(sampleRate * 0.010)
-        let hi = sine(1000, n: n, peak: 0.3, attack: a, release: r)
-        let lo = sine(700, n: n, peak: 0.3, attack: a, release: r)
+        let hi = sine(1000, n: n, peak: 0.12, attack: a, release: r)
+        let lo = sine(700, n: n, peak: 0.12, attack: a, release: r)
         let once = hi + gap + lo + gap
         return once + once
     }

@@ -520,6 +520,7 @@ final class VoiceAudioEngine {
                     let session = AVAudioSession.sharedInstance()
                     try session.setActive(true)
                     let p = try AVAudioPlayer(data: wav)
+                    p.volume = 0.5      // on top of the low-level cue: call volume is loud
                     p.prepareToPlay()
                     p.play()
                     self.cuePlayer = p
