@@ -133,6 +133,8 @@
 /* --- Bottom bar + tools shortcuts (labels). Keyed by BarItem.id ("bar.<id>").
        Military/technical acronyms (CASEVAC, 9-Line, SPOTREP, ADS-B, Self SA,
        Mesh) stay English per the translation conventions. --- */
+"toolbar.moveLeft" = "Przesuń w lewo";
+"toolbar.moveRight" = "Przesuń w prawo";
 "bar.tab.map" = "Mapa";
 "bar.tab.chat" = "Czat";
 "bar.tab.servers" = "Serwery";

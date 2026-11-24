@@ -27,8 +27,13 @@ struct CustomToolbar: View {
     /// answer you can read without opening the tab. Absent id = no dot.
     var statusDots: [String: Color] = [:]
 
-    @State private var barWidth: CGFloat = 1
+    @State private var barWidth: CGFloat = 0
     @State private var draggingID: String?
+    /// True while a reorder drag is in progress. Unlike @State it resets by
+    /// itself when the gesture ends OR is cancelled (Control Center, a call, a
+    /// sheet, the dragged item disappearing) — onEnded doesn't run on cancel,
+    /// so the drag state is cleared from here.
+    @GestureState private var reorderActive = false
     @State private var dragStartIndex: Int = 0
     @State private var dragTranslation: CGFloat = 0
     @State private var wigglePhase = false
@@ -55,9 +60,12 @@ struct CustomToolbar: View {
         store.items.count + (store.isEditing && !store.isFull ? 1 : 0)
     }
     private var cellWidth: CGFloat {
-        // In landscape the pill hugs its content, so reorder math keys off the
-        // fixed compact cell width rather than the (now content-sized) bar.
-        isLandscape ? compactCellWidth : max(1, barWidth / CGFloat(max(totalCells, 1)))
+        // The measured bar divided by its cells. In portrait every cell is the
+        // same width. In landscape the pill hugs its content, so cells are
+        // narrower than `compactCellWidth` (their cap) and vary a little per
+        // label; the measured average tracks the finger far better than the
+        // cap. `compactCellWidth` only stands in before the first measurement.
+        barWidth < 1 ? compactCellWidth : barWidth / CGFloat(max(totalCells, 1))
     }
 
     var body: some View {
@@ -219,6 +227,14 @@ struct CustomToolbar: View {
                 wigglePhase = editing
                 if !editing { draggingID = nil; dragTranslation = 0 }
             }
+            .onChange(of: reorderActive) { active in
+                // Ended or cancelled: never leave a stale drag behind.
+                guard !active, draggingID != nil else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    draggingID = nil
+                    dragTranslation = 0
+                }
+            }
     }
 
     // MARK: - Item cell
@@ -263,12 +279,19 @@ struct CustomToolbar: View {
             }
             .buttonStyle(.plain)
             .allowsHitTesting(!store.isEditing)
-
+        }
+        .frame(maxWidth: isLandscape ? compactCellWidth : .infinity)
+        // The button is hit-test disabled while editing, so without this the
+        // reorder drag could only start on the remove badge (and never with 2
+        // items, which have no badge).
+        .contentShape(Rectangle())
+        // The badge sits 4 pt above the cell, so it's an overlay AFTER the
+        // content shape: its whole circle stays tappable.
+        .overlay(alignment: .topLeading) {
             if store.isEditing && store.canRemove {
                 removeBadge(item)
             }
         }
-        .frame(maxWidth: isLandscape ? compactCellWidth : .infinity)
         .rotationEffect(.degrees(store.isEditing && !isDragging ? (wigglePhase ? 1.6 : -1.6) : 0))
         .scaleEffect(isDragging ? 1.12 : 1)
         .offset(x: offsetX)
@@ -280,6 +303,23 @@ struct CustomToolbar: View {
             value: wigglePhase
         )
         .gesture(store.isEditing ? reorderGesture(item: item, displayIndex: displayIndex) : nil)
+        .modifier(ReorderAccessibility(
+            enabled: store.isEditing,
+            moveLeftLabel: loc.t("toolbar.moveLeft"),
+            moveRightLabel: loc.t("toolbar.moveRight"),
+            move: { moveVisible(item, by: $0) }))
+    }
+
+    /// Move an item one VISIBLE position left (-1) or right (+1), mapping to
+    /// the saved list (which can also hold hidden shortcuts).
+    private func moveVisible(_ item: BarItem, by step: Int) {
+        let visible = store.items.map(\.id)
+        guard let cur = visible.firstIndex(of: item.id) else { return }
+        let target = cur + step
+        guard visible.indices.contains(target),
+              let from = store.itemIDs.firstIndex(of: item.id),
+              let to = store.itemIDs.firstIndex(of: visible[target]) else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { store.move(from: from, to: to) }
     }
 
     private func removeBadge(_ item: BarItem) -> some View {
@@ -327,20 +367,32 @@ struct CustomToolbar: View {
     // MARK: - Reorder gesture
 
     private func reorderGesture(item: BarItem, displayIndex: Int) -> some Gesture {
-        DragGesture(minimumDistance: 6)
+        // Global coordinates: the dragged item itself moves one cell each
+        // time it is reordered, so a translation measured in its own (local)
+        // space compounded and flung it to the end of the bar.
+        DragGesture(minimumDistance: 6, coordinateSpace: .global)
+            .updating($reorderActive) { _, active, _ in active = true }
             .onChanged { value in
                 guard store.isEditing else { return }
                 if draggingID == nil {
                     draggingID = item.id
                     dragStartIndex = displayIndex
                 }
+                // A second finger on another icon doesn't hijack the drag.
+                guard draggingID == item.id else { return }
                 dragTranslation = value.translation.width
-                let cur = store.itemIDs.firstIndex(of: item.id) ?? displayIndex
-                let target = max(0, min(store.items.count - 1,
+                // Work in VISIBLE positions, then map to the saved list:
+                // itemIDs can also hold hidden (plugin-disabled) shortcuts, so
+                // its indices differ from what's on screen.
+                let visible = store.items.map(\.id)
+                guard let cur = visible.firstIndex(of: item.id) else { return }
+                let target = max(0, min(visible.count - 1,
                                         dragStartIndex + Int((value.translation.width / cellWidth).rounded())))
-                if target != cur {
+                if target != cur,
+                   let from = store.itemIDs.firstIndex(of: item.id),
+                   let to = store.itemIDs.firstIndex(of: visible[target]) {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        store.move(from: cur, to: target)
+                        store.move(from: from, to: to)
                     }
                 }
             }
@@ -358,7 +410,29 @@ struct CustomToolbar: View {
     }
 }
 
+/// VoiceOver can't drag, so in edit mode each item offers the same reorder as
+/// "Move left" / "Move right" actions. (accessibilityAction(named:) rather
+/// than accessibilityActions {}, which needs iOS 16.)
+private struct ReorderAccessibility: ViewModifier {
+    let enabled: Bool
+    let moveLeftLabel: String
+    let moveRightLabel: String
+    let move: (Int) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .accessibilityAction(named: Text(moveLeftLabel)) { move(-1) }
+                .accessibilityAction(named: Text(moveRightLabel)) { move(1) }
+        } else {
+            content
+        }
+    }
+}
+
 private struct BarWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 1
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+    static var defaultValue: CGFloat = 0
+    // max, not last-wins: sibling views that don't measure report the default and
+    // would otherwise overwrite the real width, leaving every cell 1pt wide.
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
