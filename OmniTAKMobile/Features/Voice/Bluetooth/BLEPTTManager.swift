@@ -69,6 +69,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// When set, the first discovered button with this exact name is
     /// connected automatically (the BLE side of a paired speaker-mic).
     private var autoConnectName: String?
+    private var autoConnectAny = false
     private var scanToken = 0
     private var seenThisScan = Set<UUID>()
 
@@ -129,6 +130,18 @@ final class BLEPTTManager: NSObject, ObservableObject {
         autoConnectName = name
         // Bluetooth may still be powering up right after launch: the scan then
         // starts from centralManagerDidUpdateState(.poweredOn).
+        if !isScanning, central?.state == .poweredOn { startScan() }
+    }
+
+    /// No speaker-mic name to match (e.g. the audio session is inactive):
+    /// scan and connect the first supported PTT device nearby with a strong
+    /// signal (≥ -75 dBm), preferring the one saved before.
+    func autoConnectAnySupported() {
+        // A pending reconnect to a saved button that isn't around (e.g. the
+        // Inrico while the AINA is in use) must not block this.
+        guard connectedName == nil else { return }
+        print("[BLEPTT] looking for any supported PTT speaker-mic nearby")
+        autoConnectAny = true
         if !isScanning, central?.state == .poweredOn { startScan() }
     }
 
@@ -246,7 +259,7 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         case .poweredOn:
             status = savedPeripheralId == nil ? "No button paired" : "Reconnecting…"
             reconnectSaved()
-            if autoConnectName != nil, connectedName == nil, !isScanning { startScan() }
+            if (autoConnectName != nil || autoConnectAny), connectedName == nil, !isScanning { startScan() }
         case .unauthorized: status = "Bluetooth permission denied"
         case .poweredOff: status = "Bluetooth is off"
         case .unsupported: status = "Bluetooth LE unsupported"
@@ -269,6 +282,12 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         let d = Discovered(id: p.identifier, name: name ?? k.rawValue, kind: k, rssi: rssi.intValue)
         if let i = discovered.firstIndex(where: { $0.id == d.id }) { discovered[i].rssi = d.rssi }
         else { discovered.append(d) }
+        if autoConnectAny, autoConnectName == nil, connectedName == nil,
+           rssi.intValue >= -75 || d.id == savedPeripheralId {
+            print("[BLEPTT] auto-connecting nearby \(d.name) (\(d.kind.displayName), \(rssi) dBm)")
+            autoConnectAny = false
+            connect(d)
+        }
         if let want = autoConnectName, d.name == want, connectedName == nil {
             print("[BLEPTT] auto-connecting \(d.name) (\(d.kind.displayName))")
             autoConnectName = nil

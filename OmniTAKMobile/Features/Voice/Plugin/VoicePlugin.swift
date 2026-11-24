@@ -50,9 +50,8 @@ final class VoicePlugin: OmniTAKPlugin {
 struct VoicePluginSettingsView: View {
     @ObservedObject var controller: VoiceController
     @AppStorage("voice.panelSide") private var panelSide = "right"
-    @AppStorage(TalkPermitTone.settingsKey) private var tptTone = TalkPermitTone.default.rawValue
     @AppStorage(VoiceController.txTimeoutKey) private var txTimeout = VoiceController.defaultTxTimeout
-    @AppStorage(VoiceController.statusTonesKey) private var statusTones = true
+    @AppStorage(VoiceController.statusTonesKey) private var statusTones = false
     @AppStorage(VoiceAudioEngine.micBoostKey) private var micBoost = VoiceAudioEngine.defaultMicBoostDb
     @AppStorage(VoiceAudioEngine.rxBoostKey) private var rxBoost = VoiceAudioEngine.defaultRxBoostDb
 
@@ -89,9 +88,6 @@ struct VoicePluginSettingsView: View {
             }
 
             Section {
-                Picker("Talk permit tone", selection: $tptTone) {
-                    ForEach(TalkPermitTone.allCases) { Text($0.displayName).tag($0.rawValue) }
-                }
                 Toggle("Status tones (join / leave / voice lost)", isOn: $statusTones)
                 Picker("Transmit time limit", selection: $txTimeout) {
                     Text("Off").tag(0)
@@ -103,7 +99,7 @@ struct VoicePluginSettingsView: View {
             } header: {
                 Text("Tones")
             } footer: {
-                Text("Plays once you're cleared to talk; start speaking after it. The tone is never sent over the air. A double low tone means PTT was refused (voice not connected, or listen-only channel); a single low \"bonk\" means the microphone didn't respond.")
+                Text("iOS plays its own push-to-talk start and end sounds and vibration; start talking after the start cue. Status tones are optional extra cues for channel join/leave and voice loss — iOS's push-to-talk UI already shows these. The transmit time limit warns 5 s before cutting off a held PTT.")
             }
 
             Section("On-screen controls") {

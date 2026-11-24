@@ -162,6 +162,12 @@ final class VoiceController: ObservableObject {
             forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.releaseOnScreenPTT()
         })
+        // A speaker-mic switched on while the app was in the background.
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.started else { return }
+            self.autoConnectSpeakerMicButton()
+        })
     }
 
     deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
@@ -263,7 +269,9 @@ final class VoiceController: ObservableObject {
     private var slot1WasConnected = false
 
     private func playStatus(_ kind: StatusTone) {
-        let enabled = UserDefaults.standard.object(forKey: Self.statusTonesKey) as? Bool ?? true
+        // Off by default under PushToTalk: the system UI shows joined /
+        // connecting / unavailable (service status).
+        let enabled = UserDefaults.standard.object(forKey: Self.statusTonesKey) as? Bool ?? false
         guard enabled, !dryRun else { return }
         let now = Date()
         if let last = lastStatusTone[kind], now.timeIntervalSince(last) < 5 {
@@ -328,9 +336,22 @@ final class VoiceController: ObservableObject {
     /// If audio is on a supported Bluetooth speaker-mic (Inrico BT02, AINA),
     /// connect its BLE PTT button automatically.
     func autoConnectSpeakerMicButton() {
-        let r = AVAudioSession.sharedInstance().currentRoute
-        guard let port = (r.inputs + r.outputs).first(where: { $0.portType == .bluetoothHFP }) else { return }
-        blePTT.autoConnect(matching: port.portName)
+        // With PushToTalk the session is usually INACTIVE, and then the current
+        // route lists no Bluetooth device. availableInputs still lists paired,
+        // connected HFP devices (the category is playAndRecord), so check both.
+        let session = AVAudioSession.sharedInstance()
+        let r = session.currentRoute
+        let ports = (r.inputs + r.outputs + (session.availableInputs ?? []))
+            .filter { $0.portType == .bluetoothHFP }
+        let names = ports.map { $0.portName }
+        if let name = names.first(where: { BLEPTTManager.classify(name: $0, services: []) != nil }) {
+            print("[Voice] speaker-mic in use: '\(name)' (Bluetooth HFP)")
+            blePTT.autoConnect(matching: name)
+        } else {
+            if !names.isEmpty { print("[Voice] Bluetooth HFP devices (not supported speaker-mics): \(names)") }
+            // No speaker-mic visible to the audio system: find one over BLE.
+            blePTT.autoConnectAnySupported()
+        }
     }
 
     func reloadAudioLevels() { audio.reloadGains() }
@@ -774,7 +795,11 @@ final class VoiceController: ObservableObject {
     private func micAlive() {
         primingTimer?.cancel(); primingTimer = nil
         audio.setMicLevelHandler(nil)
-        if burstCold {
+        // PushToTalk: the system only reports the session active once it has
+        // brought the route (incl. Bluetooth HFP) up, and PRIMING has just
+        // proven the mic delivers audio — Android's extra 700 ms cold hold
+        // only adds delay here.
+        if burstCold && !Self.systemProvidesCues {
             txState = .coldHold                       // mic still discarding
             let hold = DispatchWorkItem { [weak self] in
                 guard let self = self, self.txState == .coldHold else { return }
@@ -791,8 +816,18 @@ final class VoiceController: ObservableObject {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f.string(from: Date())
     }
 
+    /// Apple PushToTalk gives its own start/stop sound and haptic, so the app
+    /// plays no talk-permit / interrupt tone (those stay on Android, which has
+    /// no native PTT). PRIMING still gates the mic before anything is sent.
+    static let systemProvidesCues = true
+
     private func startTpt() {
         txState = .tpt                                 // mic still discarding
+        if Self.systemProvidesCues {
+            print("[Voice] \(Self.ts()) mic ready — transmitting (iOS provides the start cue)")
+            startTransmitting(notBeforeHost: mach_absolute_time())
+            return
+        }
         print("[Voice] \(Self.ts()) TPT start")
         let peerTalking = !activeSpeakers.isEmpty
         guard let tone = peerTalking ? VoiceTones.interruptChirp() : VoiceTones.permit() else {
