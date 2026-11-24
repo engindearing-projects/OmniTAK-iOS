@@ -125,6 +125,22 @@ class EmergencyBeaconService: ObservableObject {
 
     // Services
     private var takService: TAKService?
+
+    /// Nothing in the app ever called `configure(takService:locationManager:)`,
+    /// so every emergency broadcast failed with "TAKService not configured"
+    /// (both the Emergency tool and a speaker-mic emergency button). Fall back
+    /// to the app-wide TAK service and the app's own location.
+    private var effectiveTAKService: TAKService { takService ?? TAKService.shared }
+
+    private var currentCoordinate: (lat: Double, lon: Double, alt: Double) {
+        if let c = locationManager?.location {
+            return (c.latitude, c.longitude, locationManager?.altitude ?? 0)
+        }
+        if let l = LocationManager.shared.location {
+            return (l.coordinate.latitude, l.coordinate.longitude, l.altitude)
+        }
+        return (0, 0, 0)
+    }
     private var locationManager: BeaconLocationManager?
     private var broadcastTimer: Timer?
 
@@ -224,17 +240,13 @@ class EmergencyBeaconService: ObservableObject {
 
     private func sendEmergencyBroadcast() {
         guard emergencyState.isActive else { return }
-        guard let takService = takService else {
-            lastBroadcastStatus = "Error: TAKService not configured"
-            print("Cannot broadcast emergency: TAKService not configured")
-            return
-        }
+        let takService = effectiveTAKService
 
         // Get current location
-        let location = locationManager?.location
-        let latitude = location?.latitude ?? 0.0
-        let longitude = location?.longitude ?? 0.0
-        let altitude = locationManager?.altitude ?? 0.0
+        let pos = currentCoordinate
+        let latitude = pos.lat
+        let longitude = pos.lon
+        let altitude = pos.alt
 
         // Generate CoT XML
         let xml = generateEmergencyCoT(
@@ -263,12 +275,12 @@ class EmergencyBeaconService: ObservableObject {
     }
 
     private func sendCancellationBroadcast() {
-        guard let takService = takService else { return }
+        let takService = effectiveTAKService
 
-        let location = locationManager?.location
-        let latitude = location?.latitude ?? 0.0
-        let longitude = location?.longitude ?? 0.0
-        let altitude = locationManager?.altitude ?? 0.0
+        let pos = currentCoordinate
+        let latitude = pos.lat
+        let longitude = pos.lon
+        let altitude = pos.alt
 
         let xml = generateEmergencyCoT(
             type: .cancel,
