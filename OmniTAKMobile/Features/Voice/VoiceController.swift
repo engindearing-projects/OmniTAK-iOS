@@ -301,34 +301,14 @@ final class VoiceController: ObservableObject {
     private var emergency = EmergencyPressTracker()
     private var emergencyCancelTimer: DispatchWorkItem?
 
-    // MARK: Inrico top button = cancel the emergency alert (double press)
+    // MARK: Speaker-mic function buttons
     //
-    // The BT02 emergency key only ever sends one pulse (a hold or double press
-    // looks the same), so it can't cancel like the AINA's hold. Its top button
-    // (0x03) is free: pressed twice within 2 s while an alert is active, it
-    // cancels the alert. With no alert active it does nothing, and needing two
-    // presses means a bump can't cancel a real emergency.
-    private var lastTopButtonAt: Date?
-
+    // Inrico BT02: top button 0x03, side buttons 0x02 / 0x04 (single pulses).
+    // Deliberately unmapped for now — reserved for future settings toggles.
+    // (They do NOT cancel an emergency alert: cancel from OmniTAK's Emergency
+    // screen.)
     func onFunctionButton(code: UInt8) {
-        guard code == 0x03 else {
-            print("[Voice] speaker-mic button 0x\(String(format: "%02x", code)) (unmapped)")
-            return
-        }
-        guard bridge?.isEmergencyActive() == true else {
-            print("[Voice] top button — no emergency active, ignored")
-            lastTopButtonAt = nil
-            return
-        }
-        let now = Date()
-        if let last = lastTopButtonAt, now.timeIntervalSince(last) <= 2 {
-            lastTopButtonAt = nil
-            performEmergency(.cancel, detail: "top button pressed twice")
-        } else {
-            lastTopButtonAt = now
-            print("[Voice] top button — press again within 2 s to cancel the emergency alert")
-            notice = "Press the top button again within 2 s to cancel the emergency alert."
-        }
+        print("[Voice] speaker-mic button 0x\(String(format: "%02x", code)) (unmapped)")
     }
 
     func onEmergencyButton(down: Bool) {
