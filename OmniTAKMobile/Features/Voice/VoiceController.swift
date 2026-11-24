@@ -169,41 +169,40 @@ final class VoiceController: ObservableObject {
     //  operator affirmatively cancels. The Inrico BT02 key is a one-shot pulse
     //  (down+up), so on that device it always fires.
 
-    static let emergencyLongPress: TimeInterval = 1.0
-    private var emergencyPressedAt: Date?
-    private var emergencyLongHoldFired = false
+    static let emergencyLongPress: TimeInterval = EmergencyPressTracker.longPress
+    private var emergency = EmergencyPressTracker()
     private var emergencyCancelTimer: DispatchWorkItem?
 
     func onEmergencyButton(down: Bool) {
         if down {
-            emergencyPressedAt = Date()
-            emergencyLongHoldFired = false
+            emergency.press(at: Date())
             emergencyCancelTimer?.cancel()
             let t = DispatchWorkItem { [weak self] in
-                guard let self = self, self.emergencyPressedAt != nil, !self.emergencyLongHoldFired else { return }
-                self.emergencyLongHoldFired = true
-                print("[Voice] emergency button held 1 s — cancel")
-                self.bridge?.setEmergency(active: false, reason: "speaker-mic emergency long-hold")
-                self.audio.playTone(VoiceTones.deny())
+                guard let self = self, self.emergency.thresholdReached() == .cancel else { return }
+                self.performEmergency(.cancel, detail: "held 1 s")
             }
             emergencyCancelTimer = t
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.emergencyLongPress, execute: t)
             print("[Voice] emergency button pressed (armed)")
         } else {
             emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
-            guard let at = emergencyPressedAt else { return }
-            emergencyPressedAt = nil
-            if emergencyLongHoldFired { return }   // already cancelled at the threshold
-            let held = Date().timeIntervalSince(at)
-            if held >= Self.emergencyLongPress {
-                print("[Voice] emergency released at \(Int(held * 1000)) ms — cancel")
-                bridge?.setEmergency(active: false, reason: "speaker-mic emergency long-hold (release)")
-                audio.playTone(VoiceTones.deny())
-            } else {
-                print("[Voice] emergency released at \(Int(held * 1000)) ms — FIRE")
-                bridge?.setEmergency(active: true, reason: "speaker-mic emergency button")
-                notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
-            }
+            performEmergency(emergency.release(at: Date()), detail: "released")
+        }
+    }
+
+    private func performEmergency(_ action: EmergencyPressTracker.Action, detail: String) {
+        switch action {
+        case .none:
+            return
+        case .fire:
+            print("[Voice] emergency \(detail) — FIRE")
+            bridge?.setEmergency(active: true, reason: "speaker-mic emergency button")
+            notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
+        case .cancel:
+            print("[Voice] emergency \(detail) — CANCEL")
+            bridge?.setEmergency(active: false, reason: "speaker-mic emergency long-hold")
+            audio.playTone(VoiceTones.deny())
+            notice = "Emergency alert cancelled."
         }
     }
 
@@ -484,6 +483,45 @@ final class VoiceController: ObservableObject {
     private var burstHFP = false
     private var primingTimer: DispatchWorkItem?
     private var acquireTimer: DispatchWorkItem?
+    private var txWarnTimer: DispatchWorkItem?
+    private var txCutoffTimer: DispatchWorkItem?
+
+    // MARK: TX timeout (TAK-XVoice PttDispatcher): a held PTT is cut off after
+    // `voice.pttTimeoutSec` (default 30 s, 0 = never). A warning chirp plays
+    // 5 s before; at the limit a 1.2 s cutoff tone plays and TX stops. The
+    // operator must release and press again — a stuck button can't keep a
+    // channel open.
+
+    static let txTimeoutKey = "voice.pttTimeoutSec"
+    static let defaultTxTimeout = 30
+    static var txTimeoutSeconds: Int {
+        UserDefaults.standard.object(forKey: txTimeoutKey) == nil
+            ? defaultTxTimeout : UserDefaults.standard.integer(forKey: txTimeoutKey)
+    }
+
+    private func armTxTimeout() {
+        let limit = Self.txTimeoutSeconds
+        guard limit > 0 else { return }
+        if limit > 5 {
+            let warn = DispatchWorkItem { [weak self] in
+                guard let self = self, self.txState != .idle else { return }
+                print("[Voice] TX timeout in 5 s")
+                self.audio.playTone(VoiceTones.timeoutWarning())
+            }
+            txWarnTimer = warn
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(limit - 5), execute: warn)
+        }
+        let cut = DispatchWorkItem { [weak self] in
+            guard let self = self, self.txState != .idle else { return }
+            print("[Voice] TX timeout (\(limit) s) — cutting off; release and press again to talk")
+            self.notice = "Transmit time limit (\(limit) s) reached — release PTT and press again."
+            self.held = [1: [], 2: []]          // the current hold no longer counts
+            self.stopBurst()
+            self.audio.playTone(VoiceTones.timeoutCutoff())
+        }
+        txCutoffTimer = cut
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(limit), execute: cut)
+    }
     private var holdTimer: DispatchWorkItem?
     private var tptWatchdog: DispatchWorkItem?
     private var primingSamples = 0
@@ -528,6 +566,7 @@ final class VoiceController: ObservableObject {
 
         pressedSlot = slot
         burstSlot = target
+        armTxTimeout()
         burstHFP = hfp
         burstCold = hfp && standby
         if standby {
@@ -657,6 +696,8 @@ final class VoiceController: ObservableObject {
     private func stopBurst() {
         primingTimer?.cancel(); primingTimer = nil
         acquireTimer?.cancel(); acquireTimer = nil
+        txWarnTimer?.cancel(); txWarnTimer = nil
+        txCutoffTimer?.cancel(); txCutoffTimer = nil
         holdTimer?.cancel(); holdTimer = nil
         tptWatchdog?.cancel(); tptWatchdog = nil
         audio.setMicLevelHandler(nil)
@@ -712,7 +753,11 @@ final class VoiceController: ObservableObject {
             (9.45, "C: release", { self.pttUp(slot: 1, source: .onScreen) }),
             (11.0, "D: press (second full burst)", { self.pttDown(slot: 1, source: .onScreen) }),
             (13.5, "D: release", { self.pttUp(slot: 1, source: .onScreen) }),
-            (15.0, "done", { print("[SelfTest] done — packets that would have been sent: \(self.dryRunPackets), state=\(self.txState)") }),
+            // E: after the 5 s / 8 s holds the engine is in standby, so this
+            // press exercises ACQUIRING (wake) → PRIMING → TPT → TX.
+            (26.0, "E: press after standby (wake path)", { print("[SelfTest] engine standby before E: \(self.audio.isStandby)"); self.pttDown(slot: 1, source: .onScreen) }),
+            (29.5, "E: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (31.0, "done", { print("[SelfTest] done — packets that would have been sent: \(self.dryRunPackets), state=\(self.txState)") }),
         ]
         let t0 = Date()
         for (at, label, action) in steps {

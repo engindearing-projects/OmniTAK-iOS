@@ -87,6 +87,20 @@ enum VoiceTones {
         return one + [Float](repeating: 0, count: Int(sampleRate * 0.05)) + one
     }
 
+    /// TX-timeout warning, 5 s before cutoff: two 850 Hz beeps, 50 ms each,
+    /// 90 ms apart (190 ms), peak 0.80.
+    static func timeoutWarning() -> [Float] {
+        let beep = sine(850, n: Int(sampleRate * 0.050), peak: 0.80,
+                        attack: Int(sampleRate * 0.002), release: Int(sampleRate * 0.004))
+        return beep + [Float](repeating: 0, count: Int(sampleRate * 0.090)) + beep
+    }
+
+    /// TX-timeout cutoff: 500 Hz for 1.2 s, 25 ms attack, 80 ms release, peak 0.80.
+    static func timeoutCutoff() -> [Float] {
+        sine(500, n: Int(sampleRate * 1.2), peak: 0.80,
+             attack: Int(sampleRate * 0.025), release: Int(sampleRate * 0.080))
+    }
+
     static func durationMs(_ samples: [Float]) -> Int { Int(Double(samples.count) / sampleRate * 1000) }
 
     private static func sine(_ hz: Double, n: Int, peak: Float, attack: Int, release: Int) -> [Float] {

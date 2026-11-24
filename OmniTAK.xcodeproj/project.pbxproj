@@ -119,6 +119,7 @@
 		313ED296B36807D143EFF3F9 /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2053F4BA9520CBA9176AF8D8 /* DiagnosticsLog.swift */; };
 		3192FC7F36458549D30B2536 /* OpenDroneIdMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA945C069E5E828101C96C /* OpenDroneIdMessage.swift */; };
 		323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A42F35542E714D9F02B359A /* AppPluginHost.swift */; };
+		F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */; };
 		4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8082169F4979938A0F7FA324 /* VoiceTones.swift */; };
 		B7B6CD0640B537A46EE14902 /* VoiceChannelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60479381CF6F6D2C37D7B815 /* VoiceChannelPicker.swift */; };
 		F6153C544C7F1F0CAE9B3260 /* VoiceAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3303B565143293449DF72C1 /* VoiceAudioEngine.swift */; };
@@ -637,6 +638,7 @@
 		397C16C7CEF45EB144B930F7 /* MeshTopologyView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshTopologyView.swift; path = OmniTAKMobile/Features/Meshtastic/Views/MeshTopologyView.swift; sourceTree = "<group>"; };
 		39F6E5D7A7C95BE91E8BE483 /* QuickActionToolbar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickActionToolbar.swift; path = OmniTAKMobile/Shared/UI/Components/QuickActionToolbar.swift; sourceTree = "<group>"; };
 		3A42F35542E714D9F02B359A /* AppPluginHost.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppPluginHost.swift; path = OmniTAKMobile/Core/Plugin/AppPluginHost.swift; sourceTree = "<group>"; };
+		F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmergencyPressTracker.swift; path = OmniTAKMobile/Features/Voice/Bluetooth/EmergencyPressTracker.swift; sourceTree = "<group>"; };
 		8082169F4979938A0F7FA324 /* VoiceTones.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceTones.swift; path = OmniTAKMobile/Features/Voice/Audio/VoiceTones.swift; sourceTree = "<group>"; };
 		60479381CF6F6D2C37D7B815 /* VoiceChannelPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceChannelPicker.swift; path = OmniTAKMobile/Features/Voice/UI/VoiceChannelPicker.swift; sourceTree = "<group>"; };
 		E3303B565143293449DF72C1 /* VoiceAudioEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceAudioEngine.swift; path = OmniTAKMobile/Features/Voice/Audio/VoiceAudioEngine.swift; sourceTree = "<group>"; };
@@ -2260,6 +2262,7 @@
 				4F6A1EA71D839AA2F8A09BAE /* PluginHost.swift */,
 				1D95E31A4FB55F17B88EDA43 /* PluginRegistry.swift */,
 				3A42F35542E714D9F02B359A /* AppPluginHost.swift */,
+				F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */,
 				8082169F4979938A0F7FA324 /* VoiceTones.swift */,
 				60479381CF6F6D2C37D7B815 /* VoiceChannelPicker.swift */,
 				E3303B565143293449DF72C1 /* VoiceAudioEngine.swift */,
@@ -3423,6 +3426,7 @@
 				7E5C86C855523AF841D45383 /* PluginHost.swift in Sources */,
 				DFE366B176992E3CE85E10BF /* PluginRegistry.swift in Sources */,
 				323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */,
+				F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */,
 				4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */,
 				B7B6CD0640B537A46EE14902 /* VoiceChannelPicker.swift in Sources */,
 				F6153C544C7F1F0CAE9B3260 /* VoiceAudioEngine.swift in Sources */,

@@ -59,7 +59,9 @@ final class VoiceAudioEngine {
 
     private let queue = DispatchQueue(label: "omnitak.voice.audio")
     private var engine = AVAudioEngine()
-    private let tonePlayer = AVAudioPlayerNode()
+    /// Recreated with every engine build: a player node moved between
+    /// engines was seen reporting .dataPlayedBack immediately after a wake.
+    private var tonePlayer = AVAudioPlayerNode()
     private var slotMixers: [Int: AVAudioMixerNode] = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
     private var slotVolume: [Int: Float] = [1: 1, 2: 1]
 
@@ -217,6 +219,7 @@ final class VoiceAudioEngine {
         // keeps the mic in its I/O unit.
         engine = AVAudioEngine()
         slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
+        tonePlayer = AVAudioPlayerNode()
         profile = p
         if p == .standby {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -309,6 +312,7 @@ final class VoiceAudioEngine {
             self.teardownGraph()
             self.engine = AVAudioEngine()
             self.slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
+            self.tonePlayer = AVAudioPlayerNode()
             do {
                 try self.configureSession(self.profile)
                 try self.buildAndStart(self.profile)
@@ -394,7 +398,15 @@ final class VoiceAudioEngine {
             }
             let pre = padded ? Int(Self.sampleRate * 0.080) : 0
             let post = padded ? Int(Self.sampleRate * 0.100) : 0
-            let all = [Float](repeating: 0, count: pre) + samples + [Float](repeating: 0, count: post)
+            var all = [Float](repeating: 0, count: pre) + samples + [Float](repeating: 0, count: post)
+            #if DEBUG
+            // Silent testing: -XVoiceToneGain 0 keeps the whole tone path
+            // (timing, completion, TX gate) but plays nothing audible.
+            if let g = UserDefaults.standard.object(forKey: "XVoiceToneGain") as? NSNumber ?? (UserDefaults.standard.string(forKey: "XVoiceToneGain").flatMap(Double.init).map { NSNumber(value: $0) }) {
+                let gain = Float(truncating: g)
+                all = all.map { $0 * gain }
+            }
+            #endif
             guard let buf = AVAudioPCMBuffer(pcmFormat: self.pcmFormat, frameCapacity: AVAudioFrameCount(all.count)) else {
                 let now = mach_absolute_time()
                 DispatchQueue.main.async { completion?(now) }; return
@@ -403,11 +415,23 @@ final class VoiceAudioEngine {
             all.withUnsafeBufferPointer { buf.floatChannelData![0].update(from: $0.baseAddress!, count: all.count) }
             self.toneToken += 1
             let token = self.toneToken
-            if !self.tonePlayer.isPlaying { self.tonePlayer.play() }
-            self.tonePlayer.scheduleBuffer(buf, at: nil, options: .interrupts, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-                let done = mach_absolute_time()
-                self?.queue.async {
+            let player = self.tonePlayer
+            if !player.isPlaying { player.play() }
+            let started = mach_absolute_time()
+            let length = Double(all.count) / Self.sampleRate
+            player.scheduleBuffer(buf, at: nil, options: .interrupts, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                let now = mach_absolute_time()
+                let elapsed = AVAudioTime.seconds(forHostTime: now - started)
+                // Never report "played" before the buffer could have played:
+                // if the callback is early, wait out the rest (+50 ms) so the
+                // TX gate can't open while the tone is still audible.
+                let shortfall = elapsed < length ? length - elapsed + 0.05 : 0
+                if shortfall > 0 {
+                    print(String(format: "[VoiceAudio] tone completion %.0f ms early — waiting it out", shortfall * 1000))
+                }
+                self?.queue.asyncAfter(deadline: .now() + shortfall) {
                     guard let self = self, self.toneToken == token else { return }
+                    let done = now + AVAudioTime.hostTime(forSeconds: shortfall)
                     DispatchQueue.main.async { completion?(done) }
                 }
             }

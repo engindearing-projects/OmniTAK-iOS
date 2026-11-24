@@ -25,7 +25,7 @@ import Foundation
 import CoreBluetooth
 
 /// PTT events from a hardware button. `slot` 1 = primary PTT (VS1), 2 = secondary (VS2).
-enum PTTButtonEvent { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool) }
+enum PTTButtonEvent: Equatable { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool) }
 
 final class BLEPTTManager: NSObject, ObservableObject {
     enum Kind: String { case ainaV2 = "AINA APTT V2", pryme = "Pryme BT-PTT-Z", bt02 = "Inrico BT02" }
@@ -169,23 +169,40 @@ final class BLEPTTManager: NSObject, ObservableObject {
     private func handleValue(_ data: Data, from char: CBCharacteristic) {
         guard let b = data.first, let k = kind else { return }
         switch k {
+        case .ainaV2: guard char.uuid == UUIDs.ainaButton else { return }
+        case .bt02: guard char.uuid == UUIDs.bt02Button else { return }
+        case .pryme: break
+        }
+        let (events, mask) = Self.decodeButtons(kind: k, byte: b, previousAinaMask: lastAinaMask)
+        lastAinaMask = mask
+        events.forEach(emit)
+    }
+
+    /// Pure decoder for one button notification (byte[0]), per device type.
+    /// - AINA V2: bitmask, edges vs the previous mask (0x01 PTT → slot 1,
+    ///   0x04 PTTS → slot 2, 0x02 PTTE emergency); 0x80 heartbeat and other
+    ///   bits ignored (mask 0x3F, MFB/B1/B2 unmapped).
+    /// - Pryme: non-zero = PTT down, 0 = up.
+    /// - Inrico BT02: enumerated 0x00 release, 0x01 PTT, 0x08 emergency pulse
+    ///   (no release follows, so it is reported as down+up), others ignored.
+    static func decodeButtons(kind: Kind, byte b: UInt8, previousAinaMask: UInt8) -> ([PTTButtonEvent], UInt8) {
+        switch kind {
         case .ainaV2:
-            guard char.uuid == UUIDs.ainaButton else { return }
             let mask = b & 0x3F
-            let changed = mask ^ lastAinaMask
-            lastAinaMask = mask
-            if changed & 0x01 != 0 { emit(mask & 0x01 != 0 ? .pttDown(slot: 1) : .pttUp(slot: 1)) }   // PTT
-            if changed & 0x04 != 0 { emit(mask & 0x04 != 0 ? .pttDown(slot: 2) : .pttUp(slot: 2)) }   // PTTS → VS2
-            if changed & 0x02 != 0 { emit(.emergency(down: mask & 0x02 != 0)) }        // PTTE edges
+            let changed = mask ^ previousAinaMask
+            var ev: [PTTButtonEvent] = []
+            if changed & 0x01 != 0 { ev.append(mask & 0x01 != 0 ? .pttDown(slot: 1) : .pttUp(slot: 1)) }
+            if changed & 0x04 != 0 { ev.append(mask & 0x04 != 0 ? .pttDown(slot: 2) : .pttUp(slot: 2)) }
+            if changed & 0x02 != 0 { ev.append(.emergency(down: mask & 0x02 != 0)) }
+            return (ev, mask)
         case .pryme:
-            emit(b != 0 ? .pttDown(slot: 1) : .pttUp(slot: 1))
+            return ([b != 0 ? .pttDown(slot: 1) : .pttUp(slot: 1)], previousAinaMask)
         case .bt02:
-            guard char.uuid == UUIDs.bt02Button else { return }
             switch b {
-            case 0x00: emit(.pttUp(slot: 1))
-            case 0x01: emit(.pttDown(slot: 1))
-            case 0x08: emit(.emergency(down: true)); emit(.emergency(down: false))   // one-shot pulse = short press
-            default: break
+            case 0x00: return ([.pttUp(slot: 1)], previousAinaMask)
+            case 0x01: return ([.pttDown(slot: 1)], previousAinaMask)
+            case 0x08: return ([.emergency(down: true), .emergency(down: false)], previousAinaMask)
+            default: return ([], previousAinaMask)
             }
         }
     }

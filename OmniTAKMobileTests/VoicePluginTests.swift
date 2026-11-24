@@ -256,4 +256,79 @@ final class VoicePluginTests: XCTestCase {
             XCTAssertEqual(s.first ?? 1, 0, accuracy: 0.01, "\(t) starts at zero (no click)")
         }
     }
+
+    // MARK: BLE button decoding
+
+    func testAinaDecodeEdges() {
+        typealias K = BLEPTTManager.Kind
+        var (ev, m) = BLEPTTManager.decodeButtons(kind: K.ainaV2, byte: 0x01, previousAinaMask: 0)
+        XCTAssertEqual(ev, [.pttDown(slot: 1)])
+        (ev, m) = BLEPTTManager.decodeButtons(kind: K.ainaV2, byte: 0x81, previousAinaMask: m)   // heartbeat bit only
+        XCTAssertEqual(ev, [])
+        (ev, m) = BLEPTTManager.decodeButtons(kind: K.ainaV2, byte: 0x05, previousAinaMask: m)   // + PTTS
+        XCTAssertEqual(ev, [.pttDown(slot: 2)])
+        (ev, m) = BLEPTTManager.decodeButtons(kind: K.ainaV2, byte: 0x00, previousAinaMask: m)   // both released
+        XCTAssertEqual(ev, [.pttUp(slot: 1), .pttUp(slot: 2)])
+        (ev, m) = BLEPTTManager.decodeButtons(kind: K.ainaV2, byte: 0x02, previousAinaMask: m)
+        XCTAssertEqual(ev, [.emergency(down: true)])
+        (ev, m) = BLEPTTManager.decodeButtons(kind: K.ainaV2, byte: 0x20, previousAinaMask: m)   // PTTE up, MFB (unmapped)
+        XCTAssertEqual(ev, [.emergency(down: false)])
+        XCTAssertEqual(m, 0x20)
+    }
+
+    func testPrymeAndBt02Decode() {
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .pryme, byte: 0x01, previousAinaMask: 0).0, [.pttDown(slot: 1)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .pryme, byte: 0x00, previousAinaMask: 0).0, [.pttUp(slot: 1)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x01, previousAinaMask: 0).0, [.pttDown(slot: 1)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x00, previousAinaMask: 0).0, [.pttUp(slot: 1)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x08, previousAinaMask: 0).0,
+                       [.emergency(down: true), .emergency(down: false)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x03, previousAinaMask: 0).0, [])   // top button unmapped
+    }
+
+    // MARK: Emergency press/hold
+
+    func testEmergencyShortPressFires() {
+        var t = EmergencyPressTracker()
+        let t0 = Date()
+        t.press(at: t0)
+        XCTAssertEqual(t.release(at: t0.addingTimeInterval(0.3)), .fire)
+    }
+
+    func testEmergencyPulseFires() {   // Inrico BT02: down+up at the same instant
+        var t = EmergencyPressTracker()
+        let t0 = Date()
+        t.press(at: t0)
+        XCTAssertEqual(t.release(at: t0), .fire)
+    }
+
+    func testEmergencyLongHoldCancelsAtThresholdOnce() {
+        var t = EmergencyPressTracker()
+        let t0 = Date()
+        t.press(at: t0)
+        XCTAssertEqual(t.thresholdReached(), .cancel)
+        XCTAssertEqual(t.thresholdReached(), .none)
+        XCTAssertEqual(t.release(at: t0.addingTimeInterval(3)), .none, "release after the threshold cancel does nothing")
+    }
+
+    func testEmergencyLateReleaseBeforeTimerCancels() {
+        var t = EmergencyPressTracker()
+        let t0 = Date()
+        t.press(at: t0)
+        XCTAssertEqual(t.release(at: t0.addingTimeInterval(1.2)), .cancel)
+        XCTAssertEqual(t.thresholdReached(), .none, "a late timer after release does nothing")
+    }
+
+    func testEmergencyReleaseWithoutPressIgnored() {
+        var t = EmergencyPressTracker()
+        XCTAssertEqual(t.release(at: Date()), .none)
+    }
+
+    // MARK: TX timeout tones
+
+    func testTimeoutTones() {
+        XCTAssertEqual(VoiceTones.durationMs(VoiceTones.timeoutWarning()), 190)
+        XCTAssertEqual(VoiceTones.durationMs(VoiceTones.timeoutCutoff()), 1200)
+        XCTAssertLessThanOrEqual(VoiceTones.timeoutCutoff().map(abs).max() ?? 0, 0.81)
+    }
 }
