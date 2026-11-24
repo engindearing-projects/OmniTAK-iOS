@@ -655,7 +655,8 @@ final class VoiceController: ObservableObject {
     /// comes on. iOS plays its start cue (sound + vibration) as the session
     /// activates and the iPhone's own mic picks it up: measured on device as a
     /// flat ~-30 dBFS buzz from ~0.1 s to ~0.55-0.7 s after the mic starts. A
-    /// Bluetooth speaker-mic doesn't hear it, so it keeps sending at once.
+    /// Bluetooth speaker-mic doesn't hear it, and iOS Voice Isolation removes
+    /// it, so both send at once.
     static let builtInMicCueGuard: TimeInterval = 0.75   // cue tail ran to ~0.7 s once
     private var primingTimer: DispatchWorkItem?
     private var acquireTimer: DispatchWorkItem?
@@ -786,13 +787,16 @@ final class VoiceController: ObservableObject {
                 // the system activates audio. No PRIMING discard — it only
                 // existed to keep our own talk-permit tone off the air. The
                 // 60 ms trailing trim at release (button clunk) is kept.
-                if self.burstHFP {
-                    print("[Voice] \(Self.ts()) audio on — transmitting immediately (no priming gate)")
+                // Voice Isolation removes the cue completely (measured: the first
+                // 0.8 s stays at -90 to -185 dBFS), so no drop is needed then. The
+                // ACTIVE mode decides: iOS sometimes runs Standard despite the choice.
+                if self.burstHFP || AVCaptureDevice.activeMicrophoneMode == .voiceIsolation {
+                    print("[Voice] \(Self.ts()) audio on — transmitting immediately (no priming gate; \(self.burstHFP ? "Bluetooth" : "built-in mic, Voice Isolation"))")
                     self.startTransmitting(notBeforeHost: 0)
                 } else {
                     // Built-in mic: skip iOS's start cue.
                     let gate = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: Self.builtInMicCueGuard)
-                    print("[Voice] \(Self.ts()) audio on — built-in mic, skipping the first \(Int(Self.builtInMicCueGuard * 1000)) ms (iOS start cue)")
+                    print("[Voice] \(Self.ts()) audio on — built-in mic (mic mode chosen \(MicModeRow.name(AVCaptureDevice.preferredMicrophoneMode)), active \(MicModeRow.name(AVCaptureDevice.activeMicrophoneMode))), skipping the first \(Int(Self.builtInMicCueGuard * 1000)) ms (iOS start cue)")
                     self.startTransmitting(notBeforeHost: gate)
                 }
             } else {

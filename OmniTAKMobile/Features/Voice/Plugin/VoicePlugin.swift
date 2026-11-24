@@ -14,6 +14,7 @@
 //
 
 import SwiftUI
+import AVFoundation
 
 final class VoicePlugin: OmniTAKPlugin {
     let pluginId = "com.atakmap.android.xv.plugin"
@@ -149,6 +150,7 @@ struct VoicePluginSettingsView: View {
                 Picker("Receive boost", selection: $rxBoost) {
                     ForEach([0.0, 3, 6, 9, 12], id: \.self) { Text($0 == 0 ? "Off" : "+\(Int($0)) dB").tag($0) }
                 }
+                MicModeRow()
             } header: {
                 Text("Audio levels")
             } footer: {
@@ -170,6 +172,51 @@ struct VoicePluginSettingsView: View {
             Text(label)
             Spacer()
             Text(value).foregroundColor(.secondary).multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+/// iOS mic mode for X Voice's built-in-mic audio (Standard / Voice Isolation /
+/// Wide Spectrum). Apps can read it and open the system picker, but only the
+/// user can choose it; iOS remembers the choice per app. Voice Isolation is
+/// recommended. Applies to the iPhone's own mic only (iOS voice processing is
+/// off on Bluetooth speaker-mics).
+struct MicModeRow: View {
+    // preferredMicrophoneMode is the user's choice; activeMicrophoneMode only
+    // reflects it while the mic is running.
+    @State private var mode = AVCaptureDevice.preferredMicrophoneMode
+
+    var body: some View {
+        Group {
+            HStack {
+                Text("Mic mode (iPhone mic)")
+                Spacer()
+                Text(Self.name(mode)).foregroundColor(.secondary)
+            }
+            if mode != .voiceIsolation {
+                Text("Recommended: Voice Isolation. It suppresses background noise on the iPhone's own mic. iOS lets only you choose it — it's remembered after that.")
+                    .font(.footnote).foregroundColor(.orange)
+            }
+            Button(mode == .voiceIsolation ? "Change mic mode…" : "Set mic mode to Voice Isolation…") {
+                AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+            }
+        }
+        .onAppear { mode = AVCaptureDevice.preferredMicrophoneMode }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            mode = AVCaptureDevice.preferredMicrophoneMode
+        }
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+            let m = AVCaptureDevice.preferredMicrophoneMode
+            if m != mode { mode = m }
+        }
+    }
+
+    static func name(_ m: AVCaptureDevice.MicrophoneMode) -> String {
+        switch m {
+        case .standard: return "Standard"
+        case .voiceIsolation: return "Voice Isolation"
+        case .wideSpectrum: return "Wide Spectrum"
+        @unknown default: return "Automatic"
         }
     }
 }

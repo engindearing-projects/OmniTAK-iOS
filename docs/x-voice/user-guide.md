@@ -54,10 +54,11 @@ Rules:
 - **Hold to talk, release to stop.** Use the on-map PTT 1 / PTT 2 buttons, a
   Bluetooth speaker-mic or button, or the system **Talk** button on the lock
   screen or Dynamic Island (always PTT 1).
-- **Wait for iOS's start cue** (the vibration and sound) to finish, then
-  speak. On the iPhone's own mic, the first 0.75 s after audio comes on is
-  dropped on purpose so the cue isn't sent. On a Bluetooth speaker-mic, audio
-  is sent from the moment it's available.
+- **Wait for iOS's start cue** (the vibration and sound), then speak. On a
+  Bluetooth speaker-mic, or on the iPhone's own mic with Voice Isolation on,
+  audio is sent from the moment it's available. On the iPhone's own mic in
+  Standard or Wide Spectrum mode, the first 0.75 s after audio comes on is
+  dropped on purpose so the cue isn't sent.
 - **One mic, one channel at a time.** If you press both, the first press wins.
 - **Full duplex.** Others keep playing while you talk. The channel you're
   talking on stays at full volume; the *other* channel is ducked to 25% until
@@ -122,6 +123,17 @@ See [Hardware](hardware.md) for pairing each device.
 |---|---|---|
 | Mic boost | +3 dB | Extra gain on your transmitted voice, with a soft limiter |
 | Receive boost | +6 dB | Extra gain on what you hear |
+
+**Mic mode (iPhone mic).** iOS offers Standard, Voice Isolation and Wide
+Spectrum for X Voice's built-in-mic audio. **Voice Isolation is recommended**:
+it suppresses background noise and removes iOS's start buzz, so X Voice
+doesn't need to drop the start of your transmission. iOS doesn't let apps
+choose the mode, so
+X Voice shows the current mode and, until it's Voice Isolation, a prompt with
+a **Set mic mode to Voice Isolation…** button that opens iOS's picker. You
+pick it once and iOS remembers it for OmniTAK. If the picker shows the modes
+as unavailable, make one transmission first (the mic has to have been in use)
+and try again. Mic mode has no effect on a Bluetooth speaker-mic.
 
 An Inrico BT02 gets an automatic extra +5 dB on its mic. On the iPhone's own
 mic and speaker, iOS echo cancellation, noise suppression and automatic gain

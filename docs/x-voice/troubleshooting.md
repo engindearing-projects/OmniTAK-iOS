@@ -43,9 +43,12 @@ next press works. If it doesn't recover, disconnect and reconnect X Voice.
 
 - Bluetooth speaker-mic: the link takes about 0.3–0.5 s to come up after the
   vibration. Start talking just after the cue.
-- iPhone's own mic: the first 0.75 s after audio comes on is dropped on
-  purpose, so iOS's start cue (sound and vibration) isn't sent. Start talking
-  once the cue has finished.
+- iPhone's own mic in Standard or Wide Spectrum mode: the first 0.75 s after
+  audio comes on is dropped on purpose, so iOS's start cue (sound and
+  vibration) isn't sent. Start talking once the cue has finished, or switch
+  the mic mode to Voice Isolation (no drop needed). The log line
+  `audio on — built-in mic (mic mode chosen …, active …)` shows which mode was
+  in effect.
 
 ### I hear the other channel quietly while talking
 

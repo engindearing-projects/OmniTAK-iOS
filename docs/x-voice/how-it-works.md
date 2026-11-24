@@ -51,10 +51,15 @@ you transmit.
 4. **Transmitting.** Mic audio is encoded (Opus, 48 kHz, 20 ms frames) and
    sent to the slot's Mumble connection.
    - Bluetooth speaker-mic: sent from the first moment audio is available.
-   - iPhone's own mic: the first 0.75 s after audio comes on is dropped.
-     iOS plays its start cue (sound and vibration) as the audio activates,
-     and the built-in mic picks it up: measured as a flat buzz of about
-     −30 dBFS from roughly 0.1 s to 0.55–0.7 s after the mic starts.
+   - iPhone's own mic with **Voice Isolation** active: sent from the first
+     moment too. Voice Isolation removes iOS's start cue completely (measured:
+     the first 0.8 s stays at −90 to −185 dBFS).
+   - iPhone's own mic in Standard or Wide Spectrum: the first 0.75 s after
+     audio comes on is dropped. iOS plays its start cue (sound and vibration)
+     as the audio activates, and the built-in mic picks it up: measured as a
+     flat buzz of about −30 dBFS from roughly 0.1 s to 0.55–0.7 s after the
+     mic starts. The mode iOS is *actually* using decides, since iOS sometimes
+     runs Standard despite a Voice Isolation choice.
 5. **Release.** The last 60 ms (3 frames) are dropped to cut the button click,
    a terminator packet ends the stream, and iOS plays its end cue.
 6. **Idle.** After 5 s with no transmit and 8 s with nothing received, X Voice
@@ -71,6 +76,28 @@ you transmit.
   races the shutdown.
 - If iOS hasn't activated audio 2 s after a request, X Voice resets the talker
   so the next press or packet starts clean.
+
+## Voice processing and mic mode
+
+On the iPhone's own mic and speaker, X Voice turns on Apple's voice processing
+(`setVoiceProcessingEnabled`): echo cancellation, noise suppression and
+automatic gain, the iOS equivalent of Android's AcousticEchoCanceler,
+NoiseSuppressor and AGC. On a Bluetooth HFP speaker-mic it stays off: the
+speaker-mic handles echo itself, skipping it saves engine start-up time, and
+its AGC was pulling levels down.
+
+With voice processing on, iOS applies the user's **mic mode** (Standard /
+Voice Isolation / Wide Spectrum). There's no public API for an app to set the
+mode, even in iOS 26; apps can read `AVCaptureDevice.activeMicrophoneMode` and
+open the picker with `AVCaptureDevice.showSystemUserInterface(.microphoneModes)`.
+X Voice recommends Voice Isolation and logs the active mode with each
+built-in-mic transmission.
+
+Standard voice processing can't remove iOS's push-to-talk start cue: the
+start sound isn't something the app played, so it isn't in the echo
+canceller's reference, and the vibration reaches the mic through the phone's
+body. Voice Isolation does remove it, so X Voice drops the first 0.75 s after
+audio-on only when Voice Isolation isn't active (see above).
 
 ## Ducking
 
