@@ -135,7 +135,7 @@ final class VoiceController: ObservableObject {
             switch e {
             case .pttDown(let slot): self?.pttDown(slot: slot, source: .bluetooth)
             case .pttUp(let slot): self?.pttUp(slot: slot, source: .bluetooth)
-            case .emergency: print("[Voice] emergency button pressed (not wired to an emergency action yet)")
+            case .emergency(let down): self?.onEmergencyButton(down: down)
             }
         }
         bleCancellable = blePTT.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
@@ -158,6 +158,62 @@ final class VoiceController: ObservableObject {
     }
 
     deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
+
+    // MARK: - Emergency button (ported from TAK-XVoice EmergencyController)
+    //
+    //  PRESS:                    arm, schedule CANCEL at 1 s.
+    //  RELEASE before 1 s:       FIRE the 911 alert (no-op if already active).
+    //  HELD to 1 s:              CANCEL immediately (feedback at the threshold);
+    //                            the later release does nothing.
+    //  A stuck button can't keep firing, and holding the same button is how an
+    //  operator affirmatively cancels. The Inrico BT02 key is a one-shot pulse
+    //  (down+up), so on that device it always fires.
+
+    static let emergencyLongPress: TimeInterval = 1.0
+    private var emergencyPressedAt: Date?
+    private var emergencyLongHoldFired = false
+    private var emergencyCancelTimer: DispatchWorkItem?
+
+    func onEmergencyButton(down: Bool) {
+        if down {
+            emergencyPressedAt = Date()
+            emergencyLongHoldFired = false
+            emergencyCancelTimer?.cancel()
+            let t = DispatchWorkItem { [weak self] in
+                guard let self = self, self.emergencyPressedAt != nil, !self.emergencyLongHoldFired else { return }
+                self.emergencyLongHoldFired = true
+                print("[Voice] emergency button held 1 s — cancel")
+                self.bridge?.setEmergency(active: false, reason: "speaker-mic emergency long-hold")
+                self.audio.playTone(VoiceTones.deny())
+            }
+            emergencyCancelTimer = t
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.emergencyLongPress, execute: t)
+            print("[Voice] emergency button pressed (armed)")
+        } else {
+            emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
+            guard let at = emergencyPressedAt else { return }
+            emergencyPressedAt = nil
+            if emergencyLongHoldFired { return }   // already cancelled at the threshold
+            let held = Date().timeIntervalSince(at)
+            if held >= Self.emergencyLongPress {
+                print("[Voice] emergency released at \(Int(held * 1000)) ms — cancel")
+                bridge?.setEmergency(active: false, reason: "speaker-mic emergency long-hold (release)")
+                audio.playTone(VoiceTones.deny())
+            } else {
+                print("[Voice] emergency released at \(Int(held * 1000)) ms — FIRE")
+                bridge?.setEmergency(active: true, reason: "speaker-mic emergency button")
+                notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
+            }
+        }
+    }
+
+    /// If audio is on a supported Bluetooth speaker-mic (Inrico BT02, AINA),
+    /// connect its BLE PTT button automatically.
+    func autoConnectSpeakerMicButton() {
+        let r = AVAudioSession.sharedInstance().currentRoute
+        guard let port = (r.inputs + r.outputs).first(where: { $0.portType == .bluetoothHFP }) else { return }
+        blePTT.autoConnect(matching: port.portName)
+    }
 
     /// Release every on-screen PTT hold (gesture cancelled / view gone / app inactive).
     func releaseOnScreenPTT() {
@@ -240,6 +296,7 @@ final class VoiceController: ObservableObject {
             self.startClient(slot: 1, host: host, bridge: bridge)
         }
         blePTT.start()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.autoConnectSpeakerMicButton() }
         startSpeakerTimer()
     }
 
@@ -394,6 +451,7 @@ final class VoiceController: ObservableObject {
             forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.audioRoute = VoiceAudioEngine.routeDescription()
             print("[Voice] audio route: \(self?.audioRoute ?? "")")
+            self?.autoConnectSpeakerMicButton()
         }
     }
 
@@ -419,12 +477,13 @@ final class VoiceController: ObservableObject {
     //  idle and needs to wake up before the tone can be heard.
     //  Frames are 10 ms on Android; here mic buffers are counted in 10 ms units.
 
-    enum TxState: Equatable { case idle, priming, coldHold, tpt, transmitting }
+    enum TxState: Equatable { case idle, acquiring, priming, coldHold, tpt, transmitting }
     @Published private(set) var txState: TxState = .idle
     private var burstSlot: Int?
     private var burstCold = false
     private var burstHFP = false
     private var primingTimer: DispatchWorkItem?
+    private var acquireTimer: DispatchWorkItem?
     private var holdTimer: DispatchWorkItem?
     private var tptWatchdog: DispatchWorkItem?
     private var primingSamples = 0
@@ -443,9 +502,12 @@ final class VoiceController: ObservableObject {
         held[slot, default: []].insert(source)
         guard txState == .idle, pressedSlot == nil else { return }       // first press wins
 
-        let hfp = Self.routeIsHFP
+        // Cold = the audio engine is in standby (Bluetooth link idle) and the
+        // speaker-mic is Bluetooth HFP: it has to wake before the tone is heard.
+        let hfp = audio.usesBluetoothHFP || Self.routeIsHFP
+        let standby = audio.isStandby
         let now = Date()
-        let warm = hfp && (now.timeIntervalSince(lastRxAt) < 8 || now.timeIntervalSince(lastTxStopAt) < 5)
+        let warm = hfp && !standby
         let refractory = warm ? 0.05 : 0.2
         guard now.timeIntervalSince(lastStopAt) >= refractory else { return }
 
@@ -467,8 +529,28 @@ final class VoiceController: ObservableObject {
         pressedSlot = slot
         burstSlot = target
         burstHFP = hfp
-        burstCold = hfp && !warm
-        startPriming()
+        burstCold = hfp && standby
+        if standby {
+            // ACQUIRING: wake the audio path (mic + Bluetooth link) first, up
+            // to 3 s (Android SCO_WARMUP), then PRIMING.
+            txState = .acquiring
+            print("[Voice] \(Self.ts()) ACQUIRING audio (waking from standby)")
+            let timeout = DispatchWorkItem { [weak self] in
+                guard let self = self, self.txState == .acquiring else { return }
+                print("[Voice] audio wake-up took > 3 s — priming anyway")
+                self.startPriming()
+            }
+            acquireTimer = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timeout)
+            audio.activate("PTT") { [weak self] in
+                guard let self = self, self.txState == .acquiring else { return }
+                self.acquireTimer?.cancel(); self.acquireTimer = nil
+                self.burstHFP = self.audio.usesBluetoothHFP
+                self.startPriming()
+            }
+        } else {
+            startPriming()
+        }
     }
 
     func pttUp(slot: Int, source: PTTSource) {
@@ -574,10 +656,14 @@ final class VoiceController: ObservableObject {
     /// TRANSMITTING sends a terminator.
     private func stopBurst() {
         primingTimer?.cancel(); primingTimer = nil
+        acquireTimer?.cancel(); acquireTimer = nil
         holdTimer?.cancel(); holdTimer = nil
         tptWatchdog?.cancel(); tptWatchdog = nil
         audio.setMicLevelHandler(nil)
         let wasTransmitting = txState == .transmitting
+        if txState != .idle && !wasTransmitting {
+            print("[Voice] \(Self.ts()) burst ended during \(txState) — nothing transmitted")
+        }
         let slot = burstSlot
         txSlotForAudio = nil                           // in-flight frames are dropped
         audio.setMicMode(.off)

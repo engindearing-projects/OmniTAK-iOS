@@ -84,6 +84,9 @@ final class VoiceAudioEngine {
     /// tap callback to return).
     private var tapConverter: AVAudioConverter?
     private var engineID: ObjectIdentifier?
+    /// Planned switches/rebuilds post their own config-change notifications;
+    /// ignore those for a moment so they don't trigger another rebuild.
+    private var quietUntil = Date.distantPast
 
     private var micMode: MicMode = .off          // queue copy
     private var trailing: [Data] = []
@@ -122,16 +125,52 @@ final class VoiceAudioEngine {
     }
     #endif
 
-    // MARK: - Lifecycle
+    // MARK: - Lifecycle / standby
+    //
+    // Two profiles, like Android's SCO handling:
+    //  - standby: engine STOPPED and the audio session released — no mic and
+    //    no output, so nothing is routed to a Bluetooth speaker-mic (neither
+    //    the HFP/SCO voice link nor an A2DP stream of silence, which keeps its
+    //    amplifier on and hissing). The app stays alive in the background
+    //    through its location/bluetooth background modes, and the Mumble
+    //    connection keeps running independently of audio.
+    //  - active:  .playAndRecord/.voiceChat, voice processing, mic tap. Needed
+    //    to transmit, and to play received audio on an HFP-only speaker-mic.
+    // Wake-ups: PTT (controller calls activate first) and received audio when
+    // the last active route used Bluetooth HFP — RX is held in a buffer of up
+    // to 4 s while the link comes up, then played. Back to standby after 5 s
+    // with no TX and 8 s with no RX (Android SCO_COOL_DOWN / SCO_HOT).
+
+    enum Profile { case standby, active }
+    private var profile: Profile = .active
+    private var activateWaiters: [() -> Void] = []
+    private var pendingRX: [(packet: Data, speaker: UInt32, slot: Int)] = []
+    private var pendingRXSamples = 0
+    private var lastTxActivity = Date()
+    private var lastRxActivity = Date.distantPast
+    /// Whether the most recent ACTIVE route used Bluetooth HFP (a speaker-mic).
+    private var hfpOnLastActiveRoute = false
+    static let txHoldSeconds: TimeInterval = 5
+    static let rxHoldSeconds: TimeInterval = 8
+    static let maxPendingRXSamples = 4 * 48_000
+
+    /// True when the engine is in standby (a PTT press is a "cold" start).
+    var isStandby: Bool { queue.sync { profile == .standby } }
+    /// True when the speaker-mic path is Bluetooth HFP.
+    var usesBluetoothHFP: Bool { queue.sync { hfpOnLastActiveRoute } }
 
     func start() throws {
         var thrown: Error?
         queue.sync {
             guard !running else { return }
             do {
-                try configureSession()
-                try buildAndStart()
+                // Start ACTIVE once so the route (HFP or not) is learned, then the
+                // idle timer drops to standby.
+                profile = .active
+                try configureSession(.active)
+                try buildAndStart(.active)
                 running = true
+                lastTxActivity = Date()
                 startSweep()
             } catch { thrown = error }
         }
@@ -147,27 +186,72 @@ final class VoiceAudioEngine {
             running = false
             setGate(.off, 0)
             micMode = .off; trailing.removeAll(); pending.removeAll(); encoder = nil
+            pendingRX.removeAll(); pendingRXSamples = 0
             sweepTimer?.cancel(); sweepTimer = nil
             teardownGraph()
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
 
-    private func configureSession() throws {
+    /// Bring the engine to ACTIVE (mic + HFP). `completion` runs on main once
+    /// it is (immediately if it already is).
+    func activate(_ reason: String, completion: (() -> Void)? = nil) {
+        queue.async {
+            guard self.running else { return }
+            if self.profile == .active && self.engine.isRunning {
+                if let c = completion { DispatchQueue.main.async(execute: c) }
+                return
+            }
+            if let c = completion { self.activateWaiters.append(c) }
+            self.switchProfile(.active, reason: reason)
+        }
+    }
+
+    /// Must run on `queue`.
+    private func switchProfile(_ p: Profile, reason: String) {
+        print("[VoiceAudio] \(p == .active ? "waking (active)" : "standby") — \(reason)")
+        setGate(.off, 0)
+        micMode = .off; trailing.removeAll(); pending.removeAll()
+        teardownGraph()
+        // A fresh engine per profile: an engine whose input node was touched
+        // keeps the mic in its I/O unit.
+        engine = AVAudioEngine()
+        slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
+        profile = p
+        if p == .standby {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            print("[VoiceAudio] standby: engine stopped, audio session released")
+            return
+        }
+        do {
+            try configureSession(p)
+            try buildAndStart(p)
+        } catch {
+            print("[VoiceAudio] \(p) start failed: \(error)")
+        }
+        if p == .active {
+            let waiters = activateWaiters; activateWaiters.removeAll()
+            waiters.forEach { w in DispatchQueue.main.async(execute: w) }
+            flushPendingRX()
+        }
+    }
+
+    private func configureSession(_ p: Profile) throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat,
-                                options: [.allowBluetooth, .defaultToSpeaker])
+        switch p {
+        case .active:
+            try session.setCategory(.playAndRecord, mode: .voiceChat,
+                                    options: [.allowBluetooth, .defaultToSpeaker])
+            try? session.setPreferredIOBufferDuration(0.02)
+        case .standby:
+            try session.setCategory(.playback, mode: .default, options: [])
+        }
         try? session.setPreferredSampleRate(Self.sampleRate)
-        try? session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
     }
 
     /// Build the graph for the CURRENT route and start it. Must run on `queue`.
-    private func buildAndStart() throws {
-        let input = engine.inputNode
-        do { try input.setVoiceProcessingEnabled(true) } catch {
-            print("[VoiceAudio] voice processing (AEC) unavailable: \(error)")
-        }
+    private func buildAndStart(_ p: Profile) throws {
         engine.attach(tonePlayer)
         engine.connect(tonePlayer, to: engine.mainMixerNode, format: pcmFormat)
         for (slot, m) in slotMixers {
@@ -175,24 +259,35 @@ final class VoiceAudioEngine {
             engine.connect(m, to: engine.mainMixerNode, format: pcmFormat)
             m.outputVolume = slotVolume[slot] ?? 1
         }
-        let inFormat = input.outputFormat(forBus: 0)
-        guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
-            throw NSError(domain: "VoiceAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "no microphone input"])
-        }
-        inputConverter = AVAudioConverter(from: inFormat, to: pcmFormat)
-        gateLock.lock(); tapConverter = inputConverter; engineID = ObjectIdentifier(engine); gateLock.unlock()
-        input.installTap(onBus: 0, bufferSize: 960, format: inFormat) { [weak self] buffer, when in
-            self?.handleMic(buffer, when: when)
+        gateLock.lock(); engineID = ObjectIdentifier(engine); quietUntil = Date().addingTimeInterval(1.0); gateLock.unlock()
+        var inDesc = "none (standby)"
+        if p == .active {
+            let input = engine.inputNode
+            do { try input.setVoiceProcessingEnabled(true) } catch {
+                print("[VoiceAudio] voice processing (AEC) unavailable: \(error)")
+            }
+            let inFormat = input.outputFormat(forBus: 0)
+            guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
+                throw NSError(domain: "VoiceAudio", code: 1, userInfo: [NSLocalizedDescriptionKey: "no microphone input"])
+            }
+            inputConverter = AVAudioConverter(from: inFormat, to: pcmFormat)
+            gateLock.lock(); tapConverter = inputConverter; gateLock.unlock()
+            input.installTap(onBus: 0, bufferSize: 960, format: inFormat) { [weak self] buffer, when in
+                self?.handleMic(buffer, when: when)
+            }
+            let r = AVAudioSession.sharedInstance().currentRoute
+            hfpOnLastActiveRoute = (r.inputs + r.outputs).contains { $0.portType == .bluetoothHFP }
+            inDesc = "\(inFormat.sampleRate) Hz x\(inFormat.channelCount), AEC \(input.isVoiceProcessingEnabled ? "on" : "off")"
         }
         engine.prepare()
         try engine.start()
         tonePlayer.play()
-        print("[VoiceAudio] started, input \(inFormat.sampleRate) Hz x\(inFormat.channelCount), AEC \(input.isVoiceProcessingEnabled ? "on" : "off"), route: \(Self.routeDescription())")
+        print("[VoiceAudio] started (\(p)), input \(inDesc), route: \(Self.routeDescription())")
     }
 
     /// Must run on `queue`.
     private func teardownGraph() {
-        engine.inputNode.removeTap(onBus: 0)
+        if profile == .active || inputConverter != nil { engine.inputNode.removeTap(onBus: 0) }
         for s in speakers.values { s.player.stop(); engine.detach(s.player) }
         speakers.removeAll()
         tonePlayer.stop()
@@ -203,35 +298,45 @@ final class VoiceAudioEngine {
         gateLock.lock(); tapConverter = nil; gateLock.unlock()
     }
 
-    /// Rebuild after a route/config change, interruption end or media reset.
+    /// Rebuild (same profile) after a route/config change, interruption end or
+    /// media reset.
     private func rebuild(_ reason: String, newEngine: Bool = false) {
         queue.async {
-            guard self.running else { return }
+            guard self.running, self.profile == .active else { return }   // standby: nothing running
             print("[VoiceAudio] rebuilding engine: \(reason)")
             self.setGate(.off, 0)
             self.micMode = .off; self.trailing.removeAll(); self.pending.removeAll()
             self.teardownGraph()
-            if newEngine {
-                self.engine = AVAudioEngine()
-                self.slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
-            }
+            self.engine = AVAudioEngine()
+            self.slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
             do {
-                try self.configureSession()
-                try self.buildAndStart()
+                try self.configureSession(self.profile)
+                try self.buildAndStart(self.profile)
             } catch {
                 print("[VoiceAudio] rebuild failed: \(error) — retrying in 1 s")
-                self.queue.asyncAfter(deadline: .now() + 1) { self.rebuild("retry after failure", newEngine: newEngine) }
+                self.queue.asyncAfter(deadline: .now() + 1) { self.rebuild("retry after failure") }
             }
             DispatchQueue.main.async { self.onEngineRestart?(reason) }
         }
+    }
+
+    /// Must run on `queue`.
+    private func flushPendingRX() {
+        guard !pendingRX.isEmpty else { return }
+        let items = pendingRX
+        pendingRX.removeAll(); pendingRXSamples = 0
+        print("[VoiceAudio] playing \(items.count) buffered packets after wake-up")
+        for i in items { decodeAndPlay(i.packet, speaker: i.speaker, slot: i.slot) }
     }
 
     private func observe() {
         let nc = NotificationCenter.default
         observers.append(nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { [weak self] n in
             guard let self = self, let e = n.object as? AVAudioEngine else { return }
-            self.gateLock.lock(); let mine = self.engineID == ObjectIdentifier(e); self.gateLock.unlock()
-            guard mine else { return }
+            self.gateLock.lock()
+            let mine = self.engineID == ObjectIdentifier(e), quiet = Date() < self.quietUntil
+            self.gateLock.unlock()
+            guard mine, !quiet else { return }
             self.rebuild("engine configuration changed (route: \(Self.routeDescription()))")
         })
         observers.append(nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: nil) { [weak self] n in
@@ -245,6 +350,19 @@ final class VoiceAudioEngine {
             } else {
                 self.rebuild("interruption ended")
             }
+        })
+        observers.append(nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] n in
+            guard let self = self,
+                  let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: raw) else { return }
+            // A device came or went (Bluetooth speaker-mic, headset): rebuild so
+            // the tap and graph match the new input/output.
+            guard reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .override else { return }
+            let prev = (n.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription)?
+                .inputs.first?.uid
+            let now = AVAudioSession.sharedInstance().currentRoute.inputs.first?.uid
+            guard prev != now else { return }
+            self.rebuild("audio route changed (\(reason.rawValue)): \(Self.routeDescription())")
         })
         observers.append(nc.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { [weak self] _ in
             self?.rebuild("media services were reset", newEngine: true)
@@ -267,6 +385,9 @@ final class VoiceAudioEngine {
     /// when that was reported. A newer tone cancels an older one's completion.
     func playTone(_ samples: [Float], padded: Bool = false, completion: ((UInt64) -> Void)? = nil) {
         queue.async {
+            if self.running, self.profile == .standby, !samples.isEmpty {
+                self.switchProfile(.active, reason: "tone")
+            }
             guard self.running, self.engine.isRunning, !samples.isEmpty else {
                 let now = mach_absolute_time()
                 DispatchQueue.main.async { completion?(now) }; return
@@ -309,6 +430,7 @@ final class VoiceAudioEngine {
                 gate += AVAudioTime.hostTime(forSeconds: s.inputLatency + s.ioBufferDuration)
             }
             let old = self.micMode
+            if mode != .off || old != .off { self.lastTxActivity = Date() }
             if mode == .transmit && old != .transmit {
                 self.pending.removeAll()
                 self.trailing.removeAll()
@@ -377,8 +499,15 @@ final class VoiceAudioEngine {
 
     /// Tap thread. Resample/downmix to 48 kHz mono float.
     private func convertToPCM(_ buffer: AVAudioPCMBuffer) -> [Float] {
-        gateLock.lock(); let c = tapConverter; gateLock.unlock()
-        guard let conv = c, conv.inputFormat == buffer.format else { return [] }
+        gateLock.lock(); var c = tapConverter; gateLock.unlock()
+        if c == nil || c!.inputFormat != buffer.format {
+            // Route changed (e.g. Bluetooth HFP at 16 kHz) without an engine
+            // config notification: adapt to the format actually arriving.
+            c = AVAudioConverter(from: buffer.format, to: pcmFormat)
+            gateLock.lock(); tapConverter = c; gateLock.unlock()
+            print("[VoiceAudio] mic format now \(buffer.format.sampleRate) Hz x\(buffer.format.channelCount)")
+        }
+        guard let conv = c else { return [] }
         let ratio = Self.sampleRate / buffer.format.sampleRate
         let cap = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: cap) else { return [] }
@@ -506,7 +635,19 @@ final class VoiceAudioEngine {
     }
 
     private func decodeAndPlay(_ packet: Data, speaker key: UInt32, slot: Int) {
-        guard running, engine.isRunning, !packet.isEmpty else { return }
+        guard running, !packet.isEmpty else { return }
+        lastRxActivity = Date()
+        // Standby: hold RX (≤4 s) and wake the audio path.
+        if profile == .standby {
+            pendingRX.append((packet, key, slot))
+            pendingRXSamples += Self.opusSamples(packet) ?? 960
+            while pendingRXSamples > Self.maxPendingRXSamples, !pendingRX.isEmpty {
+                pendingRXSamples -= Self.opusSamples(pendingRX.removeFirst().packet) ?? 960
+            }
+            if pendingRX.count == 1 { switchProfile(.active, reason: "incoming audio") }
+            return
+        }
+        guard engine.isRunning else { return }
         guard let samples = Self.opusSamples(packet) else {
             print("[VoiceAudio] unparseable Opus packet from \(key) (\(packet.count) B)"); return
         }
@@ -571,10 +712,17 @@ final class VoiceAudioEngine {
     /// Free players/decoders of speakers silent for 10 s (e.g. no terminator).
     private func startSweep() {
         let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now() + 5, repeating: 5)
+        t.schedule(deadline: .now() + 1, repeating: 1)
         t.setEventHandler { [weak self] in
             guard let self = self else { return }
             let now = Date()
+            if self.profile == .active, self.micMode == .off, self.activateWaiters.isEmpty,
+               now.timeIntervalSince(self.lastTxActivity) > Self.txHoldSeconds,
+               now.timeIntervalSince(self.lastRxActivity) > Self.rxHoldSeconds,
+               self.speakers.values.allSatisfy({ $0.queued == 0 }) {
+                self.switchProfile(.standby, reason: "idle (no TX \(Int(Self.txHoldSeconds)) s, no RX \(Int(Self.rxHoldSeconds)) s)")
+                return
+            }
             for (k, s) in self.speakers where now.timeIntervalSince(s.lastHeard) > 10 && s.queued == 0 {
                 s.player.stop()
                 self.engine.detach(s.player)

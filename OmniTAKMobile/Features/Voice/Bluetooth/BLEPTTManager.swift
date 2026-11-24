@@ -25,7 +25,7 @@ import Foundation
 import CoreBluetooth
 
 /// PTT events from a hardware button. `slot` 1 = primary PTT (VS1), 2 = secondary (VS2).
-enum PTTButtonEvent { case pttDown(slot: Int), pttUp(slot: Int), emergency }
+enum PTTButtonEvent { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool) }
 
 final class BLEPTTManager: NSObject, ObservableObject {
     enum Kind: String { case ainaV2 = "AINA APTT V2", pryme = "Pryme BT-PTT-Z", bt02 = "Inrico BT02" }
@@ -60,6 +60,9 @@ final class BLEPTTManager: NSObject, ObservableObject {
     private var kind: Kind?
     private var lastAinaMask: UInt8 = 0
     private var wantRunning = false
+    /// When set, the first discovered button with this exact name is
+    /// connected automatically (the BLE side of a paired speaker-mic).
+    private var autoConnectName: String?
     private var scanToken = 0
 
     var savedPeripheralId: UUID? {
@@ -97,6 +100,18 @@ final class BLEPTTManager: NSObject, ObservableObject {
             guard let self = self, self.scanToken == token else { return }   // a newer scan owns the timer
             self.stopScan()
         }
+    }
+
+    /// Find and connect the PTT button that belongs to a speaker-mic already
+    /// used for audio (same advertised name, e.g. "B02PTT-B480"). No-op if a
+    /// button is already connected or the operator saved a different one.
+    func autoConnect(matching name: String) {
+        guard connectedName == nil, Self.classify(name: name, services: []) != nil else { return }
+        if let saved = savedPeripheralId,
+           let p = central?.retrievePeripherals(withIdentifiers: [saved]).first, p.name != nil, p.name != name { return }
+        print("[BLEPTT] looking for the PTT button of '\(name)'")
+        autoConnectName = name
+        if !isScanning { startScan() }
     }
 
     func stopScan() {
@@ -161,7 +176,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
             lastAinaMask = mask
             if changed & 0x01 != 0 { emit(mask & 0x01 != 0 ? .pttDown(slot: 1) : .pttUp(slot: 1)) }   // PTT
             if changed & 0x04 != 0 { emit(mask & 0x04 != 0 ? .pttDown(slot: 2) : .pttUp(slot: 2)) }   // PTTS → VS2
-            if changed & 0x02 != 0, mask & 0x02 != 0 { emit(.emergency) }
+            if changed & 0x02 != 0 { emit(.emergency(down: mask & 0x02 != 0)) }        // PTTE edges
         case .pryme:
             emit(b != 0 ? .pttDown(slot: 1) : .pttUp(slot: 1))
         case .bt02:
@@ -169,7 +184,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
             switch b {
             case 0x00: emit(.pttUp(slot: 1))
             case 0x01: emit(.pttDown(slot: 1))
-            case 0x08: emit(.emergency)
+            case 0x08: emit(.emergency(down: true)); emit(.emergency(down: false))   // one-shot pulse = short press
             default: break
             }
         }
@@ -207,10 +222,16 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         let d = Discovered(id: p.identifier, name: name ?? k.rawValue, kind: k, rssi: rssi.intValue)
         if let i = discovered.firstIndex(where: { $0.id == d.id }) { discovered[i].rssi = d.rssi }
         else { discovered.append(d) }
+        if let want = autoConnectName, d.name == want, connectedName == nil {
+            print("[BLEPTT] auto-connecting \(d.name) (\(d.kind.rawValue))")
+            autoConnectName = nil
+            connect(d)
+        }
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
         connectedName = p.name ?? kind?.rawValue
+        print("[BLEPTT] connected \(connectedName ?? "?")")
         status = "Connected: \(connectedName ?? "button")"
         p.discoverServices(nil)
     }

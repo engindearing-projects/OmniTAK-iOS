@@ -82,4 +82,13 @@ protocol VoiceHostBridge: AnyObject {
     /// the CoT-bearing inbound events the host already parses, and the handler
     /// filters to the voice detail types it cares about.
     func registerSignalingCoTHandler(_ handler: @escaping (CoTEvent) -> Bool)
+
+    /// Start (true) or cancel (false) the host's emergency beacon (911 alert,
+    /// CoT b-a-o-tbl) — what a speaker-mic's emergency button does, like
+    /// TAK-XVoice driving ATAK's EmergencyManager. Starting while already
+    /// active is a no-op (the alert has one start → cancel lifecycle).
+    func setEmergency(active: Bool, reason: String)
+
+    /// Whether the host's emergency beacon is currently active.
+    func isEmergencyActive() -> Bool
 }

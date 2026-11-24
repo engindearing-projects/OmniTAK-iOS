@@ -148,4 +148,25 @@ extension AppPluginHost: VoiceHostBridge {
         // this extension lives in a different file, so it can't mutate it directly.
         addSignalingHandler(handler)
     }
+
+    func setEmergency(active: Bool, reason: String) {
+        DispatchQueue.main.async {
+            let svc = EmergencyBeaconService.shared
+            if active {
+                guard !svc.emergencyState.isActive else {
+                    print("[VoiceHostBridge] emergency already active — \(reason)")
+                    return
+                }
+                print("[VoiceHostBridge] emergency START — \(reason)")
+                svc.activateEmergency(type: .alert911)
+            } else {
+                print("[VoiceHostBridge] emergency CANCEL — \(reason)")
+                svc.cancelEmergency()
+            }
+        }
+    }
+
+    func isEmergencyActive() -> Bool {
+        EmergencyBeaconService.shared.emergencyState.isActive
+    }
 }
