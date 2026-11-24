@@ -283,7 +283,10 @@ final class VoicePluginTests: XCTestCase {
         XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x00, previousAinaMask: 0).0, [.pttUp(slot: 1)])
         XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x08, previousAinaMask: 0).0,
                        [.emergency(down: true), .emergency(down: false)])
-        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x03, previousAinaMask: 0).0, [])   // top button unmapped
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x03, previousAinaMask: 0).0, [.function(code: 0x03)])   // top button
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x02, previousAinaMask: 0).0, [.function(code: 0x02)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x04, previousAinaMask: 0).0, [.function(code: 0x04)])
+        XCTAssertEqual(BLEPTTManager.decodeButtons(kind: .bt02, byte: 0x7F, previousAinaMask: 0).0, [])
     }
 
     // MARK: Emergency press/hold

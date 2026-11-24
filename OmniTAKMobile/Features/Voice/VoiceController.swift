@@ -142,6 +142,7 @@ final class VoiceController: ObservableObject {
             case .pttDown(let slot): self?.pttDown(slot: slot, source: .bluetooth)
             case .pttUp(let slot): self?.pttUp(slot: slot, source: .bluetooth)
             case .emergency(let down): self?.onEmergencyButton(down: down)
+            case .function(let code): self?.onFunctionButton(code: code)
             }
         }
         bleCancellable = blePTT.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
@@ -300,6 +301,36 @@ final class VoiceController: ObservableObject {
     private var emergency = EmergencyPressTracker()
     private var emergencyCancelTimer: DispatchWorkItem?
 
+    // MARK: Inrico top button = cancel the emergency alert (double press)
+    //
+    // The BT02 emergency key only ever sends one pulse (a hold or double press
+    // looks the same), so it can't cancel like the AINA's hold. Its top button
+    // (0x03) is free: pressed twice within 2 s while an alert is active, it
+    // cancels the alert. With no alert active it does nothing, and needing two
+    // presses means a bump can't cancel a real emergency.
+    private var lastTopButtonAt: Date?
+
+    func onFunctionButton(code: UInt8) {
+        guard code == 0x03 else {
+            print("[Voice] speaker-mic button 0x\(String(format: "%02x", code)) (unmapped)")
+            return
+        }
+        guard bridge?.isEmergencyActive() == true else {
+            print("[Voice] top button — no emergency active, ignored")
+            lastTopButtonAt = nil
+            return
+        }
+        let now = Date()
+        if let last = lastTopButtonAt, now.timeIntervalSince(last) <= 2 {
+            lastTopButtonAt = nil
+            performEmergency(.cancel, detail: "top button pressed twice")
+        } else {
+            lastTopButtonAt = now
+            print("[Voice] top button — press again within 2 s to cancel the emergency alert")
+            notice = "Press the top button again within 2 s to cancel the emergency alert."
+        }
+    }
+
     func onEmergencyButton(down: Bool) {
         if down {
             emergency.press(at: Date())
@@ -327,7 +358,7 @@ final class VoiceController: ObservableObject {
             notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
         case .cancel:
             print("[Voice] emergency \(detail) — CANCEL")
-            bridge?.setEmergency(active: false, reason: "speaker-mic emergency long-hold")
+            bridge?.setEmergency(active: false, reason: "speaker-mic emergency cancel (\(detail))")
             audio.playTone(VoiceTones.deny())
             notice = "Emergency alert cancelled."
         }

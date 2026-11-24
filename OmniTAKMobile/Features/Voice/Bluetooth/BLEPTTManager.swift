@@ -25,7 +25,9 @@ import Foundation
 import CoreBluetooth
 
 /// PTT events from a hardware button. `slot` 1 = primary PTT (VS1), 2 = secondary (VS2).
-enum PTTButtonEvent: Equatable { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool) }
+/// `function`: a speaker-mic's extra button (Inrico BT02: 0x03 top button,
+/// 0x02 / 0x04 side buttons), one pulse per press.
+enum PTTButtonEvent: Equatable { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool), function(code: UInt8) }
 
 final class BLEPTTManager: NSObject, ObservableObject {
     /// rawValue is persisted (saved button kind) — don't change it.
@@ -235,6 +237,9 @@ final class BLEPTTManager: NSObject, ObservableObject {
             case 0x00: return ([.pttUp(slot: 1)], previousAinaMask)
             case 0x01: return ([.pttDown(slot: 1)], previousAinaMask)
             case 0x08: return ([.emergency(down: true), .emergency(down: false)], previousAinaMask)
+            // Probed on device: top button 0x03, side buttons 0x02 / 0x04 —
+            // single pulses, no release.
+            case 0x02, 0x03, 0x04: return ([.function(code: b)], previousAinaMask)
             default: return ([], previousAinaMask)
             }
         }
@@ -346,12 +351,31 @@ extension BLEPTTManager: CBPeripheralDelegate {
                 if inService, ch.properties.contains(.notify) { p.setNotifyValue(true, for: ch) }
             case .bt02:
                 if ch.uuid == UUIDs.bt02Button { p.setNotifyValue(true, for: ch) }
+                #if DEBUG
+                if ch.uuid != UUIDs.bt02Button,
+                   ch.properties.contains(.notify) || ch.properties.contains(.indicate) {
+                // PROBE (Inrico): subscribe to every notifying/indicating
+                // characteristic and log raw bytes, to find out what a long
+                // hold / double press of the emergency key, or the other
+                // buttons, actually send (e.g. something usable to cancel a
+                // 911 alert). Decoding still only uses the button char.
+                    print("[BLEPTT] probe: subscribing \(s.uuid.uuidString) / \(ch.uuid.uuidString) (props 0x\(String(ch.properties.rawValue, radix: 16)))")
+                    p.setNotifyValue(true, for: ch)
+                }
+                #endif
             }
         }
     }
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         guard error == nil, let v = ch.value else { return }
+        #if DEBUG
+        if kind == .bt02 {
+            let hex = v.map { String(format: "%02x", $0) }.joined(separator: " ")
+            let t = { () -> String in let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f.string(from: Date()) }()
+            print("[BLEPTT] probe \(t) \(ch.uuid.uuidString.prefix(8)): [\(hex)]")
+        }
+        #endif
         if kind == .ainaV2, ch.uuid == UUIDs.ainaConfig {
             // Only ever OR in the A2DP-controls-disable bit; other bits can brick the device.
             guard let cur = v.first, cur & Self.ainaA2dpControlsDisable == 0 else { return }
