@@ -303,13 +303,11 @@ struct CustomToolbar: View {
             value: wigglePhase
         )
         .gesture(store.isEditing ? reorderGesture(item: item, displayIndex: displayIndex) : nil)
-        .accessibilityActions {
-            // VoiceOver can't drag: offer the same reorder as actions.
-            if store.isEditing {
-                Button(loc.t("toolbar.moveLeft")) { moveVisible(item, by: -1) }
-                Button(loc.t("toolbar.moveRight")) { moveVisible(item, by: 1) }
-            }
-        }
+        .modifier(ReorderAccessibility(
+            enabled: store.isEditing,
+            moveLeftLabel: loc.t("toolbar.moveLeft"),
+            moveRightLabel: loc.t("toolbar.moveRight"),
+            move: { moveVisible(item, by: $0) }))
     }
 
     /// Move an item one VISIBLE position left (-1) or right (+1), mapping to
@@ -409,6 +407,26 @@ struct CustomToolbar: View {
     private func isTabActive(_ item: BarItem) -> Bool {
         if case .tab(let t) = item.kind { return selectedTab == t }
         return false
+    }
+}
+
+/// VoiceOver can't drag, so in edit mode each item offers the same reorder as
+/// "Move left" / "Move right" actions. (accessibilityAction(named:) rather
+/// than accessibilityActions {}, which needs iOS 16.)
+private struct ReorderAccessibility: ViewModifier {
+    let enabled: Bool
+    let moveLeftLabel: String
+    let moveRightLabel: String
+    let move: (Int) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .accessibilityAction(named: Text(moveLeftLabel)) { move(-1) }
+                .accessibilityAction(named: Text(moveRightLabel)) { move(1) }
+        } else {
+            content
+        }
     }
 }
 
