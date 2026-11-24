@@ -174,7 +174,9 @@ final class VoiceController: ObservableObject {
         nativePTT.onAudioActivated = { [weak self] in self?.audio.systemDidActivate() }
         nativePTT.onAudioDeactivated = { [weak self] in
             guard let self = self else { return }
-            if self.txState != .idle {
+            // While ACQUIRING, the system may recycle the session (off, then on
+            // for the new transmission): keep waiting for the activation.
+            if self.txState != .idle && self.txState != .acquiring {
                 print("[Voice] system deactivated audio mid-burst — ending it")
                 self.held = [1: [], 2: []]
                 self.stopBurst()
@@ -187,11 +189,22 @@ final class VoiceController: ObservableObject {
             // button and hands-free buttons start a burst on PTT 1.
             if source != .developerRequest && self.txState == .idle && self.pressedSlot == nil {
                 self.pttDown(slot: 1, source: .system)
+            } else if source == .developerRequest && self.txState == .acquiring && self.requestedSystemTX {
+                // Our own request went through: now wait for the audio session.
+                self.waitForAudioThenPrime()
             }
         }
         nativePTT.onTransmitEnded = { [weak self] source in
             guard let self = self else { return }
             self.requestedSystemTX = false
+            defer {
+                // With nobody talking, the system deactivates the session right
+                // after a transmission ends. Treat audio as gone now, so the next
+                // press waits for a fresh activation instead of racing it.
+                if !self.nativePTT.hasRemoteParticipant && self.txState == .idle {
+                    self.audio.systemDidDeactivate()
+                }
+            }
             if self.held[1, default: []].contains(.system) || self.held[2, default: []].contains(.system) {
                 self.pttUp(slot: self.pressedSlot ?? 1, source: .system)
             } else if source != .developerRequest, self.txState != .idle {
@@ -682,35 +695,41 @@ final class VoiceController: ObservableObject {
         armTxTimeout()
         burstHFP = hfp
         burstCold = hfp && standby
-        // Apple PushToTalk: every burst is a system transmission; the system
-        // activates the audio session (didActivate → engine) when it begins.
-        if source != .system && !dryRun {
+        // Apple PushToTalk: every burst is a system transmission. The audio
+        // session signals lag behind presses, so a press first waits for ITS
+        // OWN "transmit began" (ACQUIRING), and only then for the session —
+        // a stale activate/deactivate from a previous press is ignored.
+        txState = .acquiring
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self = self, self.txState == .acquiring else { return }
+            print("[Voice] the system didn't start the transmission / audio within 4 s — giving up")
+            self.notice = "Couldn't start transmitting (audio not available)."
+            self.audio.cancelActivationWaiters()
+            self.held = [1: [], 2: []]
+            self.stopBurst()
+        }
+        acquireTimer = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: timeout)
+        if source == .system || dryRun {
+            // The system already began transmitting (its Talk button / a
+            // hands-free button), or no system transmission in a dry run.
+            print("[Voice] \(Self.ts()) ACQUIRING audio (\(source == .system ? "system Talk button" : "dry run"))")
+            waitForAudioThenPrime()
+        } else {
+            print("[Voice] \(Self.ts()) ACQUIRING (asking the system to transmit)")
             requestedSystemTX = true
             nativePTT.beginTransmitting()
         }
-        if standby {
-            // ACQUIRING: wait for the system to activate audio (mic + Bluetooth
-            // link), up to 3 s (Android SCO_WARMUP), then PRIMING.
-            txState = .acquiring
-            print("[Voice] \(Self.ts()) ACQUIRING audio (waiting for the system)")
-            let timeout = DispatchWorkItem { [weak self] in
-                guard let self = self, self.txState == .acquiring else { return }
-                print("[Voice] the system didn't activate audio within 3 s — giving up")
-                self.notice = "Couldn't start transmitting (audio not available)."
-                self.audio.cancelActivationWaiters()
-                self.held = [1: [], 2: []]
-                self.stopBurst()
-            }
-            acquireTimer = timeout
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timeout)
-            audio.activate("PTT") { [weak self] in
-                guard let self = self, self.txState == .acquiring else { return }
-                self.acquireTimer?.cancel(); self.acquireTimer = nil
-                self.burstHFP = self.audio.usesBluetoothHFP
-                self.startPriming()
-            }
-        } else {
-            startPriming()
+    }
+
+    /// After the system began our transmission: wait for the audio session
+    /// (immediately if it is already up), then PRIMING.
+    private func waitForAudioThenPrime() {
+        audio.activate("PTT") { [weak self] in
+            guard let self = self, self.txState == .acquiring else { return }
+            self.acquireTimer?.cancel(); self.acquireTimer = nil
+            self.burstHFP = self.audio.usesBluetoothHFP
+            self.startPriming()
         }
     }
 
