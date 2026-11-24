@@ -120,6 +120,7 @@
 		3192FC7F36458549D30B2536 /* OpenDroneIdMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA945C069E5E828101C96C /* OpenDroneIdMessage.swift */; };
 		323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A42F35542E714D9F02B359A /* AppPluginHost.swift */; };
 		9D4EFAE35F91677D04367286 /* NativePTTManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */; };
+		9B1A3AD49904A3824796C074 /* TransmitGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2ACB0D2808505D72396A294 /* TransmitGate.swift */; };
 		B07D60593A0D37A15DC8A39E /* IconImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08D87E68781371B6D34EAE93 /* IconImage.swift */; };
 		F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */; };
 		4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8082169F4979938A0F7FA324 /* VoiceTones.swift */; };
@@ -495,6 +496,7 @@
 		F81269402CB71F4BF231A86B /* DataPackageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27AFF7080BC1929C0AFE3ACB /* DataPackageManager.swift */; };
 		F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */; };
 		992F3CBAE5D09F95B1494FD4 /* VoicePluginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */; };
+		264FC08ED0EA6D4E98E6719B /* TransmitGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85C93DF22960AEC8D2F66DA8 /* TransmitGateTests.swift */; };
 		F887E26E229854DF18D1F96B /* SFAPMHQ----.svg in Resources */ = {isa = PBXBuildFile; fileRef = AE725B92EA137887258221CB /* SFAPMHQ----.svg */; };
 		F9A4209563B079DBC2B05FD7 /* SHGPUC-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 2E68A74AC57A313668A716ED /* SHGPUC-----.svg */; };
 		F9E1491477B06406FB3F8370 /* SFGPUULC---.svg in Resources */ = {isa = PBXBuildFile; fileRef = D4EB93CD70E0285BEEAFF8C2 /* SFGPUULC---.svg */; };
@@ -641,6 +643,7 @@
 		39F6E5D7A7C95BE91E8BE483 /* QuickActionToolbar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickActionToolbar.swift; path = OmniTAKMobile/Shared/UI/Components/QuickActionToolbar.swift; sourceTree = "<group>"; };
 		3A42F35542E714D9F02B359A /* AppPluginHost.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppPluginHost.swift; path = OmniTAKMobile/Core/Plugin/AppPluginHost.swift; sourceTree = "<group>"; };
 		9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NativePTTManager.swift; path = OmniTAKMobile/Features/Voice/NativePTT/NativePTTManager.swift; sourceTree = "<group>"; };
+		A2ACB0D2808505D72396A294 /* TransmitGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TransmitGate.swift; path = OmniTAKMobile/Features/Voice/NativePTT/TransmitGate.swift; sourceTree = "<group>"; };
 		08D87E68781371B6D34EAE93 /* IconImage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconImage.swift; path = OmniTAKMobile/Shared/UI/Components/IconImage.swift; sourceTree = "<group>"; };
 		F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmergencyPressTracker.swift; path = OmniTAKMobile/Features/Voice/Bluetooth/EmergencyPressTracker.swift; sourceTree = "<group>"; };
 		8082169F4979938A0F7FA324 /* VoiceTones.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceTones.swift; path = OmniTAKMobile/Features/Voice/Audio/VoiceTones.swift; sourceTree = "<group>"; };
@@ -933,6 +936,7 @@
 		809E8C5B4560FABB17AAF3AE /* MBTilesOverlayStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MBTilesOverlayStoreTests.swift; path = OmniTAKMobileTests/MBTilesOverlayStoreTests.swift; sourceTree = "<group>"; };
 		C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PluginSDKTests.swift; path = OmniTAKMobileTests/PluginSDKTests.swift; sourceTree = "<group>"; };
 		9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoicePluginTests.swift; path = OmniTAKMobileTests/VoicePluginTests.swift; sourceTree = "<group>"; };
+		85C93DF22960AEC8D2F66DA8 /* TransmitGateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TransmitGateTests.swift; path = OmniTAKMobileTests/TransmitGateTests.swift; sourceTree = "<group>"; };
 		C644AA06A8883B0013638A4E /* OpenDroneIdParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OpenDroneIdParserTests.swift; path = OmniTAKMobileTests/OpenDroneIdParserTests.swift; sourceTree = "<group>"; };
 		C79FECE8C2536E714592CD83 /* SHGPUCS----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPUCS----.svg"; sourceTree = "<group>"; };
 		C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticManager.swift; path = OmniTAKMobile/Features/Meshtastic/Managers/MeshtasticManager.swift; sourceTree = "<group>"; };
@@ -2267,6 +2271,7 @@
 				1D95E31A4FB55F17B88EDA43 /* PluginRegistry.swift */,
 				3A42F35542E714D9F02B359A /* AppPluginHost.swift */,
 				9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */,
+				A2ACB0D2808505D72396A294 /* TransmitGate.swift */,
 				08D87E68781371B6D34EAE93 /* IconImage.swift */,
 				F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */,
 				8082169F4979938A0F7FA324 /* VoiceTones.swift */,
@@ -2285,6 +2290,7 @@
 				5821A1F45BE3F2985B6BAB51 /* ADSBStatusOverlay.swift */,
 				C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */,
 				9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */,
+				85C93DF22960AEC8D2F66DA8 /* TransmitGateTests.swift */,
 				771357A62E95D5EECDB9E041 /* MeshFramework.swift */,
 				621CB29178D35F0EF1EE7268 /* Meshtastic+MeshProtocols.swift */,
 				55FD474B6A8250F778891C09 /* MeshCoreFrameCodec.swift */,
@@ -3125,6 +3131,7 @@
 				EABE994F076F698CA4AF2DF0 /* LoopbackTAKServer.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
 				992F3CBAE5D09F95B1494FD4 /* VoicePluginTests.swift in Sources */,
+				264FC08ED0EA6D4E98E6719B /* TransmitGateTests.swift in Sources */,
 				C5C06A972D151475A44BC316 /* MeshCoreFrameCodecTests.swift in Sources */,
 				A7CB00010000000000B00001 /* MeshChannelApplyTests.swift in Sources */,
 				CF000005B000000000000001 /* ConfigProfileTests.swift in Sources */,
@@ -3433,6 +3440,7 @@
 				DFE366B176992E3CE85E10BF /* PluginRegistry.swift in Sources */,
 				323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */,
 				9D4EFAE35F91677D04367286 /* NativePTTManager.swift in Sources */,
+				9B1A3AD49904A3824796C074 /* TransmitGate.swift in Sources */,
 				B07D60593A0D37A15DC8A39E /* IconImage.swift in Sources */,
 				F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */,
 				4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */,

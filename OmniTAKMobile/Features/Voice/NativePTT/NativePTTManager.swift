@@ -47,28 +47,10 @@ final class NativePTTManager: NSObject {
 
     private var manager: PTChannelManager?
     private(set) var isJoined = false
-    private(set) var isTransmitting = false
-    /// Our requestBeginTransmitting is out and the system hasn't answered yet
-    /// (didBegin / failedToBegin). It answers 10-200 ms later.
-    private var beginRequestedAt: Date?
-    /// Released while the begin request was still in flight: stop the
-    /// transmission the moment the system reports it began. Without this a
-    /// quick tap left the system transmitting with nobody behind it, and the
-    /// next press failed until the 4 s acquire timeout.
-    private var stopWhenBegun = false
-    /// A begin request older than this is treated as lost (never answered).
-    private static let beginRequestTimeout: TimeInterval = 3
-    /// We asked the system to stop and it hasn't reported didEnd yet. Soon
-    /// after a transmission starts the system can refuse a stop with
-    /// transmissionNotFound (seen on device, for quick taps AND normal
-    /// releases): every refused stop is retried until it takes.
-    private var stopInFlight = false
-    private var stopAttempts = 0
-    private static let stopRetries = 6
-    private static let stopRetryDelay: TimeInterval = 0.15
-    /// Pressed while a stop was still going through: request a new
-    /// transmission as soon as the old one has ended.
-    private var beginAfterEnd = false
+    /// Transmit state machine (see TransmitGate): quick taps, refused stops,
+    /// queued re-presses. This class only carries out its actions.
+    private var gate = TransmitGate()
+    var isTransmitting: Bool { gate.isTransmitting }
     private var currentDescriptorName = "X Voice"
     private var participantName: String?
     private var pendingJoin = false
@@ -156,61 +138,43 @@ final class NativePTTManager: NSObject {
     // MARK: - Transmit / receive
 
     func beginTransmitting() {
-        guard let mgr = manager, isJoined else {
+        guard manager != nil, isJoined else {
             onTransmitFailed?(NSError(domain: "NativePTT", code: 1,
                                       userInfo: [NSLocalizedDescriptionKey: "X Voice channel not joined"]))
             return
         }
-        if isTransmitting {
-            if stopInFlight {
-                // The previous transmission is still being stopped: start a new
-                // one the moment it has ended (didEnd).
-                beginAfterEnd = true
-                print("[NativePTT] pressed while the last transmission is still stopping — will begin when it ends")
-            } else {
-                // The system is transmitting with nobody behind it: take it.
-                print("[NativePTT] pressed while the system is already transmitting — using that transmission")
-                onTransmitBegan?(.developerRequest)
-            }
-            return
-        }
-        if let at = beginRequestedAt, Date().timeIntervalSince(at) < Self.beginRequestTimeout {
-            // Pressed again before the system answered the previous request:
-            // that request carries this press — just cancel the pending stop.
-            stopWhenBegun = false
-            return
-        }
-        beginRequestedAt = Date()
-        stopWhenBegun = false
-        mgr.requestBeginTransmitting(channelUUID: Self.channelUUID)
+        run(gate.press(now: Date()))
     }
 
+    /// A release, or any abort of the current press.
     func stopTransmitting() {
-        // Any stop cancels a queued press, whatever state we're in. (A system
-        // end — e.g. a phone call — arrives with isTransmitting already false;
-        // the controller's abort must still drop the queued press, or didEnd
-        // would start a transmission for a press that was just cancelled.)
-        beginAfterEnd = false
-        guard let mgr = manager, isJoined else { return }
-        if isTransmitting {
-            if stopInFlight {
-                // Released while waiting for the old transmission to end: the
-                // stop is already going through.
-                return
-            }
-            requestStop()
-        } else if beginRequestedAt != nil {
-            stopWhenBegun = true
-            print("[NativePTT] released before the system began transmitting — will stop it when it does")
-        }
+        run(gate.release())
     }
 
-    /// Ask the system to stop, retried on refusal (see `stopInFlight`).
-    private func requestStop() {
-        stopInFlight = true
-        stopAttempts = 1
-        beginAfterEnd = false
-        manager?.stopTransmitting(channelUUID: Self.channelUUID)
+    /// Carry out the gate's actions. `systemSource`: the framework's source
+    /// for a system-initiated begin/end, passed through to the controller.
+    private func run(_ actions: [TransmitGate.Action], systemSource: PTChannelTransmitRequestSource? = nil) {
+        for action in actions {
+            switch action {
+            case .requestBegin:
+                guard let mgr = manager, isJoined else { continue }
+                mgr.requestBeginTransmitting(channelUUID: Self.channelUUID)
+            case .requestStop:
+                guard let mgr = manager, isJoined else { continue }
+                mgr.stopTransmitting(channelUUID: Self.channelUUID)
+            case .scheduleStopRetry:
+                DispatchQueue.main.asyncAfter(deadline: .now() + TransmitGate.stopRetryDelay) { [weak self] in
+                    guard let self = self else { return }
+                    self.run(self.gate.stopRetryFired())
+                }
+            case .notifyBegan(let source):
+                onTransmitBegan?(source == .ours ? .developerRequest : (systemSource ?? .unknown))
+            case .notifyEnded(let source):
+                onTransmitEnded?(source == .ours ? .developerRequest : (systemSource ?? .unknown))
+            case .log(let message):
+                print("[NativePTT] \(VoiceAudioEngine.ts()) \(message)")
+            }
+        }
     }
 
     /// Incoming audio: name the talker (the system UI shows it and activates
@@ -263,11 +227,7 @@ extension NativePTTManager: PTChannelManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.isJoined = false
-            self.isTransmitting = false
-            self.beginRequestedAt = nil
-            self.stopWhenBegun = false
-            self.stopInFlight = false
-            self.beginAfterEnd = false
+            self.gate.reset()
             self.participantName = nil
             print("[NativePTT] left channel (reason \(reason.rawValue))")
             self.onLeftChannel?(reason)
@@ -278,38 +238,23 @@ extension NativePTTManager: PTChannelManagerDelegate {
         let t = VoiceAudioEngine.ts()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.isTransmitting = true
             print("[NativePTT] \(t) transmit began (source \(source.rawValue))")
-            if source == .developerRequest, self.beginRequestedAt != nil {
-                self.beginRequestedAt = nil
-                if self.stopWhenBegun {
-                    // The operator already let go: end it now, don't start a burst.
-                    self.stopWhenBegun = false
-                    print("[NativePTT] \(t) stopping a transmission released before it began")
-                    self.requestStop()
-                    return
-                }
-            }
-            self.onTransmitBegan?(source)
+            self.run(self.gate.didBegin(Self.transmitSource(source)), systemSource: source)
         }
     }
 
     func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didEndTransmittingFrom source: PTChannelTransmitRequestSource) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.isTransmitting = false
-            self.beginRequestedAt = nil
-            self.stopWhenBegun = false
-            self.stopInFlight = false
             print("[NativePTT] transmit ended (source \(source.rawValue))")
-            self.onTransmitEnded?(source)
-            if self.beginAfterEnd {
-                // A press came in while this one was stopping: start it now.
-                self.beginAfterEnd = false
-                print("[NativePTT] previous transmission ended — beginning the queued press")
-                self.beginTransmitting()
-            }
+            // Notify first: the controller may abort a queued press (release()).
+            self.run(self.gate.didEnd(Self.transmitSource(source)), systemSource: source)
+            self.run(self.gate.afterEndNotified(now: Date()))
         }
+    }
+
+    private static func transmitSource(_ source: PTChannelTransmitRequestSource) -> TransmitSource {
+        source == .developerRequest ? .ours : .system
     }
 
     func channelManager(_ channelManager: PTChannelManager, receivedEphemeralPushToken pushToken: Data) {
@@ -353,9 +298,7 @@ extension NativePTTManager: PTChannelManagerDelegate {
     func channelManager(_ channelManager: PTChannelManager, failedToBeginTransmittingInChannel channelUUID: UUID, error: Error) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.isTransmitting = false
-            self.beginRequestedAt = nil
-            self.stopWhenBegun = false
+            self.gate.failedToBegin()
             print("[NativePTT] failed to begin transmitting: \(error)")
             self.onTransmitFailed?(error)
         }
@@ -365,25 +308,7 @@ extension NativePTTManager: PTChannelManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             print("[NativePTT] failed to stop transmitting: \(error)")
-            guard self.stopInFlight, self.isTransmitting else { return }
-            guard self.stopAttempts < Self.stopRetries else {
-                // The system won't stop it. Never leave the operator stuck: a
-                // queued press takes the transmission; otherwise the next press
-                // will (beginTransmitting with no stop in flight).
-                self.stopInFlight = false
-                print("[NativePTT] the system kept refusing the stop")
-                if self.beginAfterEnd {
-                    self.beginAfterEnd = false
-                    self.onTransmitBegan?(.developerRequest)
-                }
-                return
-            }
-            self.stopAttempts += 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.stopRetryDelay) { [weak self] in
-                guard let self = self, self.stopInFlight, self.isTransmitting else { return }
-                print("[NativePTT] retrying the stop (attempt \(self.stopAttempts))")
-                self.manager?.stopTransmitting(channelUUID: Self.channelUUID)
-            }
+            self.run(self.gate.failedToStop())
         }
     }
 }
