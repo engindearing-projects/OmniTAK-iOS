@@ -112,6 +112,8 @@ struct VoicePluginSettingsView: View {
 
             Section {
                 row("Button", controller.blePTT.connectedName ?? "None")
+                row("Talks on", (controller.blePTT.connectedName ?? "").uppercased().hasPrefix("APTT")
+                    ? "PTT 1 (secondary button: PTT 2)" : "PTT 1 only")
                 row("Status", controller.blePTT.status)
                 Button(controller.blePTT.isScanning ? "Scanning…" : "Scan for PTT buttons") {
                     controller.blePTT.startScan()
@@ -135,9 +137,9 @@ struct VoicePluginSettingsView: View {
                     Button("Forget button", role: .destructive) { controller.blePTT.forget() }
                 }
             } header: {
-                Text("Bluetooth PTT button")
+                Text("Bluetooth PTT button — PTT 1 only")
             } footer: {
-                Text("Supported: AINA APTT V1 and V2, Pryme BT-PTT-Z, Inrico BT02 — connected automatically when the speaker-mic is in use. Pair a speaker-mic's audio in iOS Settings → Bluetooth; voice then uses it automatically.")
+                Text("Bluetooth buttons talk on voice slot 1 (PTT 1) only. They never key PTT 2 — use the on-screen PTT 2 button for the second channel. The one exception is the AINA's secondary button, which keys PTT 2.\n\nSupported: AINA APTT V1 and V2, Pryme BT-PTT-Z, Inrico BT02 — connected automatically when the speaker-mic is in use. Pair a speaker-mic's audio in iOS Settings → Bluetooth; voice then uses it automatically. Don't pair a Pryme button in iOS Settings: X Voice connects to it directly.")
             }
 
             Section {
