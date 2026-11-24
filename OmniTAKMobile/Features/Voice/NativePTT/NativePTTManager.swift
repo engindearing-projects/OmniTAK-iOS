@@ -186,12 +186,16 @@ final class NativePTTManager: NSObject {
     }
 
     func stopTransmitting() {
+        // Any stop cancels a queued press, whatever state we're in. (A system
+        // end — e.g. a phone call — arrives with isTransmitting already false;
+        // the controller's abort must still drop the queued press, or didEnd
+        // would start a transmission for a press that was just cancelled.)
+        beginAfterEnd = false
         guard let mgr = manager, isJoined else { return }
         if isTransmitting {
             if stopInFlight {
                 // Released while waiting for the old transmission to end: the
-                // stop is already going through; just drop the queued begin.
-                beginAfterEnd = false
+                // stop is already going through.
                 return
             }
             requestStop()
@@ -246,7 +250,8 @@ final class NativePTTManager: NSObject {
 
 extension NativePTTManager: PTChannelManagerDelegate {
     func channelManager(_ channelManager: PTChannelManager, didJoinChannel channelUUID: UUID, reason: PTChannelJoinReason) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isJoined = true
             print("[NativePTT] joined channel (reason \(reason.rawValue))")
             self.configureChannel()
@@ -255,7 +260,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
     }
 
     func channelManager(_ channelManager: PTChannelManager, didLeaveChannel channelUUID: UUID, reason: PTChannelLeaveReason) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isJoined = false
             self.isTransmitting = false
             self.beginRequestedAt = nil
@@ -270,7 +276,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
 
     func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didBeginTransmittingFrom source: PTChannelTransmitRequestSource) {
         let t = VoiceAudioEngine.ts()
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isTransmitting = true
             print("[NativePTT] \(t) transmit began (source \(source.rawValue))")
             if source == .developerRequest, self.beginRequestedAt != nil {
@@ -288,7 +295,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
     }
 
     func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didEndTransmittingFrom source: PTChannelTransmitRequestSource) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isTransmitting = false
             self.beginRequestedAt = nil
             self.stopWhenBegun = false
@@ -319,28 +327,32 @@ extension NativePTTManager: PTChannelManagerDelegate {
 
     func channelManager(_ channelManager: PTChannelManager, didActivate audioSession: AVAudioSession) {
         let t = VoiceAudioEngine.ts()
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             print("[NativePTT] \(t) audio session ACTIVATED by the system")
             self.onAudioActivated?()
         }
     }
 
     func channelManager(_ channelManager: PTChannelManager, didDeactivate audioSession: AVAudioSession) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             print("[NativePTT] audio session deactivated by the system")
             self.onAudioDeactivated?()
         }
     }
 
     func channelManager(_ channelManager: PTChannelManager, failedToJoinChannel channelUUID: UUID, error: Error) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             print("[NativePTT] failed to join channel: \(error)")
             self.pendingJoin = true   // retry on next foreground
         }
     }
 
     func channelManager(_ channelManager: PTChannelManager, failedToBeginTransmittingInChannel channelUUID: UUID, error: Error) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.isTransmitting = false
             self.beginRequestedAt = nil
             self.stopWhenBegun = false
@@ -350,7 +362,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
     }
 
     func channelManager(_ channelManager: PTChannelManager, failedToStopTransmittingInChannel channelUUID: UUID, error: Error) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             print("[NativePTT] failed to stop transmitting: \(error)")
             guard self.stopInFlight, self.isTransmitting else { return }
             guard self.stopAttempts < Self.stopRetries else {
@@ -366,8 +379,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
                 return
             }
             self.stopAttempts += 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.stopRetryDelay) {
-                guard self.stopInFlight, self.isTransmitting else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.stopRetryDelay) { [weak self] in
+                guard let self = self, self.stopInFlight, self.isTransmitting else { return }
                 print("[NativePTT] retrying the stop (attempt \(self.stopAttempts))")
                 self.manager?.stopTransmitting(channelUUID: Self.channelUUID)
             }

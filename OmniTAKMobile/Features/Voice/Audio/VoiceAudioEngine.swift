@@ -151,7 +151,6 @@ final class VoiceAudioEngine {
                                           sampleRate: sampleRate, channels: 1, interleaved: false) ?? AVAudioFormat()
     private lazy var opusTxFormat: AVAudioFormat? = opusFormat(samples: Int(Self.frameSamples))
 
-    var isRunning: Bool { queue.sync { running } }
 
     static func ts() -> String {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f.string(from: Date())
@@ -380,11 +379,15 @@ final class VoiceAudioEngine {
         case .active:
             try session.setCategory(.playAndRecord, mode: .voiceChat,
                                     options: [.allowBluetooth, .defaultToSpeaker])
-            try? session.setPreferredIOBufferDuration(0.02)
+            do { try session.setPreferredIOBufferDuration(0.02) } catch {
+                print("[VoiceAudio] preferred IO buffer not applied: \(error.localizedDescription)")
+            }
         case .standby:
             try session.setCategory(.playback, mode: .default, options: [])
         }
-        try? session.setPreferredSampleRate(Self.sampleRate)
+        do { try session.setPreferredSampleRate(Self.sampleRate) } catch {
+            print("[VoiceAudio] preferred sample rate not applied: \(error.localizedDescription)")
+        }
         // No setActive: the PushToTalk system activates the session.
     }
 
@@ -577,8 +580,12 @@ final class VoiceAudioEngine {
                     let secs = Double(samples.count) / Self.sampleRate + 0.25
                     DispatchQueue.main.asyncAfter(deadline: .now() + secs) {
                         self.cuePlayer = nil
-                        let standby = self.queue.sync { self.profile == .standby }
-                        if standby { try? session.setActive(false, options: .notifyOthersOnDeactivation) }
+                        // Lock-protected read: queue.sync here blocked the main thread
+                        // whenever the audio queue was busy (e.g. an engine start).
+                        guard self.isStandby else { return }
+                        do { try session.setActive(false, options: .notifyOthersOnDeactivation) } catch {
+                            print("[VoiceAudio] session release after the cue failed: \(error.localizedDescription)")
+                        }
                     }
                     print("[VoiceAudio] cue played outside PTT (\(Int(secs * 1000)) ms)")
                 } catch {
@@ -773,7 +780,7 @@ final class VoiceAudioEngine {
     /// Tap thread. Resample/downmix to 48 kHz mono float.
     private func convertToPCM(_ buffer: AVAudioPCMBuffer) -> [Float] {
         gateLock.lock(); var c = tapConverter; gateLock.unlock()
-        if c == nil || c!.inputFormat != buffer.format {
+        if c?.inputFormat != buffer.format {   // nil converter also rebuilds
             // Route changed (e.g. Bluetooth HFP at 16 kHz) without an engine
             // config notification: adapt to the format actually arriving.
             c = AVAudioConverter(from: buffer.format, to: pcmFormat)

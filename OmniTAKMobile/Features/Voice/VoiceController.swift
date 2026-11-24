@@ -439,8 +439,11 @@ final class VoiceController: ObservableObject {
             if UserDefaults.standard.bool(forKey: "XVoiceSelfTest") {
                 started = true
                 requestMic { [weak self] ok in
-                    guard let self = self, ok, (try? self.audio.start()) != nil else {
-                        print("[SelfTest] cannot start audio (mic permission?)"); return
+                    guard let self = self, ok else {
+                        print("[SelfTest] cannot start audio: no mic permission"); return
+                    }
+                    do { try self.audio.start() } catch {
+                        print("[SelfTest] cannot start audio: \(error.localizedDescription)"); return
                     }
                     self.setSlot(1, .connected, "Connected (self-test, no server)")
                     self.runSelfTestIfRequested()
