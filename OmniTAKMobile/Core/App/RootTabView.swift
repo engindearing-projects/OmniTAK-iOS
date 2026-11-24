@@ -182,6 +182,9 @@ struct RootTabView: View {
             mapEngineRaw = (mapEngine == .cesium3D ? MapEngine.mapbox2D : MapEngine.cesium3D).rawValue
         case .openTool(let id):
             NotificationCenter.default.post(name: .openToolSheet, object: nil, userInfo: ["id": id])
+        case .voice:
+            selectedTab = .map
+            NotificationCenter.default.post(name: .openVoicePanel, object: nil)
         }
     }
 

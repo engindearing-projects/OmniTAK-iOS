@@ -39,6 +39,7 @@ enum BarCommand: Equatable {
     case drawingsList   // open the saved-drawings list
     case dropPin        // drop a marker at the current map center
     case engineToggle   // flip between 3D Globe and 2D Map
+    case voice          // open the Voice (PTT) plugin panel (channels, settings)
     case openTool(String) // open a specific ATAKTool sheet by its id
 }
 
@@ -105,6 +106,7 @@ extension BarItem {
         BarItem(id: "cmd.drawingslist", label: "Drawings", icon: "list.bullet.rectangle",          tint: BarTint.settings, kind: .command(.drawingsList)),
         BarItem(id: "cmd.lasso",        label: "Select",   icon: "lasso",                          tint: BarTint.orange, kind: .command(.lasso)),
         BarItem(id: "cmd.engine",       label: "2D / 3D",  icon: "globe.americas.fill",            tint: BarTint.map,    kind: .command(.engineToggle)),
+        BarItem(id: "cmd.voice",        label: "X Voice",  icon: "mic.circle.fill",                tint: BarTint.chat,   kind: .command(.voice)),
     ]
 
     /// Tool shortcuts — open the exact same sheets the 5x4 grid opens, via
@@ -211,6 +213,8 @@ final class ToolbarConfigStore: ObservableObject {
             return PluginSettingsManager.shared.isToolEnabled("measure")
         case .command(.drawing):
             return PluginSettingsManager.shared.isToolEnabled("drawing")
+        case .command(.voice):
+            return PluginSettingsManager.shared.isRegisteredPluginEnabled("com.atakmap.android.xv.plugin")
         default:
             return true
         }
@@ -294,6 +298,9 @@ extension Notification.Name {
     static let openToolSheet = Notification.Name("openToolSheet")
     /// Drop a marker at the current map center. Observed by the map.
     static let barDropPin = Notification.Name("barDropPin")
+    /// Open the Voice (PTT) plugin panel. Observed by the voice plugin's map
+    /// overlay, which is only mounted while the plugin is enabled.
+    static let openVoicePanel = Notification.Name("openVoicePanel")
     /// Ask the bar to enter edit mode (from Settings / Tools popup).
     static let enterToolbarEditMode = Notification.Name("enterToolbarEditMode")
 }

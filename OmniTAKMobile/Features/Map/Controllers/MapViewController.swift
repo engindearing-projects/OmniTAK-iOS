@@ -1731,9 +1731,12 @@ struct ATAKMapView: View {
     /// engine-agnostic `mapChrome` (NOT inside cesiumEngineView /
     /// mapboxEngineView), every plugin overlay shows on BOTH engines. zIndex
     /// 1500 keeps it above the map / static chrome and below the radial menu
-    /// (3000). Overlays are non-interactive by default so they never steal
-    /// map gestures; a plugin that needs hit-testing renders its own
-    /// interactive controls.
+    /// (3000). The container itself is transparent to touches (Color.clear,
+    /// and an empty overlay such as ADS-B's EmptyView, are not hit-tested),
+    /// so empty areas still reach the map. Only a plugin's own visible
+    /// controls (e.g. the voice PTT button) receive touches. A container-level
+    /// `.allowsHitTesting(false)` here used to disable those controls too,
+    /// letting a press on them fall through to the map's long-press.
     @ViewBuilder
     private var registeredPluginOverlays: some View {
         if !pluginHost.mapOverlays.isEmpty {
@@ -1741,7 +1744,6 @@ struct ATAKMapView: View {
                 Color.clear
                     .overlay(entry.view())
                     .ignoresSafeArea()
-                    .allowsHitTesting(false)
                     .zIndex(1500)
             }
         }
