@@ -146,6 +146,10 @@ final class VoiceAudioEngine {
 
     var isRunning: Bool { queue.sync { running } }
 
+    static func ts() -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f.string(from: Date())
+    }
+
     #if DEBUG
     /// Self-test leak probe: for the first frames of each burst, measure how
     /// much of the to-be-encoded mic audio sits at the permit tone's frequency.
@@ -309,13 +313,16 @@ final class VoiceAudioEngine {
     }
 
     /// Must run on `queue`.
+    /// Must run on `queue`. A fresh engine on every wake: keeping the graph
+    /// across standby and only restarting it was tried — it saved no time
+    /// (the wait is engine.start() waiting for the Bluetooth SCO link, ~0.5 s)
+    /// and the restarted engine's OUTPUT stayed silent after the PushToTalk
+    /// system had torn the session down and brought it back (no RX audio).
     private func switchProfile(_ p: Profile, reason: String) {
-        print("[VoiceAudio] \(p == .active ? "waking (active)" : "standby") — \(reason)")
+        print("[VoiceAudio] \(Self.ts()) \(p == .active ? "waking (active)" : "standby") — \(reason)")
         setGate(.off, 0)
         micMode = .off; trailing.removeAll(); pending.removeAll()
         teardownGraph()
-        // A fresh engine per profile: an engine whose input node was touched
-        // keeps the mic in its I/O unit.
         engine = AVAudioEngine()
         slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
         tonePlayer = AVAudioPlayerNode()
@@ -330,12 +337,10 @@ final class VoiceAudioEngine {
         } catch {
             print("[VoiceAudio] \(p) start failed: \(error)")
         }
-        if p == .active {
-            lastTxActivity = Date()
-            let waiters = activateWaiters; activateWaiters.removeAll()
-            waiters.forEach { w in DispatchQueue.main.async(execute: w) }
-            flushPendingRX()
-        }
+        lastTxActivity = Date()
+        let waiters = activateWaiters; activateWaiters.removeAll()
+        waiters.forEach { w in DispatchQueue.main.async(execute: w) }
+        flushPendingRX()
     }
 
     private func configureSession(_ p: Profile) throws {
@@ -365,8 +370,17 @@ final class VoiceAudioEngine {
         var inDesc = "none (standby)"
         if p == .active {
             let input = engine.inputNode
-            do { try input.setVoiceProcessingEnabled(true) } catch {
-                print("[VoiceAudio] voice processing (AEC) unavailable: \(error)")
+            // Apple voice processing (AEC/NS/AGC) only for the phone's own
+            // mic + speaker, where full duplex needs echo cancellation. On a
+            // Bluetooth HFP speaker-mic the mic is away from the speaker and
+            // the link handles echo; skipping it saves start-up time (it
+            // rebuilds the I/O unit) and stops its AGC pulling levels down.
+            let route = AVAudioSession.sharedInstance().currentRoute
+            let onBluetooth = (route.inputs + route.outputs).contains { $0.portType == .bluetoothHFP }
+            if !onBluetooth {
+                do { try input.setVoiceProcessingEnabled(true) } catch {
+                    print("[VoiceAudio] voice processing (AEC) unavailable: \(error)")
+                }
             }
             let inFormat = input.outputFormat(forBus: 0)
             guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else {
@@ -385,7 +399,7 @@ final class VoiceAudioEngine {
         engine.prepare()
         try engine.start()
         tonePlayer.play()
-        print("[VoiceAudio] started (\(p)), input \(inDesc), route: \(Self.routeDescription())")
+        print("[VoiceAudio] \(Self.ts()) started (\(p)), input \(inDesc), route: \(Self.routeDescription())")
     }
 
     /// Must run on `queue`.

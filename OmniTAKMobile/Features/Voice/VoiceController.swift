@@ -750,7 +750,17 @@ final class VoiceController: ObservableObject {
             guard let self = self, self.txState == .acquiring else { return }
             self.acquireTimer?.cancel(); self.acquireTimer = nil
             self.burstHFP = self.audio.usesBluetoothHFP
-            self.startPriming()
+            if Self.systemProvidesCues {
+                // iOS's start cue (vibration) comes BEFORE audio is available,
+                // so the operator is already talking: send from the instant
+                // the system activates audio. No PRIMING discard — it only
+                // existed to keep our own talk-permit tone off the air. The
+                // 60 ms trailing trim at release (button clunk) is kept.
+                print("[Voice] \(Self.ts()) audio on — transmitting immediately (no priming gate)")
+                self.startTransmitting(notBeforeHost: 0)
+            } else {
+                self.startPriming()
+            }
         }
     }
 

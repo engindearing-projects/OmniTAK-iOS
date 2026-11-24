@@ -184,9 +184,10 @@ extension NativePTTManager: PTChannelManagerDelegate {
     }
 
     func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didBeginTransmittingFrom source: PTChannelTransmitRequestSource) {
+        let t = VoiceAudioEngine.ts()
         DispatchQueue.main.async {
             self.isTransmitting = true
-            print("[NativePTT] transmit began (source \(source.rawValue))")
+            print("[NativePTT] \(t) transmit began (source \(source.rawValue))")
             self.onTransmitBegan?(source)
         }
     }
@@ -213,8 +214,9 @@ extension NativePTTManager: PTChannelManagerDelegate {
     }
 
     func channelManager(_ channelManager: PTChannelManager, didActivate audioSession: AVAudioSession) {
+        let t = VoiceAudioEngine.ts()
         DispatchQueue.main.async {
-            print("[NativePTT] audio session ACTIVATED by the system")
+            print("[NativePTT] \(t) audio session ACTIVATED by the system")
             self.onAudioActivated?()
         }
     }
