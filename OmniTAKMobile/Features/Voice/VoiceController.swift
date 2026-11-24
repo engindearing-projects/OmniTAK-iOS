@@ -203,7 +203,9 @@ final class VoiceController: ObservableObject {
         }
         nativePTT.onTransmitEnded = { [weak self] source in
             guard let self = self else { return }
-            self.requestedSystemTX = false
+            // A press queued behind this (ending) transmission keeps its
+            // request: its own "began" comes next.
+            if self.txState == .idle { self.requestedSystemTX = false }
             defer {
                 // With nobody talking, the system deactivates the session right
                 // after a transmission ends. Treat audio as gone now, so the next
@@ -651,6 +653,11 @@ final class VoiceController: ObservableObject {
     private var burstSlot: Int?
     private var burstCold = false
     private var burstHFP = false
+    /// Identifies the current press. An audio-activation callback registered by
+    /// an earlier press (released before audio came on) must not act for a
+    /// later one: it started "transmitting" before the system had begun the new
+    /// transmission, and the press went out silent.
+    private var burstID = 0
     /// Built-in / wired mic only: drop mic audio for this long after audio
     /// comes on. iOS plays its start cue (sound + vibration) as the session
     /// activates and the iPhone's own mic picks it up: measured on device as a
@@ -743,6 +750,7 @@ final class VoiceController: ObservableObject {
 
         pressedSlot = slot
         burstSlot = target
+        burstID &+= 1
         audio.setBusy(true)
         armTxTimeout()
         burstHFP = hfp
@@ -777,8 +785,9 @@ final class VoiceController: ObservableObject {
     /// After the system began our transmission: wait for the audio session
     /// (immediately if it is already up), then PRIMING.
     private func waitForAudioThenPrime() {
+        let id = burstID
         audio.activate("PTT") { [weak self] in
-            guard let self = self, self.txState == .acquiring else { return }
+            guard let self = self, self.burstID == id, self.txState == .acquiring else { return }
             self.acquireTimer?.cancel(); self.acquireTimer = nil
             self.burstHFP = self.audio.usesBluetoothHFP
             if Self.systemProvidesCues {
@@ -921,6 +930,7 @@ final class VoiceController: ObservableObject {
     /// PTT-up or anything that ends the burst. Only a burst that reached
     /// TRANSMITTING sends a terminator.
     private func stopBurst() {
+        audio.cancelActivationWaiters()    // a released press must not wake later
         primingTimer?.cancel(); primingTimer = nil
         acquireTimer?.cancel(); acquireTimer = nil
         txWarnTimer?.cancel(); txWarnTimer = nil

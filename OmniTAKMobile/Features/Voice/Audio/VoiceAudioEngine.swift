@@ -195,14 +195,24 @@ final class VoiceAudioEngine {
     // with no TX and 8 s with no RX (Android SCO_COOL_DOWN / SCO_HOT).
 
     enum Profile { case standby, active }
-    private var profile: Profile = .active
+    private var profile: Profile = .active {
+        didSet { stateLock.lock(); standbyMirror = profile == .standby; stateLock.unlock() }
+    }
+    /// Lock-protected copies of `profile` / `hfpOnLastActiveRoute` for the main
+    /// thread. Reading them with queue.sync blocked a PTT press for as long as
+    /// the queue was busy — 1.6 s while an engine with voice processing started.
+    private let stateLock = NSLock()
+    private var standbyMirror = false
+    private var hfpMirror = false
     private var activateWaiters: [() -> Void] = []
     private var pendingRX: [(packet: Data, speaker: UInt32, slot: Int)] = []
     private var pendingRXSamples = 0
     private var lastTxActivity = Date()
     private var lastRxActivity = Date.distantPast
     /// Whether the most recent ACTIVE route used Bluetooth HFP (a speaker-mic).
-    private var hfpOnLastActiveRoute = false
+    private var hfpOnLastActiveRoute = false {
+        didSet { stateLock.lock(); hfpMirror = hfpOnLastActiveRoute; stateLock.unlock() }
+    }
     /// Set by the controller for the whole of a PTT press (ACQUIRING through
     /// release): the engine never drops to standby while it is true.
     private var busy = false
@@ -211,7 +221,7 @@ final class VoiceAudioEngine {
     static let maxPendingRXSamples = 4 * 48_000
 
     /// True when the engine is in standby (a PTT press is a "cold" start).
-    var isStandby: Bool { queue.sync { profile == .standby } }
+    var isStandby: Bool { stateLock.lock(); defer { stateLock.unlock() }; return standbyMirror }
 
     // MARK: System-managed session (Apple PushToTalk)
     // The app never activates/deactivates the audio session: the PushToTalk
@@ -269,7 +279,7 @@ final class VoiceAudioEngine {
         queue.async { self.activateWaiters.removeAll(); self.waitersSince = nil }
     }
     /// True when the speaker-mic path is Bluetooth HFP.
-    var usesBluetoothHFP: Bool { queue.sync { hfpOnLastActiveRoute } }
+    var usesBluetoothHFP: Bool { stateLock.lock(); defer { stateLock.unlock() }; return hfpMirror }
 
     func start() throws {
         var thrown: Error?
