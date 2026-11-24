@@ -80,6 +80,11 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 		<string>processing</string>
+		<!-- Keeps the push-to-talk voice audio session alive with the screen
+		     off / app backgrounded (Mumble PTT via the voice plugin). This is
+		     the plain `audio` background mode — NOT PushToTalk.framework, which
+		     would need a separate Apple-gated entitlement. -->
+		<string>audio</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, and detects nearby drones broadcasting FAA Remote ID.</string>
@@ -87,6 +92,8 @@
 	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OmniTAK uses the camera to scan enrollment QR codes for TAK server certificates and to attach photos to map markers.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OmniTAK uses the microphone for push-to-talk voice so you can speak to your team over the TAK server.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OmniTAK lets you attach photos from your library to map markers and share them with your team.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
