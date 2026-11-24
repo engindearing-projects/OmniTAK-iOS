@@ -229,8 +229,12 @@ final class ToolbarConfigStore: ObservableObject {
             .filter(isItemEnabled)
     }
 
+    /// Counts hidden (plugin-disabled) shortcuts too, on purpose: they keep
+    /// their slot, so re-enabling the plugin can't push the bar past `maxItems`.
     var isFull: Bool { itemIDs.count >= ToolbarConfigStore.maxItems }
-    var canRemove: Bool { itemIDs.count > ToolbarConfigStore.minItems }
+    /// Counts only VISIBLE items: with hidden shortcuts in `itemIDs`, counting
+    /// them let the operator remove down to a single visible icon.
+    var canRemove: Bool { items.count > ToolbarConfigStore.minItems }
 
     /// True if at least one destination tab remains — guards against the
     /// operator removing every screen and getting stuck.

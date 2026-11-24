@@ -134,6 +134,8 @@
 /* --- 底部工具列與工具捷徑（標籤）。以 BarItem.id（"bar.<id>"）為鍵。
        軍事／技術縮寫（CASEVAC、9-Line、SPOTREP、ADS-B、Self SA、Mesh）
        依慣例保留英文。 --- */
+"toolbar.moveLeft" = "向左移動";
+"toolbar.moveRight" = "向右移動";
 "bar.tab.map" = "地圖";
 "bar.tab.chat" = "聊天";
 "bar.tab.servers" = "伺服器";
