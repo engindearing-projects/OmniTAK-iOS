@@ -1254,6 +1254,7 @@ struct ATAKMapView: View {
         .background(lifecycleHandlers)
         .background(firstFixHandlers)
         .background(permissionHandlers)
+        .background(mapActionHandlers)
         // Marker radial Info / Share / Copy feedback (sheet + share sheet +
         // HUD toast). Bundled in a ViewModifier (type-checked independently)
         // and attached here so it covers BOTH engines.
@@ -1898,6 +1899,73 @@ struct ATAKMapView: View {
             .onDisappear { isMapScreenShowing = false }
     }
 
+    /// Observers for map actions posted from elsewhere in the app: the bar's Drop Pin, an overlay's
+    /// Zoom To, and a contact's Show on Map / Navigate. On a sibling view because `lifecycleHandlers`
+    /// with these on it no longer type-checks in reasonable time on Xcode 27.
+    private var mapActionHandlers: some View {
+        EmptyView()
+            // Customizable bar "Drop Pin" shortcut — drop a marker at the
+            // current map center on whichever engine is active. Cesium uses
+            // its persisted camera center; Mapbox uses the tracked region.
+            .onReceive(NotificationCenter.default.publisher(for: .barDropPin)) { _ in
+                let center: CLLocationCoordinate2D = mapEngine == .cesium3D
+                    ? CLLocationCoordinate2D(latitude: cesiumLastLat, longitude: cesiumLastLon)
+                    : mapRegion.center
+                dropMarkerAtLocation(coordinate: center, affiliation: .friendly)
+            }
+            // Frame an overlay's bounds. Overlays render on the 2D engine,
+            // so switch to it first.
+            .onReceive(NotificationCenter.default.publisher(for: .kmlZoomToOverlay)) { note in
+                guard let id = note.userInfo?["id"] as? String else { return }
+                // Look the id up in any of the three stores — vector KML,
+                // raster imagery or MBTiles.
+                var found = true
+                var box: (minLat: Double, minLon: Double, maxLat: Double, maxLon: Double)?
+                // First tile level of an MBTiles overlay. A raster source draws
+                // nothing below it, so don't frame from further out than that.
+                var firstTileLevel: Int?
+                if let o = KMLVectorOverlayStore.shared.overlays.first(where: { $0.id == id }) {
+                    box = (o.minLat, o.minLon, o.maxLat, o.maxLon)
+                } else if let r = RasterOverlayStore.shared.overlays.first(where: { $0.id == id }) {
+                    box = (r.south, r.west, r.north, r.east)
+                } else if let m = MBTilesOverlayStore.shared.overlays.first(where: { $0.id == id }) {
+                    // A file with no usable bounds used to return here before
+                    // the engine switch, so the tile set imported fine and then
+                    // stayed invisible on the default 3D engine.
+                    if m.hasBounds { box = (m.south, m.west, m.north, m.east) }
+                    firstTileLevel = m.minZoom
+                } else {
+                    found = false
+                }
+                guard found else { return }
+                mapEngineRaw = MapEngine.mapbox2D.rawValue
+                guard let b = box else { return }
+                var latSpan = max((b.maxLat - b.minLat) * 1.3, 0.02)
+                var lonSpan = max((b.maxLon - b.minLon) * 1.3, 0.02)
+                if let level = firstTileLevel {
+                    let widest = MBTilesOverlay.widestLongitudeSpan(minZoom: level)
+                    if lonSpan > widest {
+                        latSpan *= widest / lonSpan
+                        lonSpan = widest
+                    }
+                }
+                mapRegion = MKCoordinateRegion(
+                    center: CLLocationCoordinate2D(latitude: (b.minLat + b.maxLat) / 2,
+                                                   longitude: (b.minLon + b.maxLon) / 2),
+                    span: MKCoordinateSpan(latitudeDelta: latSpan, longitudeDelta: lonSpan)
+                )
+            }
+            // Bug #9: Contact actions from ContactDetailView ("Show on Map" /
+            // "Navigate to Contact"). Previously these notifications had no
+            // subscriber — sheet just dismissed and dropped user back on list.
+            .onReceive(NotificationCenter.default.publisher(for: .centerMapOnContact)) { note in
+                handleCenterMapOnContact(note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .startNavigationToContact)) { note in
+                handleStartNavigationToContact(note)
+            }
+    }
+
     private var lifecycleHandlers: some View {
         EmptyView()
             .onAppear {
@@ -2053,66 +2121,6 @@ struct ATAKMapView: View {
             // the Swift type-checker's complexity limit. Each of these
             // notifications previously had no observer — they were dead taps.
             .modifier(RadialMenuExtraObservers(mapRegion: $mapRegion, drawingManager: drawingManager, mapEngineRaw: $mapEngineRaw))
-            // Customizable bar "Drop Pin" shortcut — drop a marker at the
-            // current map center on whichever engine is active. Cesium uses
-            // its persisted camera center; Mapbox uses the tracked region.
-            .onReceive(NotificationCenter.default.publisher(for: .barDropPin)) { _ in
-                let center: CLLocationCoordinate2D = mapEngine == .cesium3D
-                    ? CLLocationCoordinate2D(latitude: cesiumLastLat, longitude: cesiumLastLon)
-                    : mapRegion.center
-                dropMarkerAtLocation(coordinate: center, affiliation: .friendly)
-            }
-            // Frame an overlay's bounds. Overlays render on the 2D engine,
-            // so switch to it first.
-            .onReceive(NotificationCenter.default.publisher(for: .kmlZoomToOverlay)) { note in
-                guard let id = note.userInfo?["id"] as? String else { return }
-                // Look the id up in any of the three stores — vector KML,
-                // raster imagery or MBTiles.
-                var found = true
-                var box: (minLat: Double, minLon: Double, maxLat: Double, maxLon: Double)?
-                // First tile level of an MBTiles overlay. A raster source draws
-                // nothing below it, so don't frame from further out than that.
-                var firstTileLevel: Int?
-                if let o = KMLVectorOverlayStore.shared.overlays.first(where: { $0.id == id }) {
-                    box = (o.minLat, o.minLon, o.maxLat, o.maxLon)
-                } else if let r = RasterOverlayStore.shared.overlays.first(where: { $0.id == id }) {
-                    box = (r.south, r.west, r.north, r.east)
-                } else if let m = MBTilesOverlayStore.shared.overlays.first(where: { $0.id == id }) {
-                    // A file with no usable bounds used to return here before
-                    // the engine switch, so the tile set imported fine and then
-                    // stayed invisible on the default 3D engine.
-                    if m.hasBounds { box = (m.south, m.west, m.north, m.east) }
-                    firstTileLevel = m.minZoom
-                } else {
-                    found = false
-                }
-                guard found else { return }
-                mapEngineRaw = MapEngine.mapbox2D.rawValue
-                guard let b = box else { return }
-                var latSpan = max((b.maxLat - b.minLat) * 1.3, 0.02)
-                var lonSpan = max((b.maxLon - b.minLon) * 1.3, 0.02)
-                if let level = firstTileLevel {
-                    let widest = MBTilesOverlay.widestLongitudeSpan(minZoom: level)
-                    if lonSpan > widest {
-                        latSpan *= widest / lonSpan
-                        lonSpan = widest
-                    }
-                }
-                mapRegion = MKCoordinateRegion(
-                    center: CLLocationCoordinate2D(latitude: (b.minLat + b.maxLat) / 2,
-                                                   longitude: (b.minLon + b.maxLon) / 2),
-                    span: MKCoordinateSpan(latitudeDelta: latSpan, longitudeDelta: lonSpan)
-                )
-            }
-            // Bug #9: Contact actions from ContactDetailView ("Show on Map" /
-            // "Navigate to Contact"). Previously these notifications had no
-            // subscriber — sheet just dismissed and dropped user back on list.
-            .onReceive(NotificationCenter.default.publisher(for: .centerMapOnContact)) { note in
-                handleCenterMapOnContact(note)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .startNavigationToContact)) { note in
-                handleStartNavigationToContact(note)
-            }
             // Coordinate-entry handler lives on a sibling EmptyView (attached
             // via .background) to keep this already-large modifier chain under
             // the Swift type-checker ceiling.
