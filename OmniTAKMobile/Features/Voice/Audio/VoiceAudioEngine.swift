@@ -39,6 +39,46 @@ final class VoiceAudioEngine {
     /// 10 ms = 60 ms; here 3 × 20 ms). Discarded at PTT-up (button click).
     static let trailingFrames = 3
 
+    // MARK: Gain (TAK-XVoice: fixed +5 dB mic boost on the Inrico BT02 over
+    // SCO, on top of the platform voice DSP). Here: operator-adjustable mic
+    // and receive boosts plus the BT02 +5 dB, each through a soft limiter so
+    // loud peaks are rounded off instead of clipping.
+    static let micBoostKey = "voice.micBoostDb"
+    static let rxBoostKey = "voice.rxBoostDb"
+    static let defaultMicBoostDb: Double = 3
+    static let defaultRxBoostDb: Double = 6
+    static let bt02MicBoostDb: Double = 5
+    private var micGain: Float = 1      // linear, recomputed per burst / route
+    private var rxGain: Float = 1
+
+    static func dbSetting(_ key: String, _ def: Double) -> Double {
+        UserDefaults.standard.object(forKey: key) == nil ? def : UserDefaults.standard.double(forKey: key)
+    }
+
+    /// Apply linear gain with a soft knee above 0.9 FS (tanh into 1.0).
+    static func applyGain(_ x: inout [Float], _ g: Float) {
+        guard g != 1 else { return }
+        for i in x.indices {
+            let v = x[i] * g
+            let a = abs(v)
+            if a > 0.9 {
+                let soft = 0.9 + 0.1 * Float(tanh(Double((a - 0.9) / 0.1)))
+                x[i] = v < 0 ? -soft : soft
+            } else {
+                x[i] = v
+            }
+        }
+    }
+
+    private func refreshGains() {
+        let r = AVAudioSession.sharedInstance().currentRoute
+        let bt02 = r.inputs.contains { $0.portType == .bluetoothHFP && $0.portName.uppercased().hasPrefix("B02PTT") }
+        let micDb = Self.dbSetting(Self.micBoostKey, Self.defaultMicBoostDb) + (bt02 ? Self.bt02MicBoostDb : 0)
+        let rxDb = Self.dbSetting(Self.rxBoostKey, Self.defaultRxBoostDb)
+        micGain = Float(pow(10, micDb / 20))
+        rxGain = Float(pow(10, rxDb / 20))
+    }
+
     /// Called on `queue` with each encoded Opus packet while transmitting.
     var onEncodedFrame: ((Data) -> Void)?
     /// While `listen`: called on `queue` with (samples, rms on the 16-bit
@@ -295,6 +335,7 @@ final class VoiceAudioEngine {
             hfpOnLastActiveRoute = (r.inputs + r.outputs).contains { $0.portType == .bluetoothHFP }
             inDesc = "\(inFormat.sampleRate) Hz x\(inFormat.channelCount), AEC \(input.isVoiceProcessingEnabled ? "on" : "off")"
         }
+        refreshGains()
         engine.prepare()
         try engine.start()
         tonePlayer.play()
@@ -454,6 +495,9 @@ final class VoiceAudioEngine {
 
     // MARK: - Transmit
 
+    /// Re-read the boost settings (call after the operator changes them).
+    func reloadGains() { queue.async { self.refreshGains() } }
+
     func setMicLevelHandler(_ h: ((Int, Float) -> Void)?) {
         queue.async { self.onMicLevel = h }
     }
@@ -473,6 +517,7 @@ final class VoiceAudioEngine {
                 self.pending.removeAll()
                 self.trailing.removeAll()
                 self.encoder = self.makeEncoder()
+                self.refreshGains()
                 self.txStats = (0, 0, 0, 0, 0, Date())
                 #if DEBUG
                 if self.leakProbeHz != nil { self.leakProbeLeft = 15; self.leakProbeIndex = 0 }
@@ -590,7 +635,9 @@ final class VoiceAudioEngine {
                     leakProbeIndex += 1
                 }
                 #endif
-                guard let packet = encode(frame) else { txStats.empty += 1; continue }
+                var boosted = frame
+                Self.applyGain(&boosted, micGain)
+                guard let packet = encode(boosted) else { txStats.empty += 1; continue }
                 trailing.append(packet)
                 while trailing.count > Self.trailingFrames {
                     let out = trailing.removeFirst()
@@ -733,6 +780,11 @@ final class VoiceAudioEngine {
             print("[VoiceAudio] decode failed slot \(slot) speaker \(key): status \(status.rawValue) err \(String(describing: err))")
             speakers[key] = sp
             return
+        }
+        if rxGain != 1, let ch = out.floatChannelData?[0] {
+            var tmp = Array(UnsafeBufferPointer(start: ch, count: Int(out.frameLength)))
+            Self.applyGain(&tmp, rxGain)
+            tmp.withUnsafeBufferPointer { ch.update(from: $0.baseAddress!, count: tmp.count) }
         }
         if !sp.player.isPlaying { sp.player.play() }
         let n = out.frameLength

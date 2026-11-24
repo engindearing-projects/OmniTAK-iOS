@@ -242,6 +242,8 @@ final class VoiceController: ObservableObject {
         blePTT.autoConnect(matching: port.portName)
     }
 
+    func reloadAudioLevels() { audio.reloadGains() }
+
     /// Release every on-screen PTT hold (gesture cancelled / view gone / app inactive).
     func releaseOnScreenPTT() {
         for slot in [1, 2] where held[slot, default: []].contains(.onScreen) {

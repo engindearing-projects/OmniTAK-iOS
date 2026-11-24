@@ -114,9 +114,17 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// used for audio (same advertised name, e.g. "B02PTT-B480"). No-op if a
     /// button is already connected or the operator saved a different one.
     func autoConnect(matching name: String) {
-        guard connectedName == nil, Self.classify(name: name, services: []) != nil else { return }
-        if let saved = savedPeripheralId,
-           let p = central?.retrievePeripherals(withIdentifiers: [saved]).first, p.name != nil, p.name != name { return }
+        // Only for supported speaker-mics (Inrico, AINA). A button-only device
+        // (Pryme) paired with an ordinary headset is left alone.
+        guard Self.classify(name: name, services: []) != nil else { return }
+        if connectedName == name || peripheral?.name == name { return }   // already following it
+        // The button follows the speaker-mic in use: drop a different one.
+        if let old = peripheral {
+            print("[BLEPTT] switching from '\(old.name ?? "?")' to the button of '\(name)'")
+            wantRunning = true
+            central?.cancelPeripheralConnection(old)
+            peripheral = nil; kind = nil; connectedName = nil; lastAinaMask = 0
+        }
         print("[BLEPTT] looking for the PTT button of '\(name)'")
         autoConnectName = name
         // Bluetooth may still be powering up right after launch: the scan then

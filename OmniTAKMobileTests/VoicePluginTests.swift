@@ -343,4 +343,18 @@ final class VoicePluginTests: XCTestCase {
         XCTAssertEqual(BLEPTTManager.classify(name: "Unnamed",
                        services: [CBUUID(string: "127FACE1-CB21-11E5-93D0-0002A5D5C51B")]), .ainaV2)
     }
+
+    func testGainAndSoftLimiter() {
+        var x: [Float] = [0.1, -0.2, 0.5, -0.5, 0.95]
+        VoiceAudioEngine.applyGain(&x, 2)
+        XCTAssertEqual(x[0], 0.2, accuracy: 1e-6)
+        XCTAssertEqual(x[1], -0.4, accuracy: 1e-6)
+        XCTAssertGreaterThan(x[2], 0.9)                 // 1.0 → soft knee
+        XCTAssertLessThan(x[2], 1.0)
+        XCTAssertEqual(x[3], -x[2], accuracy: 1e-6)     // symmetric
+        XCTAssertLessThanOrEqual(abs(x[4]), 1.0)        // never clips past full scale
+        var y: [Float] = [0.3]
+        VoiceAudioEngine.applyGain(&y, 1)
+        XCTAssertEqual(y[0], 0.3)
+    }
 }

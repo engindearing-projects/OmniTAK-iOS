@@ -53,6 +53,8 @@ struct VoicePluginSettingsView: View {
     @AppStorage(TalkPermitTone.settingsKey) private var tptTone = TalkPermitTone.default.rawValue
     @AppStorage(VoiceController.txTimeoutKey) private var txTimeout = VoiceController.defaultTxTimeout
     @AppStorage(VoiceController.statusTonesKey) private var statusTones = true
+    @AppStorage(VoiceAudioEngine.micBoostKey) private var micBoost = VoiceAudioEngine.defaultMicBoostDb
+    @AppStorage(VoiceAudioEngine.rxBoostKey) private var rxBoost = VoiceAudioEngine.defaultRxBoostDb
 
     var body: some View {
         Form {
@@ -141,6 +143,21 @@ struct VoicePluginSettingsView: View {
             } footer: {
                 Text("Supported: AINA APTT V1 and V2, Pryme BT-PTT-Z, Inrico BT02 — connected automatically when the speaker-mic is in use. Pair a speaker-mic's audio in iOS Settings → Bluetooth; voice then uses it automatically.")
             }
+
+            Section {
+                Picker("Mic boost", selection: $micBoost) {
+                    ForEach([0.0, 3, 6, 9, 12], id: \.self) { Text($0 == 0 ? "Off" : "+\(Int($0)) dB").tag($0) }
+                }
+                Picker("Receive boost", selection: $rxBoost) {
+                    ForEach([0.0, 3, 6, 9, 12], id: \.self) { Text($0 == 0 ? "Off" : "+\(Int($0)) dB").tag($0) }
+                }
+            } header: {
+                Text("Audio levels")
+            } footer: {
+                Text("Applied on top of iOS voice processing (echo cancellation, noise suppression, automatic gain), with a soft limiter so loud speech isn't distorted. An Inrico BT02 gets an extra +5 dB on its mic automatically. While voice is active, the phone's volume buttons also set the speaker-mic / call volume.")
+            }
+            .onChange(of: micBoost) { _ in controller.reloadAudioLevels() }
+            .onChange(of: rxBoost) { _ in controller.reloadAudioLevels() }
 
             Section("Audio route") {
                 Text(controller.audioRoute.isEmpty ? "—" : controller.audioRoute)
