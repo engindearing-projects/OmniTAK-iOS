@@ -87,9 +87,9 @@
 		<string>push-to-talk</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, and detects nearby drones broadcasting FAA Remote ID.</string>
+	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, detects nearby drones broadcasting FAA Remote ID, and connects to push-to-talk speaker-mics and PTT buttons for X Voice.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage.</string>
+	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, and to push-to-talk speaker-mics and PTT buttons for X Voice.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OmniTAK uses the camera to scan enrollment QR codes for TAK server certificates and to attach photos to map markers.</string>
 	<key>NSMicrophoneUsageDescription</key>

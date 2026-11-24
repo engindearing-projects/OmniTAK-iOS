@@ -1080,8 +1080,8 @@ extension VoiceController: MumbleClientDelegate {
         // Remember where the server actually put slot 1 (admin moves included).
         // Only when it's where we asked to be (or an adopted admin move) — a
         // refused or missing target must not overwrite the operator's choice.
-        if slot == 1, settled, onTarget, current != nil {
-            saveChannel(1, id: current!, name: st.currentChannelName)
+        if slot == 1, settled, onTarget, let current = current {
+            saveChannel(1, id: current, name: st.currentChannelName)
         }
         if settled, let cur = current, lastChannelBySlot[slot] != cur {
             lastChannelBySlot[slot] = cur

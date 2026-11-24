@@ -32,7 +32,9 @@ import UIKit
 
 final class NativePTTManager: NSObject {
     /// Stable channel id so the system can restore the channel after a relaunch.
-    static let channelUUID = UUID(uuidString: "6A1C4E2B-9D3F-4B8A-A5E7-0C2D7F1B3E91")!
+    /// 6A1C4E2B-9D3F-4B8A-A5E7-0C2D7F1B3E91, built from its bytes (can't fail).
+    static let channelUUID = UUID(uuid: (0x6A, 0x1C, 0x4E, 0x2B, 0x9D, 0x3F, 0x4B, 0x8A,
+                                         0xA5, 0xE7, 0x0C, 0x2D, 0x7F, 0x1B, 0x3E, 0x91))
 
     // Callbacks to the voice controller (always on main).
     var onTransmitBegan: ((PTChannelTransmitRequestSource) -> Void)?
@@ -46,6 +48,16 @@ final class NativePTTManager: NSObject {
     private var manager: PTChannelManager?
     private(set) var isJoined = false
     private(set) var isTransmitting = false
+    /// Our requestBeginTransmitting is out and the system hasn't answered yet
+    /// (didBegin / failedToBegin). It answers 10-200 ms later.
+    private var beginRequestedAt: Date?
+    /// Released while the begin request was still in flight: stop the
+    /// transmission the moment the system reports it began. Without this a
+    /// quick tap left the system transmitting with nobody behind it, and the
+    /// next press failed until the 4 s acquire timeout.
+    private var stopWhenBegun = false
+    /// A begin request older than this is treated as lost (never answered).
+    private static let beginRequestTimeout: TimeInterval = 3
     private var currentDescriptorName = "X Voice"
     private var participantName: String?
     private var pendingJoin = false
@@ -139,22 +151,54 @@ final class NativePTTManager: NSObject {
             return
         }
         guard !isTransmitting else { return }
+        if let at = beginRequestedAt, Date().timeIntervalSince(at) < Self.beginRequestTimeout {
+            // Pressed again before the system answered the previous request:
+            // that request carries this press — just cancel the pending stop.
+            stopWhenBegun = false
+            return
+        }
+        beginRequestedAt = Date()
+        stopWhenBegun = false
         mgr.requestBeginTransmitting(channelUUID: Self.channelUUID)
     }
 
     func stopTransmitting() {
-        guard let mgr = manager, isJoined, isTransmitting else { return }
-        mgr.stopTransmitting(channelUUID: Self.channelUUID)
+        guard let mgr = manager, isJoined else { return }
+        if isTransmitting {
+            mgr.stopTransmitting(channelUUID: Self.channelUUID)
+        } else if beginRequestedAt != nil {
+            stopWhenBegun = true
+            print("[NativePTT] released before the system began transmitting — will stop it when it does")
+        }
     }
 
     /// Incoming audio: name the talker (the system UI shows it and activates
     /// the audio session). nil when nobody is talking any more.
-    func setActiveRemoteParticipant(_ name: String?) {
+    func setActiveRemoteParticipant(_ name: String?, isRetry: Bool = false) {
         guard let mgr = manager, isJoined, name != participantName else { return }
+        // Recorded now so rapid repeats don't re-send, but rolled back if the
+        // system refuses — otherwise a failed set blocked every retry with the
+        // same name, and a failed clear left the system holding the session
+        // while we believed nobody was talking.
+        let previous = participantName
         participantName = name
         let p = name.map { PTParticipant(name: $0, image: nil) }
-        mgr.setActiveRemoteParticipant(p, channelUUID: Self.channelUUID) { err in
-            if let err = err { print("[NativePTT] set participant \(name ?? "nil") failed: \(err)") }
+        mgr.setActiveRemoteParticipant(p, channelUUID: Self.channelUUID) { [weak self] err in
+            guard let err = err else { return }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                print("[NativePTT] set participant \(name ?? "nil") failed: \(err)")
+                // Only undo our own change, not a newer one made meanwhile.
+                guard self.participantName == name else { return }
+                self.participantName = previous
+                if name == nil, !isRetry {
+                    // A clear must not be lost: try once more shortly.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                        guard let self = self, self.participantName == previous else { return }
+                        self.setActiveRemoteParticipant(nil, isRetry: true)
+                    }
+                }
+            }
         }
     }
 
@@ -177,6 +221,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
         DispatchQueue.main.async {
             self.isJoined = false
             self.isTransmitting = false
+            self.beginRequestedAt = nil
+            self.stopWhenBegun = false
             self.participantName = nil
             print("[NativePTT] left channel (reason \(reason.rawValue))")
             self.onLeftChannel?(reason)
@@ -188,6 +234,16 @@ extension NativePTTManager: PTChannelManagerDelegate {
         DispatchQueue.main.async {
             self.isTransmitting = true
             print("[NativePTT] \(t) transmit began (source \(source.rawValue))")
+            if source == .developerRequest, self.beginRequestedAt != nil {
+                self.beginRequestedAt = nil
+                if self.stopWhenBegun {
+                    // The operator already let go: end it now, don't start a burst.
+                    self.stopWhenBegun = false
+                    print("[NativePTT] \(t) stopping a transmission released before it began")
+                    self.manager?.stopTransmitting(channelUUID: Self.channelUUID)
+                    return
+                }
+            }
             self.onTransmitBegan?(source)
         }
     }
@@ -195,6 +251,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
     func channelManager(_ channelManager: PTChannelManager, channelUUID: UUID, didEndTransmittingFrom source: PTChannelTransmitRequestSource) {
         DispatchQueue.main.async {
             self.isTransmitting = false
+            self.beginRequestedAt = nil
+            self.stopWhenBegun = false
             print("[NativePTT] transmit ended (source \(source.rawValue))")
             self.onTransmitEnded?(source)
         }
@@ -238,6 +296,8 @@ extension NativePTTManager: PTChannelManagerDelegate {
     func channelManager(_ channelManager: PTChannelManager, failedToBeginTransmittingInChannel channelUUID: UUID, error: Error) {
         DispatchQueue.main.async {
             self.isTransmitting = false
+            self.beginRequestedAt = nil
+            self.stopWhenBegun = false
             print("[NativePTT] failed to begin transmitting: \(error)")
             self.onTransmitFailed?(error)
         }

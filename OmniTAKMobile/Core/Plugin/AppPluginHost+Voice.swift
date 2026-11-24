@@ -53,19 +53,25 @@ extension AppPluginHost: VoiceHostBridge {
         // --- TLS versions (mirror DirectTCPSender.connect) ---
         if server.allowLegacyTLS {
             // TLS 1.0 for extremely old servers (opt-in; security risk).
-            sec_protocol_options_set_min_tls_protocol_version(secOptions, tls_protocol_version_t(rawValue: 769)!)
+            if let tls10 = tls_protocol_version_t(rawValue: 769) {
+                sec_protocol_options_set_min_tls_protocol_version(secOptions, tls10)
+            } else {
+                sec_protocol_options_set_min_tls_protocol_version(secOptions, .TLSv12)
+            }
         } else {
             sec_protocol_options_set_min_tls_protocol_version(secOptions, .TLSv12)
         }
         sec_protocol_options_set_max_tls_protocol_version(secOptions, .TLSv13)
 
         // --- Legacy cipher suites for older TAK/OTS servers (mirror connect) ---
-        sec_protocol_options_append_tls_ciphersuite(secOptions, tls_ciphersuite_t(rawValue: UInt16(TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384))!)
-        sec_protocol_options_append_tls_ciphersuite(secOptions, tls_ciphersuite_t(rawValue: UInt16(TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256))!)
-        sec_protocol_options_append_tls_ciphersuite(secOptions, tls_ciphersuite_t(rawValue: UInt16(TLS_RSA_WITH_AES_256_GCM_SHA384))!)
-        sec_protocol_options_append_tls_ciphersuite(secOptions, tls_ciphersuite_t(rawValue: UInt16(TLS_RSA_WITH_AES_128_GCM_SHA256))!)
-        sec_protocol_options_append_tls_ciphersuite(secOptions, tls_ciphersuite_t(rawValue: UInt16(TLS_RSA_WITH_AES_256_CBC_SHA))!)
-        sec_protocol_options_append_tls_ciphersuite(secOptions, tls_ciphersuite_t(rawValue: UInt16(TLS_RSA_WITH_AES_128_CBC_SHA))!)
+        let legacySuites = [TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+                            TLS_RSA_WITH_AES_256_GCM_SHA384, TLS_RSA_WITH_AES_128_GCM_SHA256,
+                            TLS_RSA_WITH_AES_256_CBC_SHA, TLS_RSA_WITH_AES_128_CBC_SHA]
+        for raw in legacySuites {
+            if let suite = tls_ciphersuite_t(rawValue: UInt16(raw)) {
+                sec_protocol_options_append_tls_ciphersuite(secOptions, suite)
+            }
+        }
 
         // --- Server trust: same three-way policy as DirectTCPSender.connect
         //     (#127). CA-pin when a truststore is stored and the user hasn't

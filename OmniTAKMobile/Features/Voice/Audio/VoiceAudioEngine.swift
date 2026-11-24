@@ -145,9 +145,11 @@ final class VoiceAudioEngine {
     private var micDuringRx = MicLevelStats()
     private var micQuiet = MicLevelStats()
 
+    // 48 kHz mono float32 is always a valid format; the empty-format fallback
+    // only avoids a force unwrap (it would make the converters fail, not crash).
     private let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                          sampleRate: sampleRate, channels: 1, interleaved: false)!
-    private lazy var opusTxFormat: AVAudioFormat = opusFormat(samples: Int(Self.frameSamples))
+                                          sampleRate: sampleRate, channels: 1, interleaved: false) ?? AVAudioFormat()
+    private lazy var opusTxFormat: AVAudioFormat? = opusFormat(samples: Int(Self.frameSamples))
 
     var isRunning: Bool { queue.sync { running } }
 
@@ -617,7 +619,11 @@ final class VoiceAudioEngine {
                 DispatchQueue.main.async { completion?(now) }; return
             }
             buf.frameLength = AVAudioFrameCount(all.count)
-            all.withUnsafeBufferPointer { buf.floatChannelData![0].update(from: $0.baseAddress!, count: all.count) }
+            if let ch = buf.floatChannelData?[0] {
+                all.withUnsafeBufferPointer { src in
+                    if let base = src.baseAddress { ch.update(from: base, count: all.count) }
+                }
+            }
             self.toneToken += 1
             let token = self.toneToken
             self.lastTxActivity = Date()   // a playing tone keeps the engine awake
@@ -719,7 +725,7 @@ final class VoiceAudioEngine {
     }
 
     private func makeEncoder() -> AVAudioConverter? {
-        guard let enc = AVAudioConverter(from: pcmFormat, to: opusTxFormat) else {
+        guard let txFormat = opusTxFormat, let enc = AVAudioConverter(from: pcmFormat, to: txFormat) else {
             print("[VoiceAudio] Opus encoder unavailable")
             return nil
         }
@@ -828,13 +834,14 @@ final class VoiceAudioEngine {
     }
 
     private func encode(_ frame: [Float]) -> Data? {
-        guard let enc = encoder,
+        guard let enc = encoder, let txFormat = opusTxFormat,
               let pcm = AVAudioPCMBuffer(pcmFormat: pcmFormat, frameCapacity: Self.frameSamples) else { return nil }
         pcm.frameLength = Self.frameSamples
+        guard let ch = pcm.floatChannelData?[0] else { return nil }
         frame.withUnsafeBufferPointer { src in
-            pcm.floatChannelData![0].update(from: src.baseAddress!, count: src.count)
+            if let base = src.baseAddress { ch.update(from: base, count: src.count) }
         }
-        let out = AVAudioCompressedBuffer(format: opusTxFormat, packetCapacity: 1, maximumPacketSize: 1500)
+        let out = AVAudioCompressedBuffer(format: txFormat, packetCapacity: 1, maximumPacketSize: 1500)
         var fed = false
         var err: NSError?
         let status = enc.convert(to: out, error: &err) { _, st in
@@ -890,12 +897,12 @@ final class VoiceAudioEngine {
         return total > 0 && total <= 5760 ? total : nil
     }
 
-    private func opusFormat(samples: Int) -> AVAudioFormat {
+    private func opusFormat(samples: Int) -> AVAudioFormat? {
         var asbd = AudioStreamBasicDescription(
             mSampleRate: Self.sampleRate, mFormatID: kAudioFormatOpus, mFormatFlags: 0,
             mBytesPerPacket: 0, mFramesPerPacket: UInt32(samples), mBytesPerFrame: 0,
             mChannelsPerFrame: 1, mBitsPerChannel: 0, mReserved: 0)
-        return AVAudioFormat(streamDescription: &asbd)!
+        return AVAudioFormat(streamDescription: &asbd)
     }
 
     private func decodeAndPlay(_ packet: Data, speaker key: UInt32, slot: Int) {
@@ -950,14 +957,16 @@ final class VoiceAudioEngine {
         // Apple's Opus decoder is set up for one packet duration: rebuild when
         // a sender changes it.
         if sp.decoder == nil || sp.decoderSamples != samples {
-            guard let d = AVAudioConverter(from: opusFormat(samples: samples), to: pcmFormat) else {
+            guard let opus = opusFormat(samples: samples), let d = AVAudioConverter(from: opus, to: pcmFormat) else {
                 print("[VoiceAudio] Opus decoder unavailable for \(samples)-sample packets"); return
             }
             sp.decoder = d; sp.decoderSamples = samples
         }
-        let dec = sp.decoder!
+        guard let dec = sp.decoder else { return }
         let inBuf = AVAudioCompressedBuffer(format: dec.inputFormat, packetCapacity: 1, maximumPacketSize: packet.count)
-        packet.withUnsafeBytes { inBuf.data.copyMemory(from: $0.baseAddress!, byteCount: packet.count) }
+        packet.withUnsafeBytes { raw in
+            if let base = raw.baseAddress { inBuf.data.copyMemory(from: base, byteCount: packet.count) }
+        }
         inBuf.byteLength = UInt32(packet.count)
         inBuf.packetCount = 1
         inBuf.packetDescriptions?.pointee = AudioStreamPacketDescription(
@@ -977,7 +986,9 @@ final class VoiceAudioEngine {
         if rxGain != 1, let ch = out.floatChannelData?[0] {
             var tmp = Array(UnsafeBufferPointer(start: ch, count: Int(out.frameLength)))
             Self.applyGain(&tmp, rxGain)
-            tmp.withUnsafeBufferPointer { ch.update(from: $0.baseAddress!, count: tmp.count) }
+            tmp.withUnsafeBufferPointer { src in
+                if let base = src.baseAddress { ch.update(from: base, count: tmp.count) }
+            }
         }
         if !sp.player.isPlaying { sp.player.play() }
         let n = out.frameLength
