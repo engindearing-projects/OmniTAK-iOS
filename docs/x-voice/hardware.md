@@ -23,7 +23,8 @@ one exception: it keys PTT 2.
 
 **One button device at a time.** X Voice connects to one Bluetooth button
 device. With an AINA connected, a separate Pryme button won't also connect.
-(Android has a separate External Button slot for this; iOS doesn't yet.)
+This is by design: one PTT device keeps who's-keying-what simple and avoids
+conflicting presses. Use either a speaker-mic or a standalone button.
 
 ## Supported devices
 

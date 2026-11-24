@@ -93,5 +93,4 @@ voiced 0% means silence was sent.
 
 - Direct (private) calls: not ported.
 - Multicast mesh voice: not ported.
-- One Bluetooth button device at a time (no separate External Button slot yet).
 - AINA V1's Classic SPP channel isn't used (needs MFi); V1 works over BLE.

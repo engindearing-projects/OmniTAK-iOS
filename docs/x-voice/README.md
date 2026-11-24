@@ -55,7 +55,7 @@ What's different on iOS:
 | Push-to-talk system | Plugin-managed | Apple's PushToTalk framework (system UI, background) |
 | Start/stop cues | Talk Permit Tones (ASTRO 25, Nextel, DMR…) | iOS's own start/end sounds and vibration |
 | Bluetooth buttons | PTT 1 and an External Button slot | **PTT 1 only** (the AINA's secondary button is the one exception: PTT 2) |
-| Speaker-mic + separate button at once | Yes | No: one Bluetooth button device at a time |
+| Bluetooth PTT devices | Speaker-mic plus an External Button | **One device**: a speaker-mic *or* a button (by design) |
 | AINA V1 over Classic SPP | Yes | No (needs Apple MFi); V1 works through its BLE button service |
 | Samsung Active Key, Sonim keys | Yes | Not applicable |
 | Multicast mesh voice | Alpha | Not ported |
