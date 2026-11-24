@@ -150,6 +150,7 @@
 "bar.cmd.drawingslist" = "Drawings";
 "bar.cmd.lasso" = "Select";
 "bar.cmd.engine" = "2D / 3D";
+"bar.cmd.voice" = "X Voice";
 "bar.tool.pointer" = "Point Drop";
 "bar.tool.routes" = "Routes";
 "bar.tool.navigation" = "Navigation";

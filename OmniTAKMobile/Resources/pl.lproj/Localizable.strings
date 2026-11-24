@@ -149,6 +149,7 @@
 "bar.cmd.drawingslist" = "Rysunki";
 "bar.cmd.lasso" = "Zaznacz";
 "bar.cmd.engine" = "2D / 3D";
+"bar.cmd.voice" = "X Voice";
 "bar.tool.pointer" = "Wstaw punkt";
 "bar.tool.routes" = "Trasy";
 "bar.tool.navigation" = "Nawigacja";

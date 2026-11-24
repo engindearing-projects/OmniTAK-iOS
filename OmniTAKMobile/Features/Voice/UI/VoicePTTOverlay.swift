@@ -95,8 +95,11 @@ private struct PTTSlotRow: View {
                 .frame(width: 72, height: 72)
                 .shadow(radius: tx ? 10 : 4)
             VStack(spacing: 1) {
-                Image(systemName: tx ? "mic.fill" : "mic")
-                    .font(.system(size: 20, weight: .bold))
+                Image("XVoiceSpeakerMic")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 26, height: 26)
                 Text(tx ? "TX \(slot)" : (listenOnly ? "LISTEN" : "PTT \(slot)")).font(.caption2.bold())
             }
             .foregroundColor(.black)

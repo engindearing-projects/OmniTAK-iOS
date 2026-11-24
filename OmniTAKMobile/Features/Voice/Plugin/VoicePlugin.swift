@@ -17,10 +17,10 @@ import SwiftUI
 
 final class VoicePlugin: OmniTAKPlugin {
     let pluginId = "com.atakmap.android.xv.plugin"
-    let displayName = "Voice (PTT)"
+    let displayName = "X Voice"
     let pluginVersion = "0.2.0"
     let pluginAuthor = "TX-TAK"
-    let pluginDescription = "Push-to-talk voice over the TAK server's Mumble (TAK-XVoice port)"
+    let pluginDescription = "TAK-XVoice for OmniTAK: push-to-talk voice over your TAK server's Mumble voice server — dual channels, Bluetooth speaker-mics and PTT buttons"
 
     private(set) var controller: VoiceController?
 
@@ -30,7 +30,7 @@ final class VoicePlugin: OmniTAKPlugin {
         let c = VoiceController(bridge: bridge)
         controller = c
         host.registerMapOverlay { AnyView(VoicePTTOverlay(controller: c)) }
-        host.registerSettingsRow(label: "Voice (PTT)", icon: "mic.circle.fill")
+        host.registerSettingsRow(label: "X Voice", icon: "asset:XVoiceSpeakerMic")
         c.start()
     }
 
@@ -41,7 +41,7 @@ final class VoicePlugin: OmniTAKPlugin {
 
     func settingsContent() -> AnyView? {
         guard let c = controller else {
-            return AnyView(Text("Enable the Voice (PTT) plugin to configure it.").padding())
+            return AnyView(Text("Enable the X Voice plugin to configure it.").padding())
         }
         return AnyView(VoicePluginSettingsView(controller: c))
     }
@@ -164,7 +164,7 @@ struct VoicePluginSettingsView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
         }
-        .navigationTitle("Voice (PTT)")
+        .navigationTitle("X Voice")
     }
 
     private func row(_ label: String, _ value: String) -> some View {
