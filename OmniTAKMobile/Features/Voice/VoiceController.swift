@@ -33,6 +33,7 @@
 import Foundation
 import AVFoundation
 import Combine
+import UIKit
 
 enum PTTSource: Hashable { case onScreen, bluetooth }
 
@@ -103,6 +104,8 @@ final class VoiceController: ObservableObject {
     private var routeObserver: NSObjectProtocol?
     private var bleCancellable: AnyCancellable?
     private var started = false
+    private var startGeneration = 0
+    private var lifecycleObservers: [NSObjectProtocol] = []
     /// Mirror of `transmittingSlot` for the audio callback (set on main).
     private var txSlotForAudio: Int?
     /// Same-channel state already logged (so it is logged once per change).
@@ -124,6 +127,7 @@ final class VoiceController: ObservableObject {
             // Hop to main so the clients dictionary is only touched on one thread.
             DispatchQueue.main.async {
                 guard let self = self, let s = self.txSlotForAudio else { return }
+                if self.dryRun { self.dryRunPackets += 1; return }
                 self.clients[s]?.sendVoice(opus)
             }
         }
@@ -135,6 +139,31 @@ final class VoiceController: ObservableObject {
             }
         }
         bleCancellable = blePTT.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        audio.onEngineRestart = { [weak self] reason in
+            guard let self = self else { return }
+            if self.txState != .idle {
+                print("[Voice] audio engine restarted (\(reason)) — ending the burst in progress")
+                self.held = [1: [], 2: []]
+                self.stopBurst()
+            }
+            self.audioRoute = VoiceAudioEngine.routeDescription()
+        }
+        // The on-screen button can't be held while the app isn't active (and a
+        // cancelled gesture never reports its release). Hardware/BLE PTT keeps
+        // working in the background.
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.releaseOnScreenPTT()
+        })
+    }
+
+    deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
+
+    /// Release every on-screen PTT hold (gesture cancelled / view gone / app inactive).
+    func releaseOnScreenPTT() {
+        for slot in [1, 2] where held[slot, default: []].contains(.onScreen) {
+            pttUp(slot: slot, source: .onScreen)
+        }
     }
 
     // MARK: - Slot 2 configuration
@@ -180,11 +209,28 @@ final class VoiceController: ObservableObject {
         guard !started else { return }
         guard let bridge = bridge else { setSlot(1, .failed, "Host bridge unavailable"); return }
         guard let host = bridge.activeServerHost(), !host.isEmpty else {
-            setSlot(1, .noServer, "No active TAK server"); return
+            setSlot(1, .noServer, "No active TAK server")
+            #if DEBUG
+            // Self-test without a server (simulator): audio only, slot 1 faked
+            // as connected, dry run so nothing could be sent anyway.
+            if UserDefaults.standard.bool(forKey: "XVoiceSelfTest") {
+                started = true
+                requestMic { [weak self] ok in
+                    guard let self = self, ok, (try? self.audio.start()) != nil else {
+                        print("[SelfTest] cannot start audio (mic permission?)"); return
+                    }
+                    self.setSlot(1, .connected, "Connected (self-test, no server)")
+                    self.runSelfTestIfRequested()
+                }
+            }
+            #endif
+            return
         }
         started = true
+        startGeneration += 1
+        let gen = startGeneration
         requestMic { [weak self] granted in
-            guard let self = self, self.started else { return }
+            guard let self = self, self.started, self.startGeneration == gen else { return }
             guard granted else { self.setSlot(1, .failed, "Microphone permission denied"); return }
             do { try self.audio.start() } catch {
                 self.setSlot(1, .failed, "Audio error: \(error.localizedDescription)"); return
@@ -438,8 +484,8 @@ final class VoiceController: ObservableObject {
         let cold = burstCold
         let frameGate = (cold ? 30 : 5) * 480          // in samples (10 ms frames)
         let rmsGate: Float = cold ? 200 : 5
-        print("[Voice] PRIMING (\(burstHFP ? (cold ? "Bluetooth, cold" : "Bluetooth, warm") : "built-in/wired"))")
-        audio.onMicLevel = { [weak self] n, rms in
+        print("[Voice] \(Self.ts()) PRIMING (\(burstHFP ? (cold ? "Bluetooth, cold" : "Bluetooth, warm") : "built-in/wired"))")
+        audio.setMicLevelHandler { [weak self] n, rms in
             DispatchQueue.main.async {
                 guard let self = self, self.txState == .priming else { return }
                 self.primingSamples += n
@@ -465,7 +511,7 @@ final class VoiceController: ObservableObject {
 
     private func micAlive() {
         primingTimer?.cancel(); primingTimer = nil
-        audio.onMicLevel = nil
+        audio.setMicLevelHandler(nil)
         if burstCold {
             txState = .coldHold                       // mic still discarding
             let hold = DispatchWorkItem { [weak self] in
@@ -479,40 +525,49 @@ final class VoiceController: ObservableObject {
         }
     }
 
+    static func ts() -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f.string(from: Date())
+    }
+
     private func startTpt() {
         txState = .tpt                                 // mic still discarding
+        print("[Voice] \(Self.ts()) TPT start")
         let peerTalking = !activeSpeakers.isEmpty
         guard let tone = peerTalking ? VoiceTones.interruptChirp() : VoiceTones.permit() else {
-            startTransmitting()                        // tone "None": straight to TX
+            startTransmitting(notBeforeHost: mach_absolute_time())   // tone "None": straight to TX
             return
         }
         let tail = burstHFP ? 0.35 : 0                 // Bluetooth tail guard
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self = self, self.txState == .tpt else { return }
             print("[Voice] TPT watchdog fired")
-            self.startTransmitting()
+            self.startTransmitting(notBeforeHost: mach_absolute_time())
         }
         tptWatchdog = watchdog
         DispatchQueue.main.asyncAfter(deadline: .now() + Double(VoiceTones.durationMs(tone) * 2 + 500) / 1000 + 0.18 + tail,
                                       execute: watchdog)
-        audio.playTone(tone, padded: true) { [weak self] in
+        audio.playTone(tone, padded: true) { [weak self] playedHost in
+            print("[Voice] \(Self.ts()) TPT played back (+\(Int(tail * 1000)) ms guard)")
+            // Mic audio captured before (playback end + tail guard) is never
+            // sent — enforced by capture timestamp in the audio engine.
+            let gate = playedHost + AVAudioTime.hostTime(forSeconds: tail)
             DispatchQueue.main.asyncAfter(deadline: .now() + tail) {
                 guard let self = self, self.txState == .tpt else { return }
-                self.startTransmitting()
+                self.startTransmitting(notBeforeHost: gate)
             }
         }
     }
 
-    private func startTransmitting() {
+    private func startTransmitting(notBeforeHost: UInt64) {
         tptWatchdog?.cancel(); tptWatchdog = nil
         guard let target = burstSlot else { return }
         txState = .transmitting
         transmittingSlot = target
         txSlotForAudio = target
-        clients[target]?.beginTransmission()
-        audio.setMicMode(.transmit)
+        if !dryRun { clients[target]?.beginTransmission() }
+        audio.setMicMode(.transmit, notBeforeHost: notBeforeHost)
         audio.setDucked(slot: target == 1 ? 2 : 1, true)
-        print("[Voice] TRANSMITTING on slot \(target)")
+        print("[Voice] \(Self.ts()) TRANSMITTING on slot \(target)")
     }
 
     /// PTT-up or anything that ends the burst. Only a burst that reached
@@ -521,13 +576,13 @@ final class VoiceController: ObservableObject {
         primingTimer?.cancel(); primingTimer = nil
         holdTimer?.cancel(); holdTimer = nil
         tptWatchdog?.cancel(); tptWatchdog = nil
-        audio.onMicLevel = nil
+        audio.setMicLevelHandler(nil)
         let wasTransmitting = txState == .transmitting
         let slot = burstSlot
         txSlotForAudio = nil                           // in-flight frames are dropped
         audio.setMicMode(.off)
         if wasTransmitting, let s = slot {
-            clients[s]?.endTransmission()
+            if !dryRun { clients[s]?.endTransmission() }
             lastTxStopAt = Date()
         }
         audio.setDucked(slot: 1, false)
@@ -541,6 +596,47 @@ final class VoiceController: ObservableObject {
 
     /// Kept for existing callers: end whatever burst is in progress.
     private func endTX() { stopBurst() }
+
+    // MARK: - Debug self-test (launch with -XVoiceSelfTest YES)
+    //
+    // Drives PTT through the full TX state machine on a real device WITHOUT
+    // sending anything to the server (dry run), and probes the first frames of
+    // each burst for the permit tone. Scenarios: full burst, release during
+    // PRIMING, release during the tone, second full burst.
+
+    /// When true, nothing is sent to Mumble (no voice, no terminator).
+    private(set) var dryRun = false
+    private var dryRunPackets = 0
+    private var selfTestStarted = false
+
+    #if DEBUG
+    private func runSelfTestIfRequested() {
+        guard !selfTestStarted, UserDefaults.standard.bool(forKey: "XVoiceSelfTest") else { return }
+        selfTestStarted = true
+        dryRun = true
+        let tone = TalkPermitTone.current
+        audio.leakProbeHz = [TalkPermitTone.astro25: 910, .dmr: 1569, .nextel: 1800, .nextelAlt: 911, .vertex: 1050][tone]
+        print("[SelfTest] start — DRY RUN (nothing sent). tone=\(tone.rawValue) route=\(VoiceAudioEngine.routeDescription())")
+        let steps: [(Double, String, () -> Void)] = [
+            (3.0, "A: press (full burst)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (5.5, "A: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (7.0, "B: press (release during PRIMING)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (7.15, "B: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (9.0, "C: press (release during TPT)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (9.45, "C: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (11.0, "D: press (second full burst)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (13.5, "D: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (15.0, "done", { print("[SelfTest] done — packets that would have been sent: \(self.dryRunPackets), state=\(self.txState)") }),
+        ]
+        let t0 = Date()
+        for (at, label, action) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                print(String(format: "[SelfTest] t=%.2fs %@ (state before: %@)", Date().timeIntervalSince(t0), label, "\(self.txState)"))
+                action()
+            }
+        }
+    }
+    #endif
 
     // MARK: - Talking indicator (600 ms after the last frame, like XV)
 
@@ -574,6 +670,9 @@ extension VoiceController: MumbleClientDelegate {
         case .connecting: setSlot(slot, .connecting, "Connecting…")
         case .connected:
             setSlot(slot, .connected, "Connected")
+            #if DEBUG
+            if slot == 1 { runSelfTestIfRequested() }
+            #endif
             if slot == 1 { maybeStartSlot2() }
         case .reconnecting(let secs, _):
             if burstSlot == slot { endTX() }
@@ -588,7 +687,7 @@ extension VoiceController: MumbleClientDelegate {
     }
 
     func mumble(_ client: MumbleClient, channelsChanged ch: [UInt32: String], current: UInt32?,
-                suppressed: Bool, settled: Bool) {
+                suppressed: Bool, settled: Bool, onTarget: Bool) {
         let slot = client.slot
         guard clients[slot] === client else { return }
         var st = slots[slot - 1]
@@ -598,7 +697,9 @@ extension VoiceController: MumbleClientDelegate {
         st.settled = settled
         slots[slot - 1] = st
         // Remember where the server actually put slot 1 (admin moves included).
-        if slot == 1, settled, current != nil {
+        // Only when it's where we asked to be (or an adopted admin move) — a
+        // refused or missing target must not overwrite the operator's choice.
+        if slot == 1, settled, onTarget, current != nil {
             saveChannel(1, id: current!, name: st.currentChannelName)
         }
         refreshStatusLine(slot)
@@ -612,6 +713,7 @@ extension VoiceController: MumbleClientDelegate {
         let slot = client.slot
         let key = Self.speakerKey(slot: slot, session: session)
         DispatchQueue.main.async {
+            guard self.clients[slot] === client else { return }   // stale (parked/stopped) client
             // Slots sharing a channel would play every speaker twice: keep slot 1's copy.
             if slot == 2 && self.slotsShareChannel { return }
             if !opus.isEmpty { self.audio.playOpus(opus, speaker: key, slot: slot) }

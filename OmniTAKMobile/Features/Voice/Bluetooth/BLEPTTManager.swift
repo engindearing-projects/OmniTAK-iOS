@@ -60,6 +60,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
     private var kind: Kind?
     private var lastAinaMask: UInt8 = 0
     private var wantRunning = false
+    private var scanToken = 0
 
     var savedPeripheralId: UUID? {
         get { UserDefaults.standard.string(forKey: Self.savedKey).flatMap(UUID.init) }
@@ -90,7 +91,12 @@ final class BLEPTTManager: NSObject, ObservableObject {
         isScanning = true
         status = "Scanning…"
         c.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in self?.stopScan() }
+        scanToken += 1
+        let token = scanToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            guard let self = self, self.scanToken == token else { return }   // a newer scan owns the timer
+            self.stopScan()
+        }
     }
 
     func stopScan() {
@@ -177,6 +183,13 @@ final class BLEPTTManager: NSObject, ObservableObject {
 
 extension BLEPTTManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
+        if c.state != .poweredOn {
+            // Power-off/reset doesn't call didDisconnect: never leave TX keyed.
+            if connectedName != nil || lastAinaMask != 0 { emit(.pttUp(slot: 1)); emit(.pttUp(slot: 2)) }
+            connectedName = nil
+            lastAinaMask = 0
+            isScanning = false
+        }
         switch c.state {
         case .poweredOn: status = savedPeripheralId == nil ? "No button paired" : "Reconnecting…"; reconnectSaved()
         case .unauthorized: status = "Bluetooth permission denied"
@@ -203,7 +216,13 @@ extension BLEPTTManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
-        status = "Couldn't connect: \(error?.localizedDescription ?? "unknown")"
+        status = "Couldn't connect: \(error?.localizedDescription ?? "unknown") — retrying"
+        guard wantRunning, peripheral?.identifier == p.identifier else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self = self, self.wantRunning, self.peripheral?.identifier == p.identifier,
+                  self.central?.state == .poweredOn else { return }
+            self.central?.connect(p, options: nil)
+        }
     }
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {

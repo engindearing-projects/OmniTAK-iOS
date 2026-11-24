@@ -69,7 +69,7 @@ struct VoicePTTOverlay: View {
 private struct PTTSlotRow: View {
     @ObservedObject var controller: VoiceController
     let slot: Int
-    @State private var pressing = false
+    @GestureState private var pressing = false
 
     var body: some View {
         // PTT 2 only appears once a second channel is picked (gear → Channels).
@@ -103,18 +103,18 @@ private struct PTTSlotRow: View {
         }
         .opacity(ready && !busy && !listenOnly ? 1 : 0.55)
         .contentShape(Circle())
+        // @GestureState resets when the gesture ends OR is cancelled (sheet,
+        // system gesture, view removed) — onEnded alone misses cancellation and
+        // could leave the mic keyed.
         .gesture(
             DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    guard !pressing else { return }
-                    pressing = true
-                    controller.pttDown(slot: slot, source: .onScreen)
-                }
-                .onEnded { _ in
-                    pressing = false
-                    controller.pttUp(slot: slot, source: .onScreen)
-                }
+                .updating($pressing) { _, state, _ in state = true }
         )
+        .onChange(of: pressing) { down in
+            if down { controller.pttDown(slot: slot, source: .onScreen) }
+            else { controller.pttUp(slot: slot, source: .onScreen) }
+        }
+        .onDisappear { controller.pttUp(slot: slot, source: .onScreen) }
         .accessibilityLabel("Push to talk, slot \(slot)")
         .accessibilityHint("Press and hold to transmit on \(status.currentChannelName)")
     }

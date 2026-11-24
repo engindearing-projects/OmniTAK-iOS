@@ -28,7 +28,7 @@ protocol MumbleClientDelegate: AnyObject {
     func mumble(_ client: MumbleClient, stateChanged state: MumbleClient.State)
     /// `suppressed`: the server made us listen-only in this channel.
     /// `settled`: no auto-join is still pending (we are where we asked to be).
-    func mumble(_ client: MumbleClient, channelsChanged channels: [UInt32: String], current: UInt32?, suppressed: Bool, settled: Bool)
+    func mumble(_ client: MumbleClient, channelsChanged channels: [UInt32: String], current: UInt32?, suppressed: Bool, settled: Bool, onTarget: Bool)
     func mumble(_ client: MumbleClient, voice opus: Data, from session: UInt32, terminator: Bool)
 }
 
@@ -69,7 +69,9 @@ final class MumbleClient {
     private(set) var channels: [UInt32: String] = [:]
     private(set) var users: [UInt32: (name: String, channel: UInt32)] = [:]
     private(set) var currentChannel: UInt32?
-    /// Channel name to join once the directory is known (nil = stay in Root).
+    /// The channel this slot should be in (nil = stay where the server puts
+    /// us). Persistent for the client's life: re-applied after every reconnect,
+    /// updated by `join(channelId:)` and by admin moves.
     var desiredChannelName: String?
     /// Preferred over the name when it still exists on the server: channel
     /// names can repeat (Murmur's root channel carries the server's name, and a
@@ -82,6 +84,14 @@ final class MumbleClient {
     private var suppressed = false
     private var userSuppressed: [UInt32: Bool] = [:]
     private var rxCount: [UInt32: Int] = [:]
+    /// Bumped on every connect/teardown; callbacks and delayed reconnects from
+    /// an older connection compare and bail out, so they can't tear down or
+    /// re-schedule the current one.
+    private var generation = 0
+    /// A join toward the target was sent and not yet confirmed or refused.
+    private var joinPending = false
+    /// The target channel doesn't exist or the join was refused this session.
+    private var targetUnavailable = false
 
     private(set) var state: State = .idle {
         didSet { if state != oldValue { let s = state; DispatchQueue.main.async { self.delegate?.mumble(self, stateChanged: s) } } }
@@ -100,7 +110,11 @@ final class MumbleClient {
     /// "<callsign with spaces→_>---<first 3 bytes of SHA-256(uid) hex>VS1",
     /// matching TAK-XVoice so other XV clients recognise us in the roster.
     static func username(callsign: String, deviceUid: String, slot: Int = 1) -> String {
-        let cs = callsign.isEmpty ? "ATAK" : callsign.replacingOccurrences(of: " ", with: "_")
+        // Murmur's default username rule allows letters, digits and a few
+        // symbols; anything else would get a fatal InvalidUsername reject.
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-.@()[]{}|"))
+        let cleaned = String(callsign.unicodeScalars.map { allowed.contains($0) && $0.isASCII ? Character($0) : "_" })
+        let cs = cleaned.isEmpty ? "ATAK" : cleaned
         let digest = SHA256.hash(data: Data(deviceUid.utf8))
         let hex = digest.prefix(3).map { String(format: "%02x", $0) }.joined()
         return "\(cs)---\(hex)VS\(slot)"
@@ -136,6 +150,9 @@ final class MumbleClient {
     private func connect() {
         guard !stopped else { return }
         teardown()
+        let gen = generation
+        joinPending = false
+        targetUnavailable = false
         state = .connecting
         guard let c = makeConnection(host, Self.port) else {
             state = .failed("No enrolled client certificate for the active TAK server")
@@ -144,7 +161,7 @@ final class MumbleClient {
         conn = c
         rx.removeAll()
         c.stateUpdateHandler = { [weak self] st in
-            guard let self = self else { return }
+            guard let self = self, self.generation == gen else { return }
             switch st {
             case .ready:
                 print("[Mumble VS\(self.slot)] TLS up to \(self.host):\(Self.port) as \(self.username)")
@@ -167,6 +184,7 @@ final class MumbleClient {
     }
 
     private func teardown() {
+        generation += 1
         pingTimer?.cancel(); pingTimer = nil
         conn?.stateUpdateHandler = nil
         conn?.cancel(); conn = nil
@@ -187,7 +205,11 @@ final class MumbleClient {
         attempt += 1
         print("[Mumble VS\(self.slot)] \(reason) — reconnecting in \(delay)s")
         state = .reconnecting(inSeconds: delay, reason: reason)
-        queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in self?.connect() }
+        let gen = generation
+        queue.asyncAfter(deadline: .now() + .seconds(delay)) { [weak self] in
+            guard let self = self, self.generation == gen else { return }   // stopped/restarted meanwhile
+            self.connect()
+        }
     }
 
     private func fail(_ reason: String) {
@@ -201,13 +223,18 @@ final class MumbleClient {
 
     private func send(_ type: MsgType, _ payload: Data) {
         guard let c = conn else { return }
+        let gen = generation
         var frame = Data(capacity: 6 + payload.count)
         let t = type.rawValue.bigEndian, l = UInt32(payload.count).bigEndian
         withUnsafeBytes(of: t) { frame.append(contentsOf: $0) }
         withUnsafeBytes(of: l) { frame.append(contentsOf: $0) }
         frame.append(payload)
         c.send(content: frame, completion: .contentProcessed { [weak self] err in
-            if let err = err { self?.queue.async { self?.scheduleReconnect("write failed: \(err)") } }
+            guard let err = err else { return }
+            self?.queue.async {
+                guard let self = self, self.generation == gen else { return }
+                self.scheduleReconnect("write failed: \(err)")
+            }
         })
     }
 
@@ -233,6 +260,7 @@ final class MumbleClient {
         t.schedule(deadline: .now() + 8, repeating: 8)
         t.setEventHandler { [weak self] in
             guard let self = self else { return }
+            guard self.conn != nil else { return }
             if Date().timeIntervalSince(self.lastRx) > 18 {
                 self.scheduleReconnect("server silent for 18s")
                 return
@@ -253,6 +281,10 @@ final class MumbleClient {
                 return
             }
             print("[Mumble VS\(self.slot)] join → channel \(channelId) '\(self.channels[channelId] ?? "?")'")
+            self.desiredChannelId = channelId
+            self.desiredChannelName = channelId == 0 ? "Lobby" : (self.channels[channelId] ?? self.desiredChannelName)
+            self.joinPending = self.currentChannel != channelId
+            self.targetUnavailable = false
             var w = MumbleProtoWriter()
             w.uint32(1, me)
             w.uint32(5, channelId)
@@ -288,8 +320,9 @@ final class MumbleClient {
     // MARK: - Receive
 
     private func receive() {
+        let gen = generation
         conn?.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, err in
-            guard let self = self else { return }
+            guard let self = self, self.generation == gen else { return }
             if let d = data, !d.isEmpty {
                 self.lastRx = Date()
                 self.rx.append(d)
@@ -311,7 +344,10 @@ final class MumbleClient {
             let payload = rx.subdata(in: rx.startIndex + 6 ..< rx.startIndex + 6 + len)
             rx.removeSubrange(rx.startIndex ..< rx.startIndex + 6 + len)
             rx = Data(rx)   // re-base indices
+            let gen = generation
             handle(type, payload)
+            // A handled message may have failed or reset the connection: stop.
+            if generation != gen || conn == nil { rx.removeAll(); return }
         }
     }
 
@@ -334,10 +370,11 @@ final class MumbleClient {
             print("[Mumble VS\(self.slot)] ServerSync session=\(mySession ?? 0), starting in channel \(currentChannel.map(String.init) ?? "0") '\(channels[currentChannel ?? 0] ?? "?")'")
             autoJoin()
             // The server sends the whole channel directory before ServerSync,
-            // so a name still unresolved here doesn't exist: stay in Lobby.
-            if let want = desiredChannelName, !want.isEmpty {
-                print("[Mumble VS\(self.slot)] channel '\(want)' not found — staying in Lobby")
-                desiredChannelName = nil
+            // so a target still unresolved here doesn't exist on this server.
+            // Keep it (it may come back) but don't wait for it.
+            if let want = desiredChannelName, !want.isEmpty, resolveTarget() == nil {
+                print("[Mumble VS\(self.slot)] channel '\(want)' not found — staying where the server put us")
+                targetUnavailable = true
             }
             publishChannels()
         case .channelState:
@@ -364,6 +401,15 @@ final class MumbleClient {
                     print("[Mumble VS\(slot)] now in channel \(u.channel) '\(channels[u.channel] ?? "?")' (field present: \(f.has(5)))")
                 }
                 currentChannel = u.channel
+                if let t = resolveTarget(), t == u.channel {
+                    joinPending = false
+                } else if !joinPending, movedChannel, mySession != nil {
+                    // Moved by an admin (or a channel removal): adopt it.
+                    print("[Mumble VS\(slot)] moved by the server to \(u.channel) — adopting it")
+                    desiredChannelId = u.channel
+                    desiredChannelName = u.channel == 0 ? "Lobby" : channels[u.channel]
+                    targetUnavailable = false
+                }
                 publishChannels()
             }
         case .userRemove:
@@ -377,38 +423,51 @@ final class MumbleClient {
             if [2, 3, 4, 7, 8].contains(t) { fail("Voice server rejected login: \(reason)") }
             else { scheduleReconnect("rejected: \(reason)") }
         case .permissionDenied:
-            print("[Mumble VS\(self.slot)] permission denied: \(f.string(2) ?? "")")
+            // PermissionDenied: permission 1, channel_id 2, session 3, reason 4, type 5, name 6
+            print("[Mumble VS\(self.slot)] permission denied (type \(f.uint32(5) ?? 0), channel \(f.uint32(2).map(String.init) ?? "-")): \(f.string(4) ?? "")")
+            if joinPending {
+                joinPending = false
+                targetUnavailable = true
+                publishChannels()
+            }
         case .textMessage, .ping, .version, .cryptSetup, .codecVersion, .authenticate, .udpTunnel:
             break
         }
     }
 
-    private func autoJoin() {
-        guard let me = mySession, let want = desiredChannelName, !want.isEmpty else { return }
-        print("[Mumble VS\(slot)] auto-join wants '\(want)' (directory has \(channels.count) channels)")
-        let target: UInt32?
+    /// The target channel's id in the current directory, if it exists.
+    private func resolveTarget() -> UInt32? {
+        guard let want = desiredChannelName, !want.isEmpty else { return nil }
         if want.caseInsensitiveCompare("Lobby") == .orderedSame || want.caseInsensitiveCompare("Root") == .orderedSame {
-            target = 0
-        } else if let id = desiredChannelId, let n = channels[id], n.caseInsensitiveCompare(want) == .orderedSame {
-            target = id
-        } else {
-            // By name, never resolving to the root channel (id 0): it is
-            // "Lobby" in the UI even when the server names it like a sub-channel.
-            target = channels.filter { $0.key != 0 && $0.value.caseInsensitiveCompare(want) == .orderedSame }
-                .keys.sorted().first
+            return 0
         }
-        guard let id = target else { return }   // channel not in the directory yet
-        desiredChannelName = nil
-        desiredChannelId = nil
-        guard users[me]?.channel != id, currentChannel != id else { publishChannels(); return }
+        if let id = desiredChannelId, let n = channels[id], n.caseInsensitiveCompare(want) == .orderedSame {
+            return id
+        }
+        // By name, never resolving to the root channel (id 0): it is "Lobby"
+        // in the UI even when the server names it like a sub-channel.
+        return channels.filter { $0.key != 0 && $0.value.caseInsensitiveCompare(want) == .orderedSame }
+            .keys.sorted().first
+    }
+
+    /// Move to the target channel once we have a session and it exists.
+    private func autoJoin() {
+        guard mySession != nil, !joinPending, !targetUnavailable, let id = resolveTarget() else { return }
+        guard currentChannel != id else { return }
+        print("[Mumble VS\(slot)] auto-join → '\(desiredChannelName ?? "")' (\(id))")
         join(channelId: id)
+        joinPending = true
     }
 
     private func publishChannels() {
         let ch = channels, cur = currentChannel ?? (mySession != nil ? 0 : nil)
-        let sup = suppressed, settled = desiredChannelName == nil || desiredChannelName?.isEmpty == true
+        let sup = suppressed
+        // Settled = not waiting on a join. On target = where we were asked to be.
+        let settled = mySession != nil && !joinPending
+        let target = resolveTarget()
+        let onTarget = (desiredChannelName?.isEmpty ?? true) || (target != nil && target == cur)
         DispatchQueue.main.async {
-            self.delegate?.mumble(self, channelsChanged: ch, current: cur, suppressed: sup, settled: settled)
+            self.delegate?.mumble(self, channelsChanged: ch, current: cur, suppressed: sup, settled: settled, onTarget: onTarget)
         }
     }
 
