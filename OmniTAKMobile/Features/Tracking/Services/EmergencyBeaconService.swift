@@ -132,14 +132,28 @@ class EmergencyBeaconService: ObservableObject {
     /// to the app-wide TAK service and the app's own location.
     private var effectiveTAKService: TAKService { takService ?? TAKService.shared }
 
-    private var currentCoordinate: (lat: Double, lon: Double, alt: Double) {
+    /// Last position seen while an emergency was being broadcast, for when the
+    /// fix is lost mid-emergency.
+    private var lastKnownCoordinate: (lat: Double, lon: Double, alt: Double)?
+
+    /// The position for the next broadcast. `known == false` means there is no
+    /// fix and none was seen: the CoT then goes out at 0,0 marked "position
+    /// unknown" (ce/le 9999999) rather than as a confident point. Broadcasts
+    /// repeat every `broadcastInterval` and re-read this, so the alert moves to
+    /// the real position on the first broadcast after a fix.
+    private var currentCoordinate: (lat: Double, lon: Double, alt: Double, known: Bool) {
+        var fix: (lat: Double, lon: Double, alt: Double)?
         if let c = locationManager?.location {
-            return (c.latitude, c.longitude, locationManager?.altitude ?? 0)
+            fix = (c.latitude, c.longitude, locationManager?.altitude ?? 0)
+        } else if let l = LocationManager.shared.location {
+            fix = (l.coordinate.latitude, l.coordinate.longitude, l.altitude)
         }
-        if let l = LocationManager.shared.location {
-            return (l.coordinate.latitude, l.coordinate.longitude, l.altitude)
+        if let f = fix {
+            lastKnownCoordinate = f
+            return (f.lat, f.lon, f.alt, true)
         }
-        return (0, 0, 0)
+        if let k = lastKnownCoordinate { return (k.lat, k.lon, k.alt, true) }
+        return (0, 0, 0, false)
     }
     private var locationManager: BeaconLocationManager?
     private var broadcastTimer: Timer?
@@ -260,7 +274,8 @@ class EmergencyBeaconService: ObservableObject {
             message: emergencyState.message,
             latitude: latitude,
             longitude: longitude,
-            altitude: altitude
+            altitude: altitude,
+            positionKnown: pos.known
         )
 
         // Send via TAKService
@@ -293,7 +308,8 @@ class EmergencyBeaconService: ObservableObject {
             message: "EMERGENCY CANCELLED",
             latitude: latitude,
             longitude: longitude,
-            altitude: altitude
+            altitude: altitude,
+            positionKnown: pos.known
         )
 
         _ = takService.sendCoT(xml: xml)
@@ -307,7 +323,8 @@ class EmergencyBeaconService: ObservableObject {
         message: String,
         latitude: Double,
         longitude: Double,
-        altitude: Double
+        altitude: Double,
+        positionKnown: Bool = true
     ) -> String {
         let now = Date()
         let uid = "\(userUID)-\(Int(now.timeIntervalSince1970))"
@@ -316,7 +333,7 @@ class EmergencyBeaconService: ObservableObject {
         let detail = """
                 <contact callsign="\(userCallsign.xmlEscaped)"/>
                 <emergency type="\(type.rawValue.xmlEscaped)">\(message.xmlEscaped)</emergency>
-                <remarks>\(message.xmlEscaped)</remarks>
+                <remarks>\((positionKnown ? message : message + " (position unknown — no GPS fix yet)").xmlEscaped)</remarks>
                 <status readiness="true"/>
                 <takv device="\(UIDevice.current.model)" platform="OmniTAK-iOS" os="\(UIDevice.current.systemVersion)" version="\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0.0")"/>
                 <__group name="Emergency" role="Team Member"/>
@@ -331,8 +348,8 @@ class EmergencyBeaconService: ObservableObject {
             lat: latitude,
             lon: longitude,
             hae: altitude,
-            ce: 9999,
-            le: 9999,
+            ce: positionKnown ? 9999 : 9_999_999,
+            le: positionKnown ? 9999 : 9_999_999,
             detail: detail
         )
     }

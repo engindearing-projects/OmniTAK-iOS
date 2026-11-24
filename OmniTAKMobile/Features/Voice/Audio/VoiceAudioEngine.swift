@@ -113,7 +113,17 @@ final class VoiceAudioEngine {
         var queued: AVAudioFrameCount = 0
         var lastHeard = Date()
         var dropped = 0
+        /// Playing audio that was held while the engine woke up: the 250 ms
+        /// backlog cap is lifted until this speaker's queue has drained, so
+        /// the held start of a message (and what follows it) isn't dropped.
+        var catchingUp = false
     }
+    /// Ceiling for a catching-up speaker's queue (held audio + a margin).
+    static let maxCatchUpSamples: AVAudioFrameCount = AVAudioFrameCount(maxPendingRXSamples) + 48_000
+    /// Engine (re)start retries after a failed start; see `scheduleRestart`.
+    private var restartAttempts = 0
+    private var restartGeneration = 0
+    private static let maxRestartAttempts = 5
     private var speakers: [UInt32: Speaker] = [:]
     private var sweepTimer: DispatchSourceTimer?
 
@@ -357,6 +367,8 @@ final class VoiceAudioEngine {
         slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
         tonePlayer = AVAudioPlayerNode()
         profile = p
+        restartGeneration += 1          // cancels retries of an earlier start
+        restartAttempts = 0
         if p == .standby {
             print("[VoiceAudio] standby: engine stopped")
             return
@@ -365,12 +377,53 @@ final class VoiceAudioEngine {
             try configureSession(p)
             try buildAndStart(p)
         } catch {
+            // Don't tell anyone audio is on: keep the waiters and the held RX
+            // for the retry (a waiting press is bounded by its own timeout).
             print("[VoiceAudio] \(p) start failed: \(error)")
+            scheduleRestart()
+            return
         }
+        engineDidStart()
+    }
+
+    /// Must run on `queue`: the engine is running — release what waited for it.
+    private func engineDidStart() {
+        restartAttempts = 0
         lastTxActivity = Date()
         let waiters = activateWaiters; activateWaiters.removeAll()
         waiters.forEach { w in DispatchQueue.main.async(execute: w) }
         flushPendingRX()
+    }
+
+    /// Must run on `queue`. Retry a failed engine start a few times with a
+    /// growing delay (the Bluetooth link may still be coming up), on a single
+    /// chain: a newer start or teardown invalidates it via `restartGeneration`.
+    private func scheduleRestart() {
+        guard restartAttempts < Self.maxRestartAttempts else {
+            print("[VoiceAudio] engine start failed \(restartAttempts) times — giving up until the next activation")
+            return
+        }
+        restartAttempts += 1
+        let generation = restartGeneration
+        let delay = 0.4 * Double(restartAttempts)
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, self.running, self.profile == .active,
+                  self.restartGeneration == generation, !self.engine.isRunning else { return }
+            print("[VoiceAudio] retrying the engine start (attempt \(self.restartAttempts))")
+            self.teardownGraph()
+            self.engine = AVAudioEngine()
+            self.slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
+            self.tonePlayer = AVAudioPlayerNode()
+            do {
+                try self.configureSession(.active)
+                try self.buildAndStart(.active)
+            } catch {
+                print("[VoiceAudio] engine start retry failed: \(error)")
+                self.scheduleRestart()
+                return
+            }
+            self.engineDidStart()
+        }
     }
 
     private func configureSession(_ p: Profile) throws {
@@ -461,12 +514,14 @@ final class VoiceAudioEngine {
             self.engine = AVAudioEngine()
             self.slotMixers = [1: AVAudioMixerNode(), 2: AVAudioMixerNode()]
             self.tonePlayer = AVAudioPlayerNode()
+            self.restartGeneration += 1
+            self.restartAttempts = 0
             do {
                 try self.configureSession(self.profile)
                 try self.buildAndStart(self.profile)
             } catch {
-                print("[VoiceAudio] rebuild failed: \(error) — retrying in 1 s")
-                self.queue.asyncAfter(deadline: .now() + 1) { self.rebuild("retry after failure") }
+                print("[VoiceAudio] rebuild failed: \(error)")
+                self.scheduleRestart()      // bounded, single chain
             }
             DispatchQueue.main.async { self.onEngineRestart?(reason) }
         }
@@ -478,7 +533,7 @@ final class VoiceAudioEngine {
         let items = pendingRX
         pendingRX.removeAll(); pendingRXSamples = 0
         print("[VoiceAudio] playing \(items.count) buffered packets after wake-up")
-        for i in items { decodeAndPlay(i.packet, speaker: i.speaker, slot: i.slot) }
+        for i in items { decodeAndPlay(i.packet, speaker: i.speaker, slot: i.slot, held: true) }
     }
 
     private func observe() {
@@ -922,7 +977,8 @@ final class VoiceAudioEngine {
         return AVAudioFormat(streamDescription: &asbd)
     }
 
-    private func decodeAndPlay(_ packet: Data, speaker key: UInt32, slot: Int) {
+    /// `held`: a packet buffered during standby, now played on wake-up.
+    private func decodeAndPlay(_ packet: Data, speaker key: UInt32, slot: Int, held: Bool = false) {
         guard running, !packet.isEmpty else { return }
         lastRxActivity = Date()
         // Standby: hold RX (≤4 s) and wake the audio path.
@@ -964,8 +1020,10 @@ final class VoiceAudioEngine {
             sp = Speaker(player: p, slot: slot)
         }
         sp.lastHeard = Date()
-        // Bound latency: if this speaker already has >250 ms queued, drop.
-        if sp.queued > Self.maxBacklogSamples {
+        if held { sp.catchingUp = true }
+        // Bound latency: if this speaker already has >250 ms queued, drop —
+        // except while playing out held audio (bounded by maxCatchUpSamples).
+        if sp.queued > (sp.catchingUp ? Self.maxCatchUpSamples : Self.maxBacklogSamples) {
             sp.dropped += 1
             if sp.dropped == 1 || sp.dropped % 50 == 0 { print("[VoiceAudio] speaker \(key) backlog full — dropped \(sp.dropped) packets") }
             speakers[key] = sp
@@ -975,7 +1033,9 @@ final class VoiceAudioEngine {
         // a sender changes it.
         if sp.decoder == nil || sp.decoderSamples != samples {
             guard let opus = opusFormat(samples: samples), let d = AVAudioConverter(from: opus, to: pcmFormat) else {
-                print("[VoiceAudio] Opus decoder unavailable for \(samples)-sample packets"); return
+                print("[VoiceAudio] Opus decoder unavailable for \(samples)-sample packets")
+                speakers[key] = sp      // keep the player (the sweep frees it): no node per packet
+                return
             }
             sp.decoder = d; sp.decoderSamples = samples
         }
@@ -1015,6 +1075,7 @@ final class VoiceAudioEngine {
             self?.queue.async {
                 guard let self = self, var s = self.speakers[key] else { return }
                 s.queued = s.queued > n ? s.queued - n : 0
+                if s.queued <= Self.maxBacklogSamples { s.catchingUp = false }   // caught up
                 self.speakers[key] = s
             }
         }
@@ -1027,6 +1088,13 @@ final class VoiceAudioEngine {
         t.setEventHandler { [weak self] in
             guard let self = self else { return }
             let now = Date()
+            // Active but the engine isn't running (a start that failed, or a
+            // configuration change that stopped it unnoticed): restart it, or
+            // receive stays silent for as long as people keep talking.
+            if self.profile == .active, !self.engine.isRunning, self.restartAttempts == 0 {
+                print("[VoiceAudio] engine not running while active — restarting it")
+                self.scheduleRestart()
+            }
             // Asked the system for audio and it never came: reset so the next
             // packet / press asks afresh instead of waiting forever.
             if self.profile == .standby, !self.stallHandled {

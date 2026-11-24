@@ -47,14 +47,6 @@ final class AppPluginHost: ObservableObject, PluginHost {
         let handler: (CoTEvent) -> Bool
     }
 
-    /// A voice-signaling CoT handler registered through `VoiceHostBridge`
-    /// (see AppPluginHost+Voice.swift). Kept separate from `cotHandlers` because
-    /// it fires from a different, non-position dispatch point.
-    struct SignalingHandlerEntry {
-        let pluginId: String
-        let handler: (CoTEvent) -> Bool
-    }
-
     /// Map overlays rendered in the engine-agnostic chrome on BOTH engines.
     @Published private(set) var mapOverlays: [OverlayEntry] = []
     /// Rows shown in Settings → Plugins (navigate into settingsContent()).
@@ -63,10 +55,6 @@ final class AppPluginHost: ObservableObject, PluginHost {
     private(set) var radialActions: [RadialEntry] = []
     /// Handlers fired after the core store ingests an inbound CoT event.
     private(set) var cotHandlers: [CoTHandlerEntry] = []
-    /// Voice-signaling handlers registered via `VoiceHostBridge`. Fired from
-    /// `dispatchSignalingCoT` for inbound CoT-bearing events the position hook
-    /// never sees.
-    private(set) var signalingHandlers: [SignalingHandlerEntry] = []
 
     /// The pluginId the registry is currently activating. Every register*
     /// call tags its hook with this so deactivate can remove it cleanly.
@@ -95,15 +83,6 @@ final class AppPluginHost: ObservableObject, PluginHost {
         cotHandlers.append(CoTHandlerEntry(pluginId: owner, handler: handler))
     }
 
-    /// Append a voice-signaling handler, tagged with the currently-activating
-    /// plugin. Called from the `VoiceHostBridge` conformance in
-    /// AppPluginHost+Voice.swift, which can't mutate the `private(set)` store
-    /// across files. Torn down by `removeHooks(for:)` like every other hook.
-    func addSignalingHandler(_ handler: @escaping (CoTEvent) -> Bool) {
-        let owner = currentlyActivating ?? "unknown"
-        signalingHandlers.append(SignalingHandlerEntry(pluginId: owner, handler: handler))
-    }
-
     func registerSettingsRow(label: String, icon: String) {
         let owner = currentlyActivating ?? "unknown"
         let entry = SettingsRowEntry(id: "\(owner)#\(settingsRows.count)",
@@ -122,7 +101,6 @@ final class AppPluginHost: ObservableObject, PluginHost {
         settingsRows.removeAll { $0.pluginId == pluginId }
         radialActions.removeAll { $0.pluginId == pluginId }
         cotHandlers.removeAll { $0.pluginId == pluginId }
-        signalingHandlers.removeAll { $0.pluginId == pluginId }
     }
 
     // MARK: - CoT dispatch
@@ -133,20 +111,6 @@ final class AppPluginHost: ObservableObject, PluginHost {
     @discardableResult
     func dispatchCoT(_ event: CoTEvent) -> Bool {
         for entry in cotHandlers {
-            if entry.handler(event) {
-                return true
-            }
-        }
-        return false
-    }
-
-    /// Fire every registered voice-signaling handler in order (VoiceHostBridge).
-    /// Short-circuits and returns `true` as soon as a handler consumes the
-    /// event. Called from `CoTEventHandler.handle` for inbound CoT-bearing
-    /// events — the non-position path the plugin `cotHandlers` never reach.
-    @discardableResult
-    func dispatchSignalingCoT(_ event: CoTEvent) -> Bool {
-        for entry in signalingHandlers {
             if entry.handler(event) {
                 return true
             }

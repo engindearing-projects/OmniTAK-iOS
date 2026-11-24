@@ -12,8 +12,11 @@ A Bluetooth speaker-mic has two separate parts:
    automatically whenever it's connected.
 2. **Buttons:** PTT, secondary PTT and emergency, over Bluetooth LE. X Voice
    connects to these **directly**: you don't pair them in iOS Settings.
-   X Voice scans for supported buttons and connects to the first one it
-   finds, and to the saved one after that.
+   X Voice connects them automatically in two cases only: the buttons of the
+   speaker-mic iOS is using for audio (matched by name), and a button you
+   connected before. Anything else needs one tap in *Scan for PTT buttons*.
+   X Voice never connects to "whatever is nearby": a wrong device could key
+   your microphone.
 
 A standalone button (Pryme) has only the second part. Your voice then uses
 whatever audio route is active (the iPhone's own mic and speaker, or a headset).
@@ -59,8 +62,13 @@ cancelled from OmniTAK. The top and side buttons are not mapped. See the
 
 1. **Don't pair it in iOS Settings.** If it's listed there, tap ⓘ → *Forget
    This Device*.
-2. Turn it on near the phone with OmniTAK open. X Voice connects to `PTT-Z` on
-   its own.
+2. First time: turn it on, open **X Voice → Bluetooth PTT button → Scan for
+   PTT buttons**, and tap `PTT-Z`. After that X Voice reconnects to it on its
+   own whenever it's on and in range.
+
+A device is only offered as a Pryme if its name says so (`PTT-Z`, `BT-PTT`,
+`Pryme`). The `FFE0` service it uses is shared by many unrelated gadgets, so
+the service alone isn't enough.
 
 PTT → PTT 1. See the
 [Android Pryme page](https://tx-tak.github.io/TAK-XVoice/hardware/pryme-bt-ptt-z/).

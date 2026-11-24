@@ -143,19 +143,6 @@ class CoTEventHandler: ObservableObject {
             self.receivedEventCount += 1
             self.lastEventTime = Date()
 
-            // Voice plugin SDK (VoiceHostBridge.registerSignalingCoTHandler):
-            // fire signaling handlers for inbound CoT-bearing events so a voice
-            // plugin can see call-invite / presence CoT the position-only plugin
-            // hook never reaches. Handlers filter to the voice detail types and
-            // normally return false. Recognising the specific voice-signaling
-            // CoT type (its detail schema) is Track B parser work.
-            switch event {
-            case .positionUpdate(let cot), .waypoint(let cot):
-                _ = AppPluginHost.shared.dispatchSignalingCoT(cot)
-            default:
-                break
-            }
-
             switch event {
             case .positionUpdate(let cotEvent):
                 self.handlePositionUpdate(cotEvent, serverId: serverId, source: source)

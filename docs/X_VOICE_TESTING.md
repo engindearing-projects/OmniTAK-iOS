@@ -67,7 +67,8 @@ voiced 0% means silence was sent.
 
 | # | Do | Expect |
 |---|----|--------|
-| 4.1 | Not paired in iOS Settings; turn it on, launch | `connected PTT-Z`; settings show *Talks on: PTT 1 only* |
+| 4.1 | Not paired in iOS Settings; turn it on; first time: Scan for PTT buttons → tap `PTT-Z` | `connected PTT-Z`; settings show *Talks on: PTT 1 only*. Relaunch: reconnects by itself |
+| 4.1b | *Forget button*, then bring the app to the foreground a few times | Stays disconnected until picked from the scan list again |
 | 4.2 | Press ×4 | Each transmits on slot 1 with voice |
 | 4.3 | If the scan shows `DfuTarg` | Firmware-update mode: power-cycle without holding a button |
 

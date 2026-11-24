@@ -58,6 +58,8 @@ struct TransmitGate {
     private(set) var stopAttempts = 0
     /// Pressed while a stop was going through: begin once the old one ends.
     private(set) var beginAfterEnd = false
+    /// Stops abandoned in a row with no begin/end from the system in between.
+    private(set) var consecutiveGiveUps = 0
 
     // MARK: Operator events
 
@@ -101,6 +103,7 @@ struct TransmitGate {
 
     mutating func didBegin(_ source: TransmitSource) -> [Action] {
         isTransmitting = true
+        consecutiveGiveUps = 0
         if source == .ours, beginRequestedAt != nil {
             beginRequestedAt = nil
             if stopWhenBegun {
@@ -116,6 +119,7 @@ struct TransmitGate {
     /// abort, calling `release()`), call `afterEndNotified(now:)`.
     mutating func didEnd(_ source: TransmitSource) -> [Action] {
         isTransmitting = false
+        consecutiveGiveUps = 0
         beginRequestedAt = nil
         stopWhenBegun = false
         stopInFlight = false
@@ -129,8 +133,9 @@ struct TransmitGate {
         return [.log("previous transmission ended — beginning the queued press")] + press(now: now)
     }
 
+    /// Our begin request was refused. A transmission the system started
+    /// itself (isTransmitting) is not affected.
     mutating func failedToBegin() {
-        isTransmitting = false
         beginRequestedAt = nil
         stopWhenBegun = false
     }
@@ -142,6 +147,18 @@ struct TransmitGate {
             // queued press takes the transmission; otherwise the next press
             // will (press() with no stop in flight).
             stopInFlight = false
+            consecutiveGiveUps += 1
+            if consecutiveGiveUps >= 2 {
+                // Refused again after a takeover: the system evidently has no
+                // transmission ("transmissionNotFound"). Believe it, or every
+                // later press would "take over" nothing and time out.
+                isTransmitting = false
+                consecutiveGiveUps = 0
+                let queued = beginAfterEnd
+                beginAfterEnd = false
+                return [.log("the system reports no transmission to stop — treating it as ended")]
+                    + (queued ? [.notifyEnded(.ours)] : [])
+            }
             var actions: [Action] = [.log("the system kept refusing the stop")]
             if beginAfterEnd {
                 beginAfterEnd = false

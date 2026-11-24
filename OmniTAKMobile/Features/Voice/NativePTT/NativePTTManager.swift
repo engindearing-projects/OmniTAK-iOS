@@ -229,6 +229,9 @@ extension NativePTTManager: PTChannelManagerDelegate {
             self.isJoined = false
             self.gate.reset()
             self.participantName = nil
+            // Removed by the system (not by the operator or by us): rejoin on
+            // the next foreground, or every press fails with "not joined".
+            if reason == .systemPolicy || reason == .unknown { self.pendingJoin = true }
             print("[NativePTT] left channel (reason \(reason.rawValue))")
             self.onLeftChannel?(reason)
         }

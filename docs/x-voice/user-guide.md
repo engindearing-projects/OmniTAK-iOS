@@ -113,7 +113,7 @@ doesn't add a talk-permit tone (that's an Android feature).
 | Talks on | *PTT 1 only*, or *PTT 1 (secondary button: PTT 2)* for an AINA |
 | Status | Scanning, connecting, connected… |
 | Scan for PTT buttons | Lists supported buttons nearby; tap one to connect |
-| Forget button | Stops auto-connecting to the saved button |
+| Forget button | Disconnects the button and stops auto-connecting to it until you pick it from the scan list again |
 
 See [Hardware](hardware.md) for pairing each device.
 
@@ -160,6 +160,11 @@ OmniTAK's own emergency button), sent to your TAK server.
   the key again while the alert is active doesn't replay it.
 - The Inrico's top button does nothing (it's left unmapped on purpose).
 - X Voice must be running: with OmniTAK closed, the emergency key does nothing.
+- The alert repeats every 30 s with your current position. With no GPS fix
+  yet, it goes out marked "position unknown" and moves to your real position
+  on the first repeat after a fix.
+- If the speaker-mic's Bluetooth link drops in the middle of an emergency
+  press, that press is ignored: it neither raises nor cancels an alert.
 
 **Warn your team before testing the emergency key.** It raises a real alert on
 the server.

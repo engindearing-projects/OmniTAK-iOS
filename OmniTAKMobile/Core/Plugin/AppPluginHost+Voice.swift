@@ -37,6 +37,16 @@ extension AppPluginHost: VoiceHostBridge {
             #endif
             return nil
         }
+        // The identity and trust policy below belong to the active server:
+        // never present them to any other host (e.g. a voice connection that
+        // was started against a server the operator has since switched away
+        // from).
+        guard host.caseInsensitiveCompare(server.host) == .orderedSame else {
+            #if DEBUG
+            print("[VoiceHostBridge] makeServerTLSConnection: '\(host)' is not the active server's host — refused")
+            #endif
+            return nil
+        }
         guard let certName = server.certificateName, !certName.isEmpty,
               let identity = resolveCSREnrolledSecIdentity(label: certName),
               let secIdentity = sec_identity_create(identity) else {
@@ -142,18 +152,7 @@ extension AppPluginHost: VoiceHostBridge {
         PositionBroadcastService.shared.userUID
     }
 
-    // MARK: - Voice-signaling CoT
-
-    @discardableResult
-    func sendSignalingCoT(xml: String) -> Bool {
-        TAKService.shared.sendCoT(xml: xml)
-    }
-
-    func registerSignalingCoTHandler(_ handler: @escaping (CoTEvent) -> Bool) {
-        // Append via the host helper: `signalingHandlers` is `private(set)` and
-        // this extension lives in a different file, so it can't mutate it directly.
-        addSignalingHandler(handler)
-    }
+    // MARK: - Emergency
 
     func setEmergency(active: Bool, reason: String) {
         DispatchQueue.main.async {

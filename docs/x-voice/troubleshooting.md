@@ -59,9 +59,12 @@ down to 25%. The channel you're talking on isn't ducked.
 
 - **Audio:** the speaker-mic must be paired and connected in iOS Settings →
   Bluetooth. *Audio route* in X Voice settings shows where audio is going.
-- **Buttons:** look for `[BLEPTT] auto-connecting …` and `connected …`. X Voice
-  connects to one button device at a time; turn off other speaker-mics or
-  buttons nearby, or use *Forget button* and *Scan for PTT buttons*.
+- **Buttons:** look for `[BLEPTT] auto-connecting …` and `connected …`. A
+  speaker-mic's buttons connect by themselves once iOS is using it for audio
+  (make a first press on screen if they haven't yet); a standalone button
+  needs one tap in *Scan for PTT buttons* the first time. X Voice connects to
+  one button device at a time. *Forget button* stops it reconnecting until you
+  pick it from the scan list again.
 - AINA: `[BLEPTT] AINA CONFIG read 0x.. — writing 0x..` then `write OK` on
   connect is normal.
 

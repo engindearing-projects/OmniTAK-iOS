@@ -135,6 +135,82 @@ final class TransmitGateTests: XCTestCase {
         XCTAssertEqual(effects(gate.press(now: t0.addingTimeInterval(2))), [.notifyBegan(.ours)])
     }
 
+    func testSecondGiveUpTreatsTheTransmissionAsGone() {
+        // After a give-up the next press takes over. If the system refuses to
+        // stop that one too, it has no transmission: the gate must not stay
+        // "transmitting" forever (every later press would take over nothing).
+        var gate = TransmitGate()
+        _ = gate.press(now: t0)
+        _ = gate.didBegin(.ours)
+        _ = gate.release()
+        for _ in 1..<TransmitGate.stopRetries { _ = gate.failedToStop(); _ = gate.stopRetryFired() }
+        _ = gate.failedToStop()                                   // first give-up
+        XCTAssertTrue(gate.isTransmitting)
+        XCTAssertEqual(effects(gate.press(now: t0.addingTimeInterval(2))), [.notifyBegan(.ours)])
+        XCTAssertEqual(effects(gate.release()), [.requestStop])
+        for _ in 1..<TransmitGate.stopRetries { _ = gate.failedToStop(); _ = gate.stopRetryFired() }
+        XCTAssertEqual(effects(gate.failedToStop()), [])          // second give-up
+        XCTAssertFalse(gate.isTransmitting)
+        // A fresh press now asks the system again.
+        XCTAssertEqual(effects(gate.press(now: t0.addingTimeInterval(5))), [.requestBegin])
+    }
+
+    func testGiveUpCounterResetsWhenTheSystemReportsAnEnd() {
+        var gate = TransmitGate()
+        _ = gate.press(now: t0)
+        _ = gate.didBegin(.ours)
+        _ = gate.release()
+        for _ in 1..<TransmitGate.stopRetries { _ = gate.failedToStop(); _ = gate.stopRetryFired() }
+        _ = gate.failedToStop()
+        XCTAssertEqual(gate.consecutiveGiveUps, 1)
+        _ = gate.didEnd(.system)
+        XCTAssertEqual(gate.consecutiveGiveUps, 0)
+    }
+
+    // MARK: System-initiated transmissions
+
+    func testSystemBeginWhileOurRequestIsOutstanding() {
+        var gate = TransmitGate()
+        _ = gate.press(now: t0)
+        // The lock-screen Talk button wins the race: passed through as system.
+        XCTAssertEqual(effects(gate.didBegin(.system)), [.notifyBegan(.system)])
+        XCTAssertTrue(gate.isTransmitting)
+    }
+
+    func testFailedBeginDoesNotClearASystemTransmission() {
+        var gate = TransmitGate()
+        _ = gate.didBegin(.system)
+        gate.failedToBegin()
+        XCTAssertTrue(gate.isTransmitting)
+    }
+
+    func testTakingOverASystemTransmissionThenReleasingStopsIt() {
+        var gate = TransmitGate()
+        _ = gate.didBegin(.system)
+        XCTAssertEqual(effects(gate.press(now: t0)), [.notifyBegan(.ours)])
+        XCTAssertEqual(effects(gate.release()), [.requestStop])
+    }
+
+    func testOurBeginWithNoRequestOutstandingIsStillReported() {
+        // The controller decides what to do with it (it stops it when idle).
+        var gate = TransmitGate()
+        XCTAssertEqual(effects(gate.didBegin(.ours)), [.notifyBegan(.ours)])
+    }
+
+    func testStaleStopRetryDoesNotStopTheNextTransmission() {
+        var gate = TransmitGate()
+        _ = gate.press(now: t0)
+        _ = gate.didBegin(.ours)
+        _ = gate.release()
+        XCTAssertEqual(effects(gate.failedToStop()), [.scheduleStopRetry])
+        _ = gate.didEnd(.ours)
+        // A new transmission starts before the old retry timer fires.
+        _ = gate.press(now: t0.addingTimeInterval(0.1))
+        _ = gate.didBegin(.ours)
+        XCTAssertEqual(effects(gate.stopRetryFired()), [])
+        XCTAssertTrue(gate.isTransmitting)
+    }
+
     // MARK: Press while a stop is going through
 
     func testPressDuringAStopIsQueuedAndBegunWhenItEnds() {

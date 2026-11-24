@@ -7,16 +7,24 @@
 //
 //  - AINA APTT V2 (name "APTT*"): service 127FACE1-…, button char 127FBEEF-…
 //    notify, byte[0] bitmask 0x01 PTT, 0x02 emergency, 0x04 secondary PTT,
-//    0x20 MFB; 0x80 heartbeat (mask 0x3F). Init: set CONFIG (127FDEAF-…)
-//    bit 0x20 (A2DP controls disable) via read-modify-write. NO other bits.
-//  - Pryme BT-PTT-Z (name contains pryme / bt-ptt / ptt-z, or service FFE0):
+//    0x20 MFB; 0x80 heartbeat (mask 0x3F). Init: OR the two production CONFIG
+//    (127FDEAF-…) bits 0x20 (A2DP controls disable) and 0x10 (phone controls
+//    disable) via read-modify-write. NO other bits. The V1 exposes the same
+//    BLE button service and is handled identically.
+//  - Pryme BT-PTT-Z (name contains pryme / bt-ptt / ptt-z — the name is
+//    required: FFE0 alone is a generic UART service many gadgets advertise):
 //    subscribe every notify characteristic in FFE0 (or the 00420000-… fallback);
 //    byte[0] != 0 → down, 0 → up.
 //  - Inrico BT02 (name prefix "B02PTT"): char 894C8042-… anywhere, byte[0] code
 //    0x00 release, 0x01 PTT held, 0x08 emergency pulse.
 //
-//  NOT supported on iOS: AINA APTT V1 (SPP/RFCOMM — needs Apple MFi) and
-//  Samsung Active Key (Android-only). A speaker-mic's AUDIO still works through
+//  NOT supported on iOS: the AINA V1's SPP/RFCOMM channel (needs Apple MFi)
+//  and Samsung Active Key (Android-only).
+//
+//  Connection policy (a wrong device here could key the microphone): a button
+//  connects automatically only if the operator picked it before (saved), or it
+//  is the BLE side of the speaker-mic iOS is using for audio (same name).
+//  Anything else needs one tap in the scan list. "Forget" sticks until then. A speaker-mic's AUDIO still works through
 //  the regular Bluetooth HFP route (see VoiceAudioEngine); this file only
 //  handles the buttons.
 //
@@ -27,7 +35,9 @@ import CoreBluetooth
 /// PTT events from a hardware button. `slot` 1 = primary PTT (VS1), 2 = secondary (VS2).
 /// `function`: a speaker-mic's extra button (Inrico BT02: 0x03 top button,
 /// 0x02 / 0x04 side buttons), one pulse per press.
-enum PTTButtonEvent: Equatable { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool), function(code: UInt8) }
+/// `linkLost`: the button disconnected or Bluetooth turned off — any press in
+/// progress is void (PTT releases are emitted separately).
+enum PTTButtonEvent: Equatable { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool), function(code: UInt8), linkLost }
 
 final class BLEPTTManager: NSObject, ObservableObject {
     /// rawValue is persisted (saved button kind) — don't change it.
@@ -72,7 +82,16 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// When set, the first discovered button with this exact name is
     /// connected automatically (the BLE side of a paired speaker-mic).
     private var autoConnectName: String?
-    private var autoConnectAny = false
+    /// Auto scans are spaced out: route changes and foregrounding fire often.
+    private var lastAutoScanAt = Date.distantPast
+    private static let autoScanMinInterval: TimeInterval = 30
+    private static let forgottenKey = "voice.blePtt.forgotten"
+    /// The button the operator chose to forget: never auto-connected again
+    /// until they pick it from the scan list.
+    private var forgottenPeripheralId: UUID? {
+        get { UserDefaults.standard.string(forKey: Self.forgottenKey).flatMap(UUID.init) }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: Self.forgottenKey) }
+    }
     private var scanToken = 0
     private var seenThisScan = Set<UUID>()
 
@@ -93,6 +112,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
 
     func stop() {
         wantRunning = false
+        autoConnectName = nil
         stopScan()
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
         peripheral = nil; kind = nil; connectedName = nil
@@ -129,23 +149,21 @@ final class BLEPTTManager: NSObject, ObservableObject {
             central?.cancelPeripheralConnection(old)
             peripheral = nil; kind = nil; connectedName = nil; lastAinaMask = 0
         }
-        print("[BLEPTT] looking for the PTT button of '\(name)'")
+        guard wantRunning else { return }
         autoConnectName = name
         // Bluetooth may still be powering up right after launch: the scan then
         // starts from centralManagerDidUpdateState(.poweredOn).
-        if !isScanning, central?.state == .poweredOn { startScan() }
+        guard !isScanning, central?.state == .poweredOn,
+              Date().timeIntervalSince(lastAutoScanAt) >= Self.autoScanMinInterval else { return }
+        print("[BLEPTT] looking for the PTT button of '\(name)'")
+        lastAutoScanAt = Date()
+        startScan()
     }
 
-    /// No speaker-mic name to match (e.g. the audio session is inactive):
-    /// scan and connect the first supported PTT device nearby with a strong
-    /// signal (≥ -75 dBm), preferring the one saved before.
-    func autoConnectAnySupported() {
-        // A pending reconnect to a saved button that isn't around (e.g. the
-        // Inrico while the AINA is in use) must not block this.
-        guard connectedName == nil else { return }
-        print("[BLEPTT] looking for any supported PTT speaker-mic nearby")
-        autoConnectAny = true
-        if !isScanning, central?.state == .poweredOn { startScan() }
+    /// Operator tapped a device in the scan list.
+    func connectChosen(_ d: Discovered) {
+        forgottenPeripheralId = nil
+        connect(d)
     }
 
     func stopScan() {
@@ -155,7 +173,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
         if connectedName == nil { status = discovered.isEmpty ? "No PTT buttons found" : "Pick a button" }
     }
 
-    func connect(_ d: Discovered) {
+    private func connect(_ d: Discovered) {
         guard let c = central, let p = c.retrievePeripherals(withIdentifiers: [d.id]).first else { return }
         stopScan()
         if let old = peripheral, old.identifier != p.identifier { c.cancelPeripheralConnection(old) }
@@ -166,8 +184,10 @@ final class BLEPTTManager: NSObject, ObservableObject {
 
     func forget() {
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
+        forgottenPeripheralId = peripheral?.identifier ?? savedPeripheralId
         peripheral = nil; kind = nil; connectedName = nil
         savedPeripheralId = nil
+        autoConnectName = nil
         status = "No button paired"
     }
 
@@ -196,7 +216,8 @@ final class BLEPTTManager: NSObject, ObservableObject {
         // service — V1), or by advertising the AINA GATT service.
         if n.hasPrefix("aptt") || services.contains(UUIDs.ainaService) { return .ainaV2 }
         if n.hasPrefix("b02ptt") { return .bt02 }
-        if n.contains("pryme") || n.contains("bt-ptt") || n.contains("ptt-z") || services.contains(UUIDs.prymeService) { return .pryme }
+        // Name required: FFE0 alone is the generic HM-10 UART service.
+        if n.contains("pryme") || n.contains("bt-ptt") || n.contains("ptt-z") { return .pryme }
         return nil
     }
 
@@ -256,7 +277,7 @@ extension BLEPTTManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
         if c.state != .poweredOn {
             // Power-off/reset doesn't call didDisconnect: never leave TX keyed.
-            if connectedName != nil || lastAinaMask != 0 { emit(.pttUp(slot: 1)); emit(.pttUp(slot: 2)) }
+            if connectedName != nil || lastAinaMask != 0 { emit(.pttUp(slot: 1)); emit(.pttUp(slot: 2)); emit(.linkLost) }
             connectedName = nil
             lastAinaMask = 0
             isScanning = false
@@ -264,8 +285,12 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         switch c.state {
         case .poweredOn:
             status = savedPeripheralId == nil ? "No button paired" : "Reconnecting…"
+            guard wantRunning else { break }
             reconnectSaved()
-            if (autoConnectName != nil || autoConnectAny), connectedName == nil, !isScanning { startScan() }
+            if autoConnectName != nil, connectedName == nil, !isScanning {
+                lastAutoScanAt = Date()
+                startScan()
+            }
         case .unauthorized: status = "Bluetooth permission denied"
         case .poweredOff: status = "Bluetooth is off"
         case .unsupported: status = "Bluetooth LE unsupported"
@@ -279,22 +304,18 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         let services = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
         // Log every advertiser once per scan (diagnostics: e.g. does an AINA
         // V1 advertise over BLE at all, and under what name/services?).
+        #if DEBUG
         if !seenThisScan.contains(p.identifier) {
             seenThisScan.insert(p.identifier)
             let mfr = (ad[CBAdvertisementDataManufacturerDataKey] as? Data).map { $0.prefix(8).map { String(format: "%02x", $0) }.joined() } ?? "-"
             print("[BLEPTT] scan: '\(name ?? "(no name)")' rssi \(rssi) services [\(services.map { $0.uuidString }.joined(separator: ","))] mfr \(mfr)")
         }
+        #endif
         guard let k = Self.classify(name: name, services: services) else { return }
         let d = Discovered(id: p.identifier, name: name ?? k.rawValue, kind: k, rssi: rssi.intValue)
         if let i = discovered.firstIndex(where: { $0.id == d.id }) { discovered[i].rssi = d.rssi }
         else { discovered.append(d) }
-        if autoConnectAny, autoConnectName == nil, connectedName == nil,
-           rssi.intValue >= -75 || d.id == savedPeripheralId {
-            print("[BLEPTT] auto-connecting nearby \(d.name) (\(d.kind.displayName), \(rssi) dBm)")
-            autoConnectAny = false
-            connect(d)
-        }
-        if let want = autoConnectName, d.name == want, connectedName == nil {
+        if let want = autoConnectName, d.name == want, connectedName == nil, d.id != forgottenPeripheralId {
             print("[BLEPTT] auto-connecting \(d.name) (\(d.kind.displayName))")
             autoConnectName = nil
             connect(d)
@@ -319,8 +340,12 @@ extension BLEPTTManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        // A late disconnect of a button we already replaced (or forgot) must
+        // not release PTT or clear the name of the current one.
+        if let current = peripheral, current.identifier != p.identifier { return }
         connectedName = nil
         emit(.pttUp(slot: 1)); emit(.pttUp(slot: 2))   // never leave TX latched on
+        emit(.linkLost)
         lastAinaMask = 0
         guard wantRunning, peripheral?.identifier == p.identifier else { return }
         status = "Disconnected — reconnecting…"

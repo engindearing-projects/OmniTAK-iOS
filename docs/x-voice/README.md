@@ -21,7 +21,8 @@ and Android operators share the same channels.
   push-to-talk UI (lock screen, Dynamic Island), works in the background and
   with the phone locked, and uses iOS's own start/stop sounds and vibration.
 - **Bluetooth speaker-mics and buttons.** AINA APTT, Inrico BT02 and the Pryme
-  BT-PTT-Z button, found and connected automatically.
+  BT-PTT-Z button. A speaker-mic's buttons connect automatically; a standalone
+  button needs one tap the first time.
 - **Emergency button.** A speaker-mic's emergency key raises a 911 alert in
   OmniTAK, the same alert as the in-app emergency button.
 

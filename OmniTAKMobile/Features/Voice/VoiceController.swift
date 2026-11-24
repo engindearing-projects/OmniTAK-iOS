@@ -142,6 +142,7 @@ final class VoiceController: ObservableObject {
             case .pttDown(let slot): self?.pttDown(slot: slot, source: .bluetooth)
             case .pttUp(let slot): self?.pttUp(slot: slot, source: .bluetooth)
             case .emergency(let down): self?.onEmergencyButton(down: down)
+            case .linkLost: self?.onButtonLinkLost()
             case .function(let code): self?.onFunctionButton(code: code)
             }
         }
@@ -196,9 +197,21 @@ final class VoiceController: ObservableObject {
             // button and hands-free buttons start a burst on PTT 1.
             if source != .developerRequest && self.txState == .idle && self.pressedSlot == nil {
                 self.pttDown(slot: 1, source: .system)
+                if self.txState == .idle {
+                    // We couldn't take it (voice not connected, listen-only
+                    // channel, refractory window): don't leave the system
+                    // showing "transmitting" with nothing going out.
+                    self.held[1, default: []].remove(.system)
+                    print("[Voice] system Talk press refused — ending the system transmission")
+                    self.nativePTT.stopTransmitting()
+                }
             } else if source == .developerRequest && self.txState == .acquiring && self.requestedSystemTX {
                 // Our own request went through: now wait for the audio session.
                 self.waitForAudioThenPrime()
+            } else if source == .developerRequest && self.txState == .idle {
+                // A transmission of ours began with no press behind it any more.
+                print("[Voice] transmission began with no press behind it — ending it")
+                self.nativePTT.stopTransmitting()
             }
         }
         nativePTT.onTransmitEnded = { [weak self] source in
@@ -214,8 +227,10 @@ final class VoiceController: ObservableObject {
                     self.audio.systemDidDeactivate()
                 }
             }
-            if self.held[1, default: []].contains(.system) || self.held[2, default: []].contains(.system) {
-                self.pttUp(slot: self.pressedSlot ?? 1, source: .system)
+            let systemHeld = [1, 2].filter { self.held[$0, default: []].contains(.system) }
+            if !systemHeld.isEmpty {
+                // Release .system from the slot that actually holds it.
+                systemHeld.forEach { self.pttUp(slot: $0, source: .system) }
             } else if source != .developerRequest, self.txState != .idle {
                 // The system ended our transmission (e.g. a phone call).
                 self.held = [1: [], 2: []]
@@ -316,6 +331,15 @@ final class VoiceController: ObservableObject {
         print("[Voice] speaker-mic button 0x\(String(format: "%02x", code)) (unmapped)")
     }
 
+    /// The button's link dropped: a half-finished emergency press is void. It
+    /// must neither fire nor — via the 1 s hold timer — cancel a live alert.
+    func onButtonLinkLost() {
+        guard emergencyCancelTimer != nil else { return }
+        emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
+        emergency = EmergencyPressTracker()
+        print("[Voice] button link lost during an emergency press — press ignored")
+    }
+
     func onEmergencyButton(down: Bool) {
         if down {
             emergency.press(at: Date())
@@ -362,6 +386,7 @@ final class VoiceController: ObservableObject {
     /// If audio is on a supported Bluetooth speaker-mic (Inrico BT02, AINA),
     /// connect its BLE PTT button automatically.
     func autoConnectSpeakerMicButton() {
+        guard started else { return }
         // With PushToTalk the session is usually INACTIVE, and then the current
         // route lists no Bluetooth device. availableInputs still lists paired,
         // connected HFP devices (the category is playAndRecord), so check both.
@@ -373,11 +398,13 @@ final class VoiceController: ObservableObject {
         if let name = names.first(where: { BLEPTTManager.classify(name: $0, services: []) != nil }) {
             print("[Voice] speaker-mic in use: '\(name)' (Bluetooth HFP)")
             blePTT.autoConnect(matching: name)
-        } else {
-            if !names.isEmpty { print("[Voice] Bluetooth HFP devices (not supported speaker-mics): \(names)") }
-            // No speaker-mic visible to the audio system: find one over BLE.
-            blePTT.autoConnectAnySupported()
+        } else if !names.isEmpty {
+            print("[Voice] Bluetooth HFP devices (not supported speaker-mics): \(names)")
         }
+        // No speaker-mic visible to the audio system: nothing is scanned for.
+        // A saved button reconnects by itself; any other device needs one tap
+        // in the scan list (connecting "whatever is nearby" could key the mic
+        // from an unrelated gadget or a teammate's button).
     }
 
     func reloadAudioLevels() { audio.reloadGains() }
@@ -473,7 +500,16 @@ final class VoiceController: ObservableObject {
     private func startClient(slot: Int, host: String, bridge: VoiceHostBridge) {
         guard clients[slot] == nil else { return }
         let c = MumbleClient(host: host, callsign: bridge.selfCallsign(), deviceUid: bridge.selfUid(), slot: slot) {
-            [weak bridge] h, p in bridge?.makeServerTLSConnection(host: h, port: p)
+            [weak self, weak bridge] h, p in
+            guard let bridge = bridge else { return nil }
+            // The operator switched TAK servers: this connection's host is no
+            // longer the active one. Don't reconnect to it (the bridge would
+            // refuse anyway) — restart voice against the new server.
+            if let active = bridge.activeServerHost(), active.caseInsensitiveCompare(h) != .orderedSame {
+                DispatchQueue.main.async { self?.activeServerChanged() }
+                return nil
+            }
+            return bridge.makeServerTLSConnection(host: h, port: p)
         }
         c.delegate = self
         c.desiredChannelName = configuredName(slot)
@@ -522,6 +558,7 @@ final class VoiceController: ObservableObject {
         clients.removeAll()
         audio.stop()
         blePTT.stop()
+        emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
         speakerTimer?.invalidate(); speakerTimer = nil
         if let o = routeObserver { NotificationCenter.default.removeObserver(o); routeObserver = nil }
         speakerLastHeard.removeAll(); activeSpeakers = []
@@ -530,6 +567,15 @@ final class VoiceController: ObservableObject {
     }
 
     func reconnect() { stop(); start() }
+
+    private var handlingServerChange = false
+    private func activeServerChanged() {
+        guard started, !handlingServerChange else { return }
+        handlingServerChange = true
+        print("[Voice] the active TAK server changed — restarting voice against it")
+        reconnect()
+        handlingServerChange = false
+    }
 
     // MARK: - Channels
 

@@ -16,6 +16,7 @@ Thanks for your interest in contributing.
 2. `git clone https://github.com/engindearing-projects/OmniTAK-iOS.git`
 3. `open OmniTAKMobile.xcodeproj`
 4. Set your Apple Developer Team and Bundle Identifier in **Signing & Capabilities**
+   - The app target has an entitlements file (`OmniTAKMobile/OmniTAKMobile.entitlements`) for the X Voice plugin: `com.apple.developer.push-to-talk` and `aps-environment`. A paid Apple Developer team can provision both (enable **Push to Talk** and **Push Notifications** for your App ID). A free personal team can't: to build on your own device without X Voice, clear **Code Signing Entitlements** (`CODE_SIGN_ENTITLEMENTS`) in the target's build settings locally and don't commit that change. Simulator builds are unaffected.
 
 ## Code style
 

@@ -45,6 +45,18 @@ final class VoicePluginTests: XCTestCase {
         XCTAssertNil(MumbleVarint.decode(Data(), &i))
     }
 
+    func testVarintNegationPrefixCannotRecurse() {
+        // One 0xF8 ("negated varint follows") is valid...
+        var i = 0
+        XCTAssertEqual(MumbleVarint.decode(Data([0xF8, 0x05]), &i), ~UInt64(5))
+        // ...a run of them from a hostile server must be rejected, not recursed
+        // into once per byte (that overflowed the stack).
+        i = 0
+        XCTAssertNil(MumbleVarint.decode(Data([0xF8, 0xF8, 0x05]), &i))
+        i = 0
+        XCTAssertNil(MumbleVarint.decode(Data(repeating: 0xF8, count: 200_000), &i))
+    }
+
     // MARK: Protobuf
 
     func testProtoRoundTrip() {
@@ -72,6 +84,16 @@ final class VoicePluginTests: XCTestCase {
         XCTAssertNotNil(f)
         XCTAssertEqual(f?.uint(4), 7)
         XCTAssertNil(MumbleProtoFields(Data([0x0A, 0x05, 0x01])))   // length past end
+    }
+
+    func testProtoRejectsHugeDeclaredLength() {
+        // Field 1, length-delimited, declared length 2^64-1: used to trap in
+        // Int(len). Must be rejected as malformed.
+        let huge = Data([0x0A]) + Data(repeating: 0xFF, count: 9) + Data([0x01])
+        XCTAssertNil(MumbleProtoFields(huge))
+        // 2^63 exactly (the smallest value that doesn't fit Int).
+        let justOver = Data([0x0A]) + Data(repeating: 0x80, count: 9) + Data([0x01])
+        XCTAssertNil(MumbleProtoFields(justOver))
     }
 
     // MARK: Voice packets
@@ -230,7 +252,10 @@ final class VoicePluginTests: XCTestCase {
         XCTAssertEqual(BLEPTTManager.classify(name: "APTT-1234", services: []), .ainaV2)
         XCTAssertEqual(BLEPTTManager.classify(name: "B02PTT-xyz", services: []), .bt02)
         XCTAssertEqual(BLEPTTManager.classify(name: "Pryme BT-PTT-Z", services: []), .pryme)
-        XCTAssertEqual(BLEPTTManager.classify(name: nil, services: [CBUUID(string: "FFE0")]), .pryme)
+        XCTAssertEqual(BLEPTTManager.classify(name: "PTT-Z", services: [CBUUID(string: "FFE0")]), .pryme)
+        // FFE0 alone is a generic UART service: never a PTT button without the name.
+        XCTAssertNil(BLEPTTManager.classify(name: nil, services: [CBUUID(string: "FFE0")]))
+        XCTAssertNil(BLEPTTManager.classify(name: "HMSoft", services: [CBUUID(string: "FFE0")]))
         XCTAssertNil(BLEPTTManager.classify(name: "AirPods Pro", services: []))
     }
 

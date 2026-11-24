@@ -122,7 +122,7 @@ struct VoicePluginSettingsView: View {
                 .disabled(controller.blePTT.isScanning)
                 ForEach(controller.blePTT.discovered) { d in
                     Button {
-                        controller.blePTT.connect(d)
+                        controller.blePTT.connectChosen(d)
                     } label: {
                         HStack {
                             VStack(alignment: .leading) {

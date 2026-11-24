@@ -63,9 +63,12 @@ struct MumbleProtoFields {
                 for n in 0..<8 { v |= UInt64(data[i + n]) << (8 * UInt64(n)) }
                 i += 8; values[field, default: []].append(.fixed64(v))
             case 2:
-                guard let len = varint(), data.endIndex - i >= Int(len) else { return nil }
-                values[field, default: []].append(.bytes(data.subdata(in: i..<i + Int(len))))
-                i += Int(len)
+                // Compare as UInt64 first: a declared length ≥ 2^63 would trap
+                // in Int(len) (untrusted server input).
+                guard let len = varint(), len <= UInt64(data.endIndex - i) else { return nil }
+                let n = Int(len)
+                values[field, default: []].append(.bytes(data.subdata(in: i..<i + n)))
+                i += n
             case 5:
                 guard data.endIndex - i >= 4 else { return nil }
                 var v: UInt32 = 0
@@ -112,6 +115,13 @@ enum MumbleVarint {
 
     /// Decode at `index`, advancing it. Returns nil on truncation.
     static func decode(_ d: Data, _ index: inout Int) -> UInt64? {
+        decode(d, &index, allowNegation: true)
+    }
+
+    /// `allowNegation`: the 0xF8 prefix ("negated varint follows") may appear
+    /// once. Without the limit a packet of repeated 0xF8 bytes recursed once
+    /// per byte and overflowed the stack (untrusted server input).
+    private static func decode(_ d: Data, _ index: inout Int, allowNegation: Bool) -> UInt64? {
         func byte() -> UInt64? {
             guard index < d.endIndex else { return nil }
             defer { index += 1 }
@@ -138,7 +148,7 @@ enum MumbleVarint {
             for _ in 0..<8 { guard let b = byte() else { return nil }; v = v << 8 | b }
             return v
         case 0xF8:
-            guard let inner = decode(d, &index) else { return nil }
+            guard allowNegation, let inner = decode(d, &index, allowNegation: false) else { return nil }
             return ~inner
         case 0xFC:
             return ~(b0 & 0x03)

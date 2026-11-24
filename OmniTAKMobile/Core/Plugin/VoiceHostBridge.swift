@@ -14,7 +14,7 @@
 //  WHY A SEPARATE PROTOCOL (not more hooks on PluginHost):
 //  voice needs things no other plugin should casually reach — the server
 //  connection, the active-server host, the enrolled identity (for outbound
-//  mTLS), and a CoT send path. Bundling those into the general plugin surface
+//  mTLS), and the emergency beacon. Bundling those into the general plugin surface
 //  would widen it for everyone. Instead this is ONE named, bounded, reviewable
 //  protocol: the maintainer can audit exactly what voice can and cannot do.
 //
@@ -22,9 +22,9 @@
 //  - the raw `SecIdentity` / private key — the host keeps the key and only ever
 //    vends a live, already-authenticated `NWConnection` (see
 //    `makeServerTLSConnection`). The plugin never touches the credential.
-//  - a general "send any socket / any CoT" escape hatch — the send path is
-//    scoped to voice signaling, and the transport is pinned to the active
-//    server's own cert/truststore settings.
+//  - a general "open any socket" escape hatch — the transport is pinned to
+//    the active server's own host and cert/truststore settings.
+//  - any CoT send or receive path: voice doesn't need one.
 //
 //  TRUST NOTE: plugins run IN-PROCESS with full app permissions (no sandbox —
 //  see OmniTAKPlugin.swift). This boundary is about CLARITY and REVIEWABILITY,
@@ -47,8 +47,11 @@ protocol VoiceHostBridge: AnyObject {
     /// local identity + challenge block; the caller gets only the socket and
     /// drives its own read/write loop (e.g. the Mumble framing).
     ///
-    /// Returns `nil` when there is no active server, no enrolled client
-    /// certificate for it, or the endpoint is invalid. The caller owns the
+    /// `host` must be the active TAK server's own host (`activeServerHost()`):
+    /// the client identity is never presented to any other host.
+    ///
+    /// Returns `nil` when there is no active server, `host` isn't its host, no
+    /// enrolled client certificate exists for it, or the endpoint is invalid. The caller owns the
     /// returned connection's lifecycle (`start`/`cancel`).
     func makeServerTLSConnection(host: String, port: UInt16) -> NWConnection?
 
@@ -61,27 +64,9 @@ protocol VoiceHostBridge: AnyObject {
     /// Read-only; already app-known.
     func selfCallsign() -> String
 
-    /// The operator's self UID (used for call signaling / attribution).
+    /// The operator's self UID (used to tag the Mumble username).
     /// Read-only; already app-known.
     func selfUid() -> String
-
-    /// Send a voice-signaling CoT (e.g. a private-call invite / presence) over
-    /// the existing TAK link. A narrow wrapper over the host's CoT send path —
-    /// the caller supplies pre-built XML. Returns whether the send was accepted.
-    @discardableResult
-    func sendSignalingCoT(xml: String) -> Bool
-
-    /// Register a handler for inbound voice-signaling CoT. Unlike the
-    /// position-only `PluginHost.registerCoTHandler`, this fires for inbound
-    /// events the position pipeline never surfaces to plugins. Return `true` to
-    /// mark the event consumed. The registration is torn down with the plugin's
-    /// other hooks on deactivate.
-    ///
-    /// NOTE: recognising the specific voice-signaling CoT *type* (parsing the
-    /// private-call invite detail) is Track B parser work; today this delivers
-    /// the CoT-bearing inbound events the host already parses, and the handler
-    /// filters to the voice detail types it cares about.
-    func registerSignalingCoTHandler(_ handler: @escaping (CoTEvent) -> Bool)
 
     /// Start (true) or cancel (false) the host's emergency beacon (911 alert,
     /// CoT b-a-o-tbl) — what a speaker-mic's emergency button does, like
