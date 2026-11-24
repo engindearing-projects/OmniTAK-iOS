@@ -334,10 +334,17 @@ final class VoiceController: ObservableObject {
             return
         case .fire:
             print("[Voice] emergency \(detail) — FIRE")
+            // Only a NEW alert gets the confirmation cue: repeated presses
+            // while one is already active do nothing audible.
+            let alreadyActive = bridge?.isEmergencyActive() ?? false
             bridge?.setEmergency(active: true, reason: "speaker-mic emergency button")
-            // The beacon is started without its full-volume system sound;
-            // confirm with a moderate cue in the speaker-mic instead.
-            audio.playCue(VoiceTones.emergencyCue())
+            if alreadyActive {
+                print("[Voice] emergency already active — no cue")
+            } else {
+                // The beacon is started without its full-volume system sound;
+                // confirm with a moderate cue in the speaker-mic instead.
+                audio.playCue(VoiceTones.emergencyCue())
+            }
             notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
         case .cancel:
             print("[Voice] emergency \(detail) — CANCEL")
