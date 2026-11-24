@@ -98,6 +98,9 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// connected automatically (the BLE side of a paired speaker-mic).
     private var autoConnectName: String?
     /// Auto scans are spaced out: route changes and foregrounding fire often.
+    /// The speaker-mic in use for audio was found but is the forgotten device:
+    /// say so, and don't keep scanning for something we will skip.
+    private var forgottenInUseName: String?
     private var lastAutoScanAt = Date.distantPast
     private static let autoScanMinInterval: TimeInterval = 30
     private static let forgottenKey = "voice.blePtt.forgotten"
@@ -165,6 +168,10 @@ final class BLEPTTManager: NSObject, ObservableObject {
             peripheral = nil; kind = nil; connectedName = nil; lastAinaMask = 0
         }
         guard wantRunning else { return }
+        if name == forgottenInUseName {
+            status = Self.forgottenStatus(name)
+            return
+        }
         autoConnectName = name
         // Bluetooth may still be powering up right after launch: the scan then
         // starts from centralManagerDidUpdateState(.poweredOn).
@@ -178,6 +185,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// Operator tapped a device in the scan list.
     func connectChosen(_ d: Discovered) {
         forgottenPeripheralId = nil
+        forgottenInUseName = nil
         connect(d)
     }
 
@@ -185,7 +193,9 @@ final class BLEPTTManager: NSObject, ObservableObject {
         guard isScanning else { return }
         central?.stopScan()
         isScanning = false
-        if connectedName == nil { status = discovered.isEmpty ? "Nothing found" : "Pick a device" }
+        if connectedName == nil, forgottenInUseName == nil || !status.contains("forgotten") {
+            status = discovered.isEmpty ? "Nothing found" : "Pick a device"
+        }
     }
 
     private func connect(_ d: Discovered) {
@@ -203,7 +213,11 @@ final class BLEPTTManager: NSObject, ObservableObject {
         peripheral = nil; kind = nil; connectedName = nil
         savedPeripheralId = nil
         autoConnectName = nil
-        status = "Nothing paired"
+        status = "Forgotten — tap Scan and pick a device to connect one"
+    }
+
+    private static func forgottenStatus(_ name: String) -> String {
+        "\(name) was forgotten — tap Scan and pick it to use its buttons"
     }
 
     private func reconnectSaved() {
@@ -330,6 +344,13 @@ extension BLEPTTManager: CBCentralManagerDelegate {
         let d = Discovered(id: p.identifier, name: name ?? k.rawValue, kind: k, rssi: rssi.intValue)
         if let i = discovered.firstIndex(where: { $0.id == d.id }) { discovered[i].rssi = d.rssi }
         else { discovered.append(d) }
+        if let want = autoConnectName, d.name == want, connectedName == nil, d.id == forgottenPeripheralId {
+            // It's here, but the operator forgot it: leave it alone and say why.
+            print("[BLEPTT] '\(want)' is in use for audio but was forgotten — not connecting its buttons")
+            autoConnectName = nil
+            forgottenInUseName = want
+            status = Self.forgottenStatus(want)
+        }
         if let want = autoConnectName, d.name == want, connectedName == nil, d.id != forgottenPeripheralId {
             print("[BLEPTT] auto-connecting \(d.name) (\(d.kind.displayName))")
             autoConnectName = nil
