@@ -55,6 +55,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
     }
     private static let savedKey = "voice.blePtt.peripheral"
     private static let ainaA2dpControlsDisable: UInt8 = 0x20
+    private static let ainaPhoneControlsDisable: UInt8 = 0x10
 
     @Published private(set) var discovered: [Discovered] = []
     @Published private(set) var connectedName: String?
@@ -367,6 +368,11 @@ extension BLEPTTManager: CBPeripheralDelegate {
         }
     }
 
+    func peripheral(_ p: CBPeripheral, didWriteValueFor ch: CBCharacteristic, error: Error?) {
+        guard ch.uuid == UUIDs.ainaConfig else { return }
+        print("[BLEPTT] AINA CONFIG write \(error.map { "FAILED: \($0.localizedDescription)" } ?? "OK")")
+    }
+
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         guard error == nil, let v = ch.value else { return }
         #if DEBUG
@@ -377,10 +383,17 @@ extension BLEPTTManager: CBPeripheralDelegate {
         }
         #endif
         if kind == .ainaV2, ch.uuid == UUIDs.ainaConfig {
-            // Only ever OR in the A2DP-controls-disable bit; other bits can brick the device.
-            guard let cur = v.first, cur & Self.ainaA2dpControlsDisable == 0 else { return }
+            // Only ever OR in the two production bits (AINA spec v18 §4.3):
+            // A2DP-controls-disable and phone-controls-disable. The dev-only
+            // bits can brick the device. Phone controls off stops the main PTT
+            // doubling as an HFP call button (mic mute) while the PushToTalk
+            // session holds the HFP link open.
+            guard let cur = v.first else { return }
+            let want = cur | Self.ainaA2dpControlsDisable | Self.ainaPhoneControlsDisable
+            print(String(format: "[BLEPTT] AINA CONFIG read 0x%02x%@", cur, want == cur ? " (already set)" : String(format: " — writing 0x%02x", want)))
+            guard want != cur else { return }
             var out = v
-            out[out.startIndex] = cur | Self.ainaA2dpControlsDisable
+            out[out.startIndex] = want
             p.writeValue(out, for: ch, type: .withResponse)
             return
         }

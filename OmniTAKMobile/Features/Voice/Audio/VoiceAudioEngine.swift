@@ -139,6 +139,11 @@ final class VoiceAudioEngine {
     private var running = false
     private var observers: [NSObjectProtocol] = []
     private var txStats: (framesIn: Int, packets: Int, empty: Int, bytes: Int, gated: Int, start: Date) = (0, 0, 0, 0, 0, Date())
+    /// Raw mic level per TX burst (before mic boost), split by whether received
+    /// audio was playing — shows if the speaker-mic quiets its own mic during RX.
+    private struct MicLevelStats { var frames = 0, voiced = 0; var peak: Float = 0, sumSq: Double = 0 }
+    private var micDuringRx = MicLevelStats()
+    private var micQuiet = MicLevelStats()
 
     private let pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                           sampleRate: sampleRate, channels: 1, interleaved: false)!
@@ -217,8 +222,19 @@ final class VoiceAudioEngine {
     var onSessionNeeded: ((SessionNeed) -> Void)?
     /// Main thread: idle (no TX 5 s, no RX 8 s) — clear the remote participant.
     var onSessionIdle: (() -> Void)?
+    /// Main thread: the system was asked for audio (RX participant or a
+    /// transmission) and never activated it — reset the remote participant.
+    var onActivationStalled: (() -> Void)?
     private var idleNotified = false
     private var sessionRequested = false
+    private var sessionRequestedAt = Date.distantPast
+    /// We have named a remote participant to the system (it holds the session
+    /// open while RX plays). Named on ANY received audio, also mid-TX: otherwise
+    /// the session drops at PTT-up and the re-request races the deactivation.
+    private var participantNamed = false
+    private var waitersSince: Date?
+    private var stallHandled = false
+    static let activationStallSeconds: TimeInterval = 2
 
     /// The PushToTalk system activated the audio session: build the engine.
     func systemDidActivate() {
@@ -226,6 +242,8 @@ final class VoiceAudioEngine {
             guard self.running else { return }
             self.sessionRequested = false
             self.idleNotified = false
+            self.waitersSince = nil
+            self.stallHandled = false
             if self.profile == .active && self.engine.isRunning {
                 let w = self.activateWaiters; self.activateWaiters.removeAll()
                 w.forEach { DispatchQueue.main.async(execute: $0) }
@@ -246,7 +264,7 @@ final class VoiceAudioEngine {
 
     /// Drop waiters of a wake-up that won't happen (e.g. transmit refused).
     func cancelActivationWaiters() {
-        queue.async { self.activateWaiters.removeAll() }
+        queue.async { self.activateWaiters.removeAll(); self.waitersSince = nil }
     }
     /// True when the speaker-mic path is Bluetooth HFP.
     var usesBluetoothHFP: Bool { queue.sync { hfpOnLastActiveRoute } }
@@ -308,6 +326,7 @@ final class VoiceAudioEngine {
             // The session is activated by the PushToTalk system (the caller
             // has requested a transmission); run `completion` when it is.
             if let c = completion { self.activateWaiters.append(c) }
+            if self.waitersSince == nil { self.waitersSince = Date(); self.stallHandled = false }
             print("[VoiceAudio] waiting for the system to activate audio — \(reason)")
         }
     }
@@ -449,6 +468,25 @@ final class VoiceAudioEngine {
 
     private func observe() {
         let nc = NotificationCenter.default
+        if #available(iOS 17.0, *) {
+            // System-wide input mute (call-style sessions; a headset button can
+            // toggle it). While on, the mic delivers digital silence.
+            // The AINA's main PTT button also sends a headset mute command
+            // (alongside its BLE button event), which iOS applies ~10 ms after
+            // the transmission starts: undo it while we are transmitting.
+            observers.append(nc.addObserver(forName: AVAudioApplication.inputMuteStateChangeNotification, object: nil, queue: nil) { [weak self] n in
+                let muted = (n.userInfo?[AVAudioApplication.muteStateKey] as? NSNumber)?.boolValue
+                print("[VoiceAudio] \(Self.ts()) system input mute changed → \(muted.map { $0 ? "MUTED" : "unmuted" } ?? "?")")
+                guard muted == true, let self = self else { return }
+                self.queue.async {
+                    guard self.micMode == .transmit else { return }
+                    do {
+                        try AVAudioApplication.shared.setInputMuted(false)
+                        print("[VoiceAudio] \(Self.ts()) unmuted the system input (transmitting)")
+                    } catch { print("[VoiceAudio] unmute failed: \(error)") }
+                }
+            })
+        }
         observers.append(nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { [weak self] n in
             guard let self = self, let e = n.object as? AVAudioEngine else { return }
             self.gateLock.lock()
@@ -627,11 +665,19 @@ final class VoiceAudioEngine {
             let old = self.micMode
             if mode != .off || old != .off { self.lastTxActivity = Date() }
             if mode == .transmit && old != .transmit {
+                if #available(iOS 17.0, *) {
+                    let app = AVAudioApplication.shared
+                    if app.isInputMuted {
+                        print("[VoiceAudio] \(Self.ts()) system input was MUTED at TX start — unmuting")
+                        do { try app.setInputMuted(false) } catch { print("[VoiceAudio] unmute failed: \(error)") }
+                    }
+                }
                 self.pending.removeAll()
                 self.trailing.removeAll()
                 self.encoder = self.makeEncoder()
                 self.refreshGains()
                 self.txStats = (0, 0, 0, 0, 0, Date())
+                self.micDuringRx = MicLevelStats(); self.micQuiet = MicLevelStats()
                 #if DEBUG
                 if self.leakProbeHz != nil { self.leakProbeLeft = 15; self.leakProbeIndex = 0 }
                 #endif
@@ -646,11 +692,26 @@ final class VoiceAudioEngine {
                 let kbps = secs > 0 ? Double(st.bytes * 8) / secs / 1000 : 0
                 print(String(format: "[VoiceAudio] TX burst: %.1fs, frames %d, sent %d, empty %d, pre-gate mic buffers dropped %d, trailing dropped %d, %d bytes (%.1f kbps)",
                              secs, st.framesIn, st.packets, st.empty, st.gated, dropped, st.bytes, kbps))
+                print("[VoiceAudio] TX mic level: during RX \(Self.describe(self.micDuringRx)) | no RX \(Self.describe(self.micQuiet))")
             }
             if mode == .listen && old != .listen { self.pending.removeAll() }
             self.micMode = mode
             self.setGate(mode, gate)
         }
+    }
+
+    private static func accumulate(_ st: inout MicLevelStats, _ rms: Float) {
+        st.frames += 1
+        st.sumSq += Double(rms * rms)
+        st.peak = max(st.peak, rms)
+        if rms > 0.0056 { st.voiced += 1 }          // above -45 dBFS: speech, not room noise
+    }
+
+    private static func describe(_ st: MicLevelStats) -> String {
+        guard st.frames > 0 else { return "-" }
+        func db(_ x: Double) -> String { x > 0 ? String(format: "%.0f dBFS", 20 * log10(x)) : "silent" }
+        let rms = (st.sumSq / Double(st.frames)).squareRoot()
+        return "\(st.frames) frames, voiced \(st.voiced * 100 / st.frames)%, rms \(db(rms)), peak \(db(Double(st.peak)))"
     }
 
     private func setGate(_ mode: MicMode, _ host: UInt64) {
@@ -736,6 +797,11 @@ final class VoiceAudioEngine {
                 let frame = Array(pending[0..<n])
                 pending.removeFirst(n)
                 txStats.framesIn += 1
+                var fsum: Float = 0
+                for v in frame { fsum += v * v }
+                let frms = (fsum / Float(n)).squareRoot()
+                let rxOn = Date().timeIntervalSince(lastRxActivity) < 0.3
+                if rxOn { Self.accumulate(&micDuringRx, frms) } else { Self.accumulate(&micQuiet, frms) }
                 #if DEBUG
                 if let hz = leakProbeHz, leakProbeLeft > 0 {
                     leakProbeLeft -= 1
@@ -844,14 +910,19 @@ final class VoiceAudioEngine {
             }
             if !sessionRequested {
                 sessionRequested = true
+                sessionRequestedAt = Date()
+                participantNamed = true
+                stallHandled = false
                 print("[VoiceAudio] incoming audio in standby — asking the system for a session")
                 DispatchQueue.main.async { self.onSessionNeeded?(.receive) }
             }
             return
         }
-        if idleNotified {
-            // Talk resumed after we asked to release: name the talker again.
+        if idleNotified || !participantNamed {
+            // Talk resumed after we asked to release, or began while we were
+            // transmitting: name the talker so the system keeps the session.
             idleNotified = false
+            participantNamed = true
             DispatchQueue.main.async { self.onSessionNeeded?(.receive) }
         }
         guard engine.isRunning else { return }
@@ -928,12 +999,33 @@ final class VoiceAudioEngine {
         t.setEventHandler { [weak self] in
             guard let self = self else { return }
             let now = Date()
+            // Asked the system for audio and it never came: reset so the next
+            // packet / press asks afresh instead of waiting forever.
+            if self.profile == .standby, !self.stallHandled {
+                let rxStalled = self.sessionRequested && now.timeIntervalSince(self.sessionRequestedAt) > Self.activationStallSeconds
+                let txStalled = !self.activateWaiters.isEmpty && (self.waitersSince.map { now.timeIntervalSince($0) > Self.activationStallSeconds } ?? false)
+                if rxStalled || txStalled {
+                    self.stallHandled = true
+                    self.sessionRequested = false
+                    self.participantNamed = false
+                    print("[VoiceAudio] system never activated audio (\(rxStalled ? "RX" : "TX") request) — resetting the remote participant")
+                    DispatchQueue.main.async { self.onActivationStalled?() }
+                }
+            }
+            // Standby with a participant still named and nothing heard: clear it.
+            if self.profile == .standby, self.participantNamed, !self.sessionRequested,
+               now.timeIntervalSince(self.lastRxActivity) > Self.rxHoldSeconds {
+                self.participantNamed = false
+                print("[VoiceAudio] no RX \(Int(Self.rxHoldSeconds)) s in standby — clearing the remote participant")
+                DispatchQueue.main.async { self.onSessionIdle?() }
+            }
             if self.profile == .active, !self.busy, self.micMode == .off, self.activateWaiters.isEmpty,
                now.timeIntervalSince(self.lastTxActivity) > Self.txHoldSeconds,
                now.timeIntervalSince(self.lastRxActivity) > Self.rxHoldSeconds,
                self.speakers.values.allSatisfy({ $0.queued == 0 }) {
                 if !self.idleNotified {
                     self.idleNotified = true
+                    self.participantNamed = false
                     print("[VoiceAudio] idle (no TX \(Int(Self.txHoldSeconds)) s, no RX \(Int(Self.rxHoldSeconds)) s) — releasing the session")
                     DispatchQueue.main.async { self.onSessionIdle?() }
                 }

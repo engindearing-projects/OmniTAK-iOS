@@ -240,6 +240,9 @@ final class VoiceController: ObservableObject {
         audio.onSessionIdle = { [weak self] in
             self?.nativePTT.setActiveRemoteParticipant(nil)
         }
+        audio.onActivationStalled = { [weak self] in
+            self?.nativePTT.setActiveRemoteParticipant(nil)
+        }
     }
 
     /// Name shown by the system while someone is talking.
