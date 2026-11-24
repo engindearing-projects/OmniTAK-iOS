@@ -56,20 +56,12 @@ was fixed overnight; this run confirms it). No line should say `TONE LEAK`.
 | 2.5 | Emergency hold ≥ 1 s | Cancels the alert at the 1 s mark (low double tone) |
 | 2.6 | Turn the AINA off while holding PTT | TX stops (never stuck) |
 
-## 2b. AINA Voice Responder V1 (APTT1) — find out if it can work
+## 2b. AINA Voice Responder V1 (APTT1) — VERIFIED working (2026-11-24)
 
-iOS has no API for the V1's Bluetooth Classic SPP channel (needs Apple MFi).
-There is indirect evidence the V1 ALSO exposes AINA's BLE button service
-(`127FACE1-CB21-11E5-93D0-0002A5D5C51B`, the one V2 uses). If it does, it
-already works through the V2 code path.
-
-1. Disconnect the V1 from any Android phone (AINA pairs with one device).
-2. Launch the app with the console log; X Voice → Bluetooth PTT button → Scan.
-3. If the V1 shows up (as "APTT…" or by the AINA service), connect it and read the log:
-   - `[BLEPTT] … services: …127FACE1…` → BLE is present; press PTT → `pttDown(slot: 1)`. **V1 works.**
-   - `AINA button service 127FACE1 NOT present` → SPP-only; iOS can't read its PTT.
-4. If it never shows up in the scan, it has no BLE → SPP-only.
-   (Optional cross-check: the free nRF Connect app → Scanner → look for the V1.)
+The V1 also exposes AINA's BLE button service (`127FACE1-…`), so it uses the
+same path as V2 — no SPP needed. Verified on an iPhone XS Max with
+`APTT30CB1A`: auto-connect by name, PTT → slot 1, PTTS → slot 2, standby and
+cold wake. Still to check on the V1: emergency press (fire) and hold (cancel).
 
 ## 3. Channels and dual PTT
 
@@ -93,4 +85,4 @@ already works through the V2 code path.
 ## Known gaps
 
 - Private calls / VX call signaling — not ported.
-- AINA V1 over SPP — impossible on iOS without MFi; BLE path untested (section 2b).
+- AINA V1: works over BLE (section 2b); its SPP channel is not used.

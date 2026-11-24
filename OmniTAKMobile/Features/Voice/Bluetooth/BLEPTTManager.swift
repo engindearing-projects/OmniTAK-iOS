@@ -28,7 +28,13 @@ import CoreBluetooth
 enum PTTButtonEvent: Equatable { case pttDown(slot: Int), pttUp(slot: Int), emergency(down: Bool) }
 
 final class BLEPTTManager: NSObject, ObservableObject {
-    enum Kind: String { case ainaV2 = "AINA APTT V2", pryme = "Pryme BT-PTT-Z", bt02 = "Inrico BT02" }
+    /// rawValue is persisted (saved button kind) — don't change it.
+    enum Kind: String {
+        case ainaV2 = "AINA APTT V2", pryme = "Pryme BT-PTT-Z", bt02 = "Inrico BT02"
+        /// AINA V1 (APTT1) exposes the same BLE button service as V2 and was
+        /// verified on device, so one code path serves both.
+        var displayName: String { self == .ainaV2 ? "AINA APTT (V1/V2)" : rawValue }
+    }
 
     struct Discovered: Identifiable, Equatable {
         let id: UUID
@@ -64,6 +70,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// connected automatically (the BLE side of a paired speaker-mic).
     private var autoConnectName: String?
     private var scanToken = 0
+    private var seenThisScan = Set<UUID>()
 
     var savedPeripheralId: UUID? {
         get { UserDefaults.standard.string(forKey: Self.savedKey).flatMap(UUID.init) }
@@ -91,6 +98,7 @@ final class BLEPTTManager: NSObject, ObservableObject {
     func startScan() {
         guard let c = central, c.state == .poweredOn else { status = "Bluetooth is off"; return }
         discovered.removeAll()
+        seenThisScan.removeAll()
         isScanning = true
         status = "Scanning…"
         c.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
@@ -111,7 +119,9 @@ final class BLEPTTManager: NSObject, ObservableObject {
            let p = central?.retrievePeripherals(withIdentifiers: [saved]).first, p.name != nil, p.name != name { return }
         print("[BLEPTT] looking for the PTT button of '\(name)'")
         autoConnectName = name
-        if !isScanning { startScan() }
+        // Bluetooth may still be powering up right after launch: the scan then
+        // starts from centralManagerDidUpdateState(.poweredOn).
+        if !isScanning, central?.state == .poweredOn { startScan() }
     }
 
     func stopScan() {
@@ -225,7 +235,10 @@ extension BLEPTTManager: CBCentralManagerDelegate {
             isScanning = false
         }
         switch c.state {
-        case .poweredOn: status = savedPeripheralId == nil ? "No button paired" : "Reconnecting…"; reconnectSaved()
+        case .poweredOn:
+            status = savedPeripheralId == nil ? "No button paired" : "Reconnecting…"
+            reconnectSaved()
+            if autoConnectName != nil, connectedName == nil, !isScanning { startScan() }
         case .unauthorized: status = "Bluetooth permission denied"
         case .poweredOff: status = "Bluetooth is off"
         case .unsupported: status = "Bluetooth LE unsupported"
@@ -237,12 +250,19 @@ extension BLEPTTManager: CBCentralManagerDelegate {
                         advertisementData ad: [String: Any], rssi: NSNumber) {
         let name = (ad[CBAdvertisementDataLocalNameKey] as? String) ?? p.name
         let services = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        // Log every advertiser once per scan (diagnostics: e.g. does an AINA
+        // V1 advertise over BLE at all, and under what name/services?).
+        if !seenThisScan.contains(p.identifier) {
+            seenThisScan.insert(p.identifier)
+            let mfr = (ad[CBAdvertisementDataManufacturerDataKey] as? Data).map { $0.prefix(8).map { String(format: "%02x", $0) }.joined() } ?? "-"
+            print("[BLEPTT] scan: '\(name ?? "(no name)")' rssi \(rssi) services [\(services.map { $0.uuidString }.joined(separator: ","))] mfr \(mfr)")
+        }
         guard let k = Self.classify(name: name, services: services) else { return }
         let d = Discovered(id: p.identifier, name: name ?? k.rawValue, kind: k, rssi: rssi.intValue)
         if let i = discovered.firstIndex(where: { $0.id == d.id }) { discovered[i].rssi = d.rssi }
         else { discovered.append(d) }
         if let want = autoConnectName, d.name == want, connectedName == nil {
-            print("[BLEPTT] auto-connecting \(d.name) (\(d.kind.rawValue))")
+            print("[BLEPTT] auto-connecting \(d.name) (\(d.kind.displayName))")
             autoConnectName = nil
             connect(d)
         }

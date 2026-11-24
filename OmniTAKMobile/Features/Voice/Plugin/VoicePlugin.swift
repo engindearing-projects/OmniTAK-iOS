@@ -126,7 +126,7 @@ struct VoicePluginSettingsView: View {
                         HStack {
                             VStack(alignment: .leading) {
                                 Text(d.name).foregroundColor(.primary)
-                                Text(d.kind.rawValue).font(.caption).foregroundColor(.secondary)
+                                Text(d.kind.displayName).font(.caption).foregroundColor(.secondary)
                             }
                             Spacer()
                             Text("\(d.rssi) dBm").font(.caption).foregroundColor(.secondary)
@@ -139,7 +139,7 @@ struct VoicePluginSettingsView: View {
             } header: {
                 Text("Bluetooth PTT button")
             } footer: {
-                Text("Supported: AINA APTT V2, Pryme BT-PTT-Z, Inrico BT02. AINA APTT V1 (Bluetooth Classic) can't be used on iOS. Pair a speaker-mic's audio in iOS Settings → Bluetooth; voice then uses it automatically.")
+                Text("Supported: AINA APTT V1 and V2, Pryme BT-PTT-Z, Inrico BT02 — connected automatically when the speaker-mic is in use. Pair a speaker-mic's audio in iOS Settings → Bluetooth; voice then uses it automatically.")
             }
 
             Section("Audio route") {
