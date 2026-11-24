@@ -58,7 +58,6 @@ What's different on iOS:
 | Bluetooth PTT devices | Speaker-mic plus an External Button | **One device**: a speaker-mic *or* a button (by design) |
 | AINA V1 over Classic SPP | Yes | No (needs Apple MFi); V1 works through its BLE button service |
 | Samsung Active Key, Sonim keys | Yes | Not applicable |
-| Multicast mesh voice | Alpha | Not ported |
 | Direct calling | Yes | Not yet |
 
 ## Requirements for building
