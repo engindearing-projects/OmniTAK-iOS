@@ -282,13 +282,7 @@ final class MumbleClient {
         // `frameSamples` (20 ms = 2 units). Advancing by 1 per 20 ms packet made
         // receivers' jitter buffers think our audio ran at double speed.
         txSequence += UInt64(VoiceAudioEngine.frameSamples / 480)
-        var p = Data([UInt8(4 << 5)])                       // Opus, target 0
-        p.append(MumbleVarint.encode(txSequence))
-        var len = UInt64(opus.count & 0x1FFF)
-        if terminator { len |= 0x2000 }
-        p.append(MumbleVarint.encode(len))
-        p.append(opus)
-        send(.udpTunnel, p)
+        send(.udpTunnel, MumbleVoicePacket.encode(sequence: txSequence, opus: opus, terminator: terminator))
     }
 
     // MARK: - Receive
@@ -420,15 +414,8 @@ final class MumbleClient {
 
     /// Legacy voice packet: header, session, sequence, len(+terminator), opus.
     private func handleVoice(_ p: Data) {
-        guard let header = p.first, header >> 5 == 4 else { return }   // Opus only
-        var i = p.startIndex + 1
-        guard let session = MumbleVarint.decode(p, &i),
-              MumbleVarint.decode(p, &i) != nil,                     // sequence
-              let lenField = MumbleVarint.decode(p, &i) else { return }
-        let len = Int(lenField & 0x1FFF), term = lenField & 0x2000 != 0
-        guard p.endIndex - i >= len else { return }
-        let opus = p.subdata(in: i ..< i + len)
-        let s = UInt32(truncatingIfNeeded: session)
+        guard let pkt = MumbleVoicePacket.decode(p) else { return }   // Opus only
+        let s = pkt.session, opus = pkt.opus, term = pkt.terminator
         rxCount[s, default: 0] += 1
         if rxCount[s] == 1 {
             print("[Mumble VS\(slot)] RX start from session \(s) '\(users[s]?.name ?? "?")' in channel \(users[s]?.channel ?? 0) (we are in \(currentChannel ?? 0))")

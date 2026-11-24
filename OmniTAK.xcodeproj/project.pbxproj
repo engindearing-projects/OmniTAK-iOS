@@ -491,6 +491,7 @@
 		F720E811AF90DCA402FF9A0A /* SFAPMFL----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 899C0E42F58AE75FEE792EF9 /* SFAPMFL----.svg */; };
 		F81269402CB71F4BF231A86B /* DataPackageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27AFF7080BC1929C0AFE3ACB /* DataPackageManager.swift */; };
 		F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */; };
+		992F3CBAE5D09F95B1494FD4 /* VoicePluginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */; };
 		F887E26E229854DF18D1F96B /* SFAPMHQ----.svg in Resources */ = {isa = PBXBuildFile; fileRef = AE725B92EA137887258221CB /* SFAPMHQ----.svg */; };
 		F9A4209563B079DBC2B05FD7 /* SHGPUC-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 2E68A74AC57A313668A716ED /* SHGPUC-----.svg */; };
 		F9E1491477B06406FB3F8370 /* SFGPUULC---.svg in Resources */ = {isa = PBXBuildFile; fileRef = D4EB93CD70E0285BEEAFF8C2 /* SFGPUULC---.svg */; };
@@ -925,6 +926,7 @@
 		F0E7ACFAB445E2075F4E5FEF /* MBTilesRenderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MBTilesRenderTests.swift; path = OmniTAKMobileTests/MBTilesRenderTests.swift; sourceTree = "<group>"; };
 		809E8C5B4560FABB17AAF3AE /* MBTilesOverlayStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MBTilesOverlayStoreTests.swift; path = OmniTAKMobileTests/MBTilesOverlayStoreTests.swift; sourceTree = "<group>"; };
 		C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PluginSDKTests.swift; path = OmniTAKMobileTests/PluginSDKTests.swift; sourceTree = "<group>"; };
+		9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoicePluginTests.swift; path = OmniTAKMobileTests/VoicePluginTests.swift; sourceTree = "<group>"; };
 		C644AA06A8883B0013638A4E /* OpenDroneIdParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OpenDroneIdParserTests.swift; path = OmniTAKMobileTests/OpenDroneIdParserTests.swift; sourceTree = "<group>"; };
 		C79FECE8C2536E714592CD83 /* SHGPUCS----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPUCS----.svg"; sourceTree = "<group>"; };
 		C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticManager.swift; path = OmniTAKMobile/Features/Meshtastic/Managers/MeshtasticManager.swift; sourceTree = "<group>"; };
@@ -2273,6 +2275,7 @@
 				1E000347E77659FB9483E560 /* ADSBPlugin.swift */,
 				5821A1F45BE3F2985B6BAB51 /* ADSBStatusOverlay.swift */,
 				C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */,
+				9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */,
 				771357A62E95D5EECDB9E041 /* MeshFramework.swift */,
 				621CB29178D35F0EF1EE7268 /* Meshtastic+MeshProtocols.swift */,
 				55FD474B6A8250F778891C09 /* MeshCoreFrameCodec.swift */,
@@ -3112,6 +3115,7 @@
 				E3A71A2E344F9BB61504F9E2 /* TAKLinkLivenessTests.swift in Sources */,
 				EABE994F076F698CA4AF2DF0 /* LoopbackTAKServer.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
+				992F3CBAE5D09F95B1494FD4 /* VoicePluginTests.swift in Sources */,
 				C5C06A972D151475A44BC316 /* MeshCoreFrameCodecTests.swift in Sources */,
 				A7CB00010000000000B00001 /* MeshChannelApplyTests.swift in Sources */,
 				CF000005B000000000000001 /* ConfigProfileTests.swift in Sources */,

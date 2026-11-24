@@ -147,3 +147,44 @@ enum MumbleVarint {
         }
     }
 }
+
+// MARK: - Legacy voice packet (UDPTunnel payload)
+
+/// Mumble's legacy voice packet, as carried in UDPTunnel (type 1):
+///   header byte (codec << 5 | target), [session varint — server→client only],
+///   sequence varint, length varint (bit 0x2000 = terminator), Opus bytes.
+enum MumbleVoicePacket {
+    static let opusCodec: UInt8 = 4
+
+    /// Client → server packet (no session field).
+    static func encode(sequence: UInt64, opus: Data, terminator: Bool, target: UInt8 = 0) -> Data {
+        var p = Data([opusCodec << 5 | (target & 0x1F)])
+        p.append(MumbleVarint.encode(sequence))
+        var len = UInt64(opus.count & 0x1FFF)
+        if terminator { len |= 0x2000 }
+        p.append(MumbleVarint.encode(len))
+        p.append(opus)
+        return p
+    }
+
+    struct Inbound: Equatable {
+        let session: UInt32
+        let sequence: UInt64
+        let opus: Data
+        let terminator: Bool
+    }
+
+    /// Server → client packet. Nil for non-Opus or malformed packets.
+    /// Trailing positional audio data, if any, is ignored.
+    static func decode(_ p: Data) -> Inbound? {
+        guard let header = p.first, header >> 5 == opusCodec else { return nil }
+        var i = p.startIndex + 1
+        guard let session = MumbleVarint.decode(p, &i),
+              let seq = MumbleVarint.decode(p, &i),
+              let lenField = MumbleVarint.decode(p, &i) else { return nil }
+        let len = Int(lenField & 0x1FFF)
+        guard p.endIndex - i >= len else { return nil }
+        return Inbound(session: UInt32(truncatingIfNeeded: session), sequence: seq,
+                       opus: p.subdata(in: i ..< i + len), terminator: lenField & 0x2000 != 0)
+    }
+}
