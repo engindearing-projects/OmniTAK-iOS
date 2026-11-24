@@ -1,88 +1,97 @@
 # X Voice (PTT) — device test checklist
 
-Branch: `voice-track-a`. Dev build bundle ID: `com.txtak.omnitak` (passed on the
-`xcodebuild` command line; the project keeps `com.engindearing.omnitak.mobile`).
+For developers testing X Voice on a real iPhone. User-facing docs are in
+[docs/x-voice/](x-voice/README.md).
+
+Branch: `voice-native-ptt` (Apple PushToTalk). Needs a provisioning profile with
+the `com.apple.developer.push-to-talk` entitlement. Replace the placeholders:
+`<DEVICE_ID>` (from `xcrun devicectl list devices`), `<TEAM_ID>`, `<BUNDLE_ID>`.
 
 ## Load to the phone
 
 ```bash
-cd ~/repos/OmniTAK-iOS
+cd OmniTAK-iOS
 xcodebuild -project OmniTAK.xcodeproj -scheme OmniTAKMobile -configuration Debug \
-  -destination 'id=00008020-00146C403A84002E' -derivedDataPath ~/repos/.derived-device \
-  -allowProvisioningUpdates DEVELOPMENT_TEAM=99U48C86XG CODE_SIGN_STYLE=Automatic \
-  PRODUCT_BUNDLE_IDENTIFIER=com.txtak.omnitak build
-xcrun devicectl device install app --device 00008020-00146C403A84002E \
-  ~/repos/.derived-device/Build/Products/Debug-iphoneos/OmniTAK.app
-# launch with the console log (Ctrl-C to stop):
-xcrun devicectl device process launch --device 00008020-00146C403A84002E \
-  --terminate-existing --console com.txtak.omnitak
+  -destination 'id=<DEVICE_ID>' -derivedDataPath .derived-device \
+  -allowProvisioningUpdates DEVELOPMENT_TEAM=<TEAM_ID> CODE_SIGN_STYLE=Automatic \
+  PRODUCT_BUNDLE_IDENTIFIER=<BUNDLE_ID> build
+xcrun devicectl device install app --device <DEVICE_ID> \
+  .derived-device/Build/Products/Debug-iphoneos/OmniTAK.app
+# launch with the console log (Ctrl-C to stop); the log stops if OmniTAK closes:
+xcrun devicectl device process launch --device <DEVICE_ID> \
+  --terminate-existing --console <BUNDLE_ID>
 ```
 
-Useful log prefixes: `[Voice]` (PTT state machine), `[VoiceAudio]` (engine,
-standby/wake, TX bursts), `[Mumble VS1|VS2]`, `[BLEPTT]`, `[VoiceHostBridge]`.
+Log prefixes are explained in [How it works → Logging](x-voice/how-it-works.md#logging).
+Every transmission ends with a `TX burst` and a `TX mic level` line: normal
+speech is about −20 to −35 dBFS rms with some voiced %; around −80 dBFS and
+voiced 0% means silence was sent.
 
-## Silent automated self-test (no audio sent, tones muted)
-
-```bash
-xcrun devicectl device process launch --device 00008020-00146C403A84002E \
-  --terminate-existing --console com.txtak.omnitak -- -XVoiceSelfTest YES -XVoiceToneGain 0
-```
-
-Expect five scenarios A–E: full bursts transmit; a release during PRIMING or
-the tone transmits nothing (`burst ended during …`); E starts from standby
-(`engine standby before E: true` → `ACQUIRING` → `PRIMING` → `TPT start` →
-`TPT played back` → `TRANSMITTING`). **Check that in E, `TPT played back`
-comes ~330–400 ms after `TPT start`, not in the same millisecond** (that bug
-was fixed overnight; this run confirms it). No line should say `TONE LEAK`.
-
-## 1. Inrico BT02 speaker-mic
+## 0. System push-to-talk
 
 | # | Do | Expect |
 |---|----|--------|
-| 1.1 | Pair it in iOS Settings → Bluetooth, launch the app | Log: `[BLEPTT] looking for the PTT button of 'B02PTT-…'` → `auto-connecting` → `connected` |
-| 1.2 | Leave it idle 10 s | `[VoiceAudio] standby … engine stopped, audio session released`. **The speaker-mic should stop hissing.** |
-| 1.3 | Press and hold PTT | `ACQUIRING` → `PRIMING (Bluetooth, cold)` → ~0.7 s hold → permit tone in the speaker-mic → `TRANSMITTING`. Listener hears you. |
-| 1.4 | Have someone talk while idle | First words not lost (buffered while the link wakes); plays in the speaker-mic; back to standby ~8 s after they stop |
-| 1.5 | Emergency key (warn the team first!) | `[Voice] emergency released … FIRE` → `[VoiceHostBridge] emergency START` → 911 alert on the TAK server. Cancel from OmniTAK's emergency screen (BT02 sends a pulse, so it can't cancel by holding) |
+| 0.1 | Enable X Voice, open OmniTAK | `[NativePTT] joined channel` → `channel manager ready`; X Voice channel on the lock screen / Dynamic Island |
+| 0.2 | Lock the phone, press the system Talk button | iOS start cue, `transmit began`, `audio session ACTIVATED`, `TRANSMITTING on slot 1` |
+| 0.3 | Leave the channel from the system UI | Voice stops |
 
-## 2. AINA APTT V2 (BLE)
+## 1. iPhone's own mic
 
 | # | Do | Expect |
 |---|----|--------|
-| 2.1 | Pair the audio in iOS Settings → Bluetooth, launch | BLE button auto-connects by name (`APTT…`). If not: X Voice → Bluetooth PTT button → Scan → pick it |
-| 2.2 | PTT | Transmits on PTT 1 (same sequence as 1.3) |
-| 2.3 | Pick a second channel (X Voice → Channels → PTT 2), press PTTS | Transmits on slot 2 |
-| 2.4 | Emergency short press | Fires the 911 alert |
-| 2.5 | Emergency hold ≥ 1 s | Cancels the alert at the 1 s mark (low double tone) |
-| 2.6 | Turn the AINA off while holding PTT | TX stops (never stuck) |
+| 1.1 | Mic mode Standard: press on-screen PTT 1, stay silent 1 s, talk | `audio on — built-in mic (mic mode chosen Standard, active Standard), skipping the first 750 ms`; the listener doesn't hear the start buzz |
+| 1.2 | X Voice → Audio levels → *Set mic mode to Voice Isolation…*, pick it | Row shows *Voice Isolation*, orange prompt gone |
+| 1.3 | Press again | `audio on — transmitting immediately (… built-in mic, Voice Isolation)`; no start buzz |
 
-## 2b. AINA Voice Responder V1 (APTT1) — VERIFIED working (2026-11-24)
+## 2. Inrico BT02 speaker-mic
 
-The V1 also exposes AINA's BLE button service (`127FACE1-…`), so it uses the
-same path as V2 — no SPP needed. Verified on an iPhone XS Max with
-`APTT30CB1A`: auto-connect by name, PTT → slot 1, PTTS → slot 2, standby and
-cold wake. Still to check on the V1: emergency press (fire) and hold (cancel).
+| # | Do | Expect |
+|---|----|--------|
+| 2.1 | Pair it in iOS Settings → Bluetooth, launch | `[BLEPTT] … auto-connecting` → `connected B02PTT-…` |
+| 2.2 | Hold PTT, talk right after the vibration | `audio on — transmitting immediately (… Bluetooth)`; first word not lost |
+| 2.3 | Have someone talk while idle | First words kept (buffered while the link wakes); back to standby ~8 s after they stop |
+| 2.4 | Emergency key, ~2 s hold (warn the team first!) | `emergency released — FIRE` → `[VoiceHostBridge] emergency START`; one quiet cue in the speaker-mic; second press: `already active — no cue` |
+| 2.5 | Top button | `speaker-mic button 0x03 (unmapped)`; nothing happens |
 
-## 3. Channels and dual PTT
+## 3. AINA APTT (V1 / V2)
 
-- X Voice (bottom toolbar) → Channels → PTT 1 / PTT 2: search works; the other slot's channel is greyed out and can't be picked.
-- PTT 2 appears on the map only after a second channel is picked; "Off" removes it.
+| # | Do | Expect |
+|---|----|--------|
+| 3.1 | Pair the audio in iOS Settings, launch | Auto-connects `APTT…`; `AINA CONFIG read 0x.. — writing 0x..` (or `already set`) |
+| 3.2 | PTT 1 ×10, short and long | Every `TX mic level` has voice. Mute flips are undone (`unmuted the system input`) |
+| 3.3 | Secondary PTT (with a PTT 2 channel) | Transmits on slot 2 |
+| 3.4 | Emergency short press / 1 s hold | Fires / cancels the alert |
+| 3.5 | Turn the AINA off while holding PTT | TX stops, never stuck |
+
+## 4. Pryme BT-PTT-Z
+
+| # | Do | Expect |
+|---|----|--------|
+| 4.1 | Not paired in iOS Settings; turn it on, launch | `connected PTT-Z`; settings show *Talks on: PTT 1 only* |
+| 4.2 | Press ×4 | Each transmits on slot 1 with voice |
+| 4.3 | If the scan shows `DfuTarg` | Firmware-update mode: power-cycle without holding a button |
+
+## 5. Channels, dual PTT and full duplex
+
+- Channels → PTT 1 / PTT 2: search works; the other slot's channel shows *In use by PTT n* and can't be picked.
+- PTT 2 appears on the map only after a second channel is picked; *Off* removes it.
 - Hold PTT 1 and press PTT 2: only slot 1 transmits.
-- While transmitting on one slot, the other slot's incoming audio is quieter (ducked); the slot you talk on stays full.
+- While someone talks on channel 2, transmit on channel 1: you keep hearing them at 25%; they're at full level when you talk on channel 2.
+- Talk over someone, release, press again at once, several times: every press gets audio (no `waiting for the system to activate audio` that never ends).
 
-## 4. Robustness
+## 6. Robustness
 
 | # | Do | Expect |
 |---|----|--------|
-| 4.1 | Hold PTT 30 s | Warning double-beep at 25 s, cutoff tone at 30 s, TX stops; must release and press again. (X Voice → Tones → Transmit time limit) |
-| 4.2 | Phone call / Siri during voice use | After it ends: `[VoiceAudio] rebuilding engine: interruption ended`; PTT works again |
-| 4.3 | Connect/disconnect a Bluetooth headset mid-session | `rebuilding engine: audio route changed`; mic keeps working (`mic format now …`) |
-| 4.4 | Lock the phone, have someone talk | Audio plays (background). Note: in standby the app relies on its location/Bluetooth background modes to stay alive — **verify RX still arrives after several minutes locked** |
-| 4.5 | Toggle Wi-Fi off/on | Slot 1 reconnects first, slot 2 follows; channel choices kept |
-| 4.6a | Status tones: change channel; turn PTT 2 off; kill Wi-Fi | Ascending chirp on join, descending on PTT 2 off, double beep when voice drops (mid-burst: cutoff tone). Toggle: X Voice → Tones → Status tones |
-| 4.6 | Full duplex on the phone speaker | People talking while you transmit are heard, and they don't hear themselves echoed |
+| 6.1 | Hold PTT past the time limit (default 30 s) | Warning at 25 s, cutoff at 30 s; release and press again to talk |
+| 6.2 | Phone call / Siri during voice use | PTT works again afterwards |
+| 6.3 | Connect/disconnect a Bluetooth headset mid-session | Route follows; mic keeps working |
+| 6.4 | Lock the phone for several minutes, have someone talk | Audio plays |
+| 6.5 | Toggle Wi-Fi off/on | Slot 1 reconnects first, slot 2 follows; channel choices kept |
 
 ## Known gaps
 
-- Private calls / VX call signaling — not ported.
-- AINA V1: works over BLE (section 2b); its SPP channel is not used.
+- Direct (private) calls: not ported.
+- Multicast mesh voice: not ported.
+- One Bluetooth button device at a time (no separate External Button slot yet).
+- AINA V1's Classic SPP channel isn't used (needs MFi); V1 works over BLE.

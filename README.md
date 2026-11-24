@@ -26,6 +26,7 @@ Free, no ads, Apache-2.0. Requires iOS 17+.
 - **ADS-B traffic**: OpenSky Network, adsbExchange, FlightRadar24, dump1090 (bring your own API key)
 - **Video feeds**: HTTP / HLS via AVPlayer, RTSP / SRT via [MobileVLCKit](https://code.videolan.org/videolan/VLCKit) (LGPL v2.1+)
 - **Meshtastic**: BLE + TCP connection to Meshtastic mesh radios
+- **X Voice push-to-talk**: dual-channel voice over your TAK server's Mumble server, on Apple's native PushToTalk, with Bluetooth speaker-mics and PTT buttons — see [docs/x-voice](docs/x-voice/README.md)
 - **Photo attachments**: capture photos against CoT events with EXIF location
 - **Plugin system**: Swift package extensions for custom CoT types and UI panels
 

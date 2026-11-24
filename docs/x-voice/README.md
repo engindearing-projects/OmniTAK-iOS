@@ -61,17 +61,18 @@ What's different on iOS:
 | Multicast mesh voice | Alpha | Not ported |
 | Direct calling | Yes | Not yet |
 
-## Editions
+## Requirements for building
 
-There are two builds of X Voice for iOS, on separate branches:
+X Voice is built on Apple's PushToTalk framework, the supported way for an
+App Store app to do push-to-talk. The app target has:
 
-- **`voice-native-ptt`** (this one, recommended): built on Apple's
-  PushToTalk framework. iOS owns the audio session and the start/stop cues.
-  This is the edition for App Store distribution: it uses the
-  `com.apple.developer.push-to-talk` entitlement and the `push-to-talk`
-  background mode.
-- **`voice-track-a`**: the original app-managed edition. X Voice manages its
-  own audio session and plays its own talk-permit tone. It doesn't appear in
-  the system push-to-talk UI.
+- the `com.apple.developer.push-to-talk` entitlement (Apple has to grant it
+  for the App ID),
+- `aps-environment` (PushToTalk requires it; X Voice receives over its live
+  Mumble connection, not push notifications),
+- the `push-to-talk` background mode, and `bluetooth-central` so Bluetooth
+  buttons work in the background and locked,
+- a microphone usage description.
 
-Both share the Mumble client, the slot rules and the Bluetooth button code.
+iOS 16 is the minimum for PushToTalk; iOS 17 or later is recommended. Developer
+test steps are in the [device test checklist](../X_VOICE_TESTING.md).
