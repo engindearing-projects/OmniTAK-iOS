@@ -49,7 +49,7 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            ATAKMapView()
+            ATAKMapView(isSelectedTab: selectedTab == .map)
                 .environment(\.bottomBarMeasure, barMeasure)
                 .tag(RootTab.map)
                 .ignoresSafeArea(edges: .bottom)
