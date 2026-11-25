@@ -413,7 +413,9 @@ final class TAKSenderLivenessTests: XCTestCase {
 
     func testADialToAServerThatIsNotListeningFailsAtOnceAndTellsTheOwnerOnce() {
         let port = server.port
-        server.stop()
+        // Stopping a listener is not instant. Until the port really refuses, this
+        // dial can still complete its handshake and be reset, not refused.
+        XCTAssertTrue(server.stopAndWaitUntilRefusing(), "the stopped server's port still accepts connections")
         // The connect timeout is far away: only the refusal itself can end this dial
         // inside the deadline below.
         connect(port: port, connectTimeout: 30)
