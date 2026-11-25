@@ -129,8 +129,7 @@ struct RegisteredPluginRow: View {
 
     private var rowContent: some View {
         HStack {
-            Image(systemName: iconName)
-                .font(.system(size: 24))
+            IconImage(name: iconName, size: 24)
                 .foregroundColor(isEnabled ? .blue : .gray)
                 .frame(width: 40)
 

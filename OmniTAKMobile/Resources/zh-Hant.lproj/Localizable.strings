@@ -150,6 +150,7 @@
 "bar.cmd.drawingslist" = "繪圖清單";
 "bar.cmd.lasso" = "選取";
 "bar.cmd.engine" = "2D / 3D";
+"bar.cmd.voice" = "X Voice";
 "bar.tool.pointer" = "放置標點";
 "bar.tool.routes" = "路線";
 "bar.tool.navigation" = "導航";

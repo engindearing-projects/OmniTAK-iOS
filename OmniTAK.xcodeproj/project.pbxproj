@@ -119,6 +119,21 @@
 		313ED296B36807D143EFF3F9 /* DiagnosticsLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2053F4BA9520CBA9176AF8D8 /* DiagnosticsLog.swift */; };
 		3192FC7F36458549D30B2536 /* OpenDroneIdMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA945C069E5E828101C96C /* OpenDroneIdMessage.swift */; };
 		323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A42F35542E714D9F02B359A /* AppPluginHost.swift */; };
+		9D4EFAE35F91677D04367286 /* NativePTTManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */; };
+		9B1A3AD49904A3824796C074 /* TransmitGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2ACB0D2808505D72396A294 /* TransmitGate.swift */; };
+		B07D60593A0D37A15DC8A39E /* IconImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08D87E68781371B6D34EAE93 /* IconImage.swift */; };
+		F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */; };
+		4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8082169F4979938A0F7FA324 /* VoiceTones.swift */; };
+		B7B6CD0640B537A46EE14902 /* VoiceChannelPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60479381CF6F6D2C37D7B815 /* VoiceChannelPicker.swift */; };
+		F6153C544C7F1F0CAE9B3260 /* VoiceAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3303B565143293449DF72C1 /* VoiceAudioEngine.swift */; };
+		7E7ED0DC3C617257CE03212E /* MumbleWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D38A8AE981AAB0B003E2CD9 /* MumbleWire.swift */; };
+		22BC7744F3D7EB7A314CE297 /* MumbleClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6174FF85B26D1003C3B5E17 /* MumbleClient.swift */; };
+		170C44BD5B05FACA8FF5A1E0 /* BLEPTTManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340F0BFBFB1FC6AC3C60B13E /* BLEPTTManager.swift */; };
+		2E887D8337A15C0DF142A09D /* VoiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 405C9C1DFE7C1C15E45C01B0 /* VoiceController.swift */; };
+		B767843A3A4CFA48E19F0AE4 /* VoicePTTOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 834E5CF1868D9CFAC489022E /* VoicePTTOverlay.swift */; };
+		EAFF111F7B98E6AFC39D355E /* VoicePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC27E2A99E69984CFD4E9DB8 /* VoicePlugin.swift */; };
+		9D6599EB9DA2D330C3C24240 /* VoiceHostBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0CA1D8880732A39A64F65D4 /* VoiceHostBridge.swift */; };
+		86B43EE10E36EA029F9B7D15 /* AppPluginHost+Voice.swift in Sources */ = {isa = PBXBuildFile; fileRef = A723C059651EE1E6A145D7A4 /* AppPluginHost+Voice.swift */; };
 		326BFC60CF089F263DCD8E18 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D7BCCB87FE00A332286EAC /* ChatView.swift */; };
 		329823348C9D66C984345C11 /* SFGPUULF---.svg in Resources */ = {isa = PBXBuildFile; fileRef = 6C8830EBB6B5623DB27B735A /* SFGPUULF---.svg */; };
 		32CE502758D1839A0036DBA4 /* SHGPUCF----.svg in Resources */ = {isa = PBXBuildFile; fileRef = C9D615A7D81FA6D8E304FD83 /* SHGPUCF----.svg */; };
@@ -480,6 +495,8 @@
 		F720E811AF90DCA402FF9A0A /* SFAPMFL----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 899C0E42F58AE75FEE792EF9 /* SFAPMFL----.svg */; };
 		F81269402CB71F4BF231A86B /* DataPackageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27AFF7080BC1929C0AFE3ACB /* DataPackageManager.swift */; };
 		F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */; };
+		992F3CBAE5D09F95B1494FD4 /* VoicePluginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */; };
+		264FC08ED0EA6D4E98E6719B /* TransmitGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85C93DF22960AEC8D2F66DA8 /* TransmitGateTests.swift */; };
 		F887E26E229854DF18D1F96B /* SFAPMHQ----.svg in Resources */ = {isa = PBXBuildFile; fileRef = AE725B92EA137887258221CB /* SFAPMHQ----.svg */; };
 		F9A4209563B079DBC2B05FD7 /* SHGPUC-----.svg in Resources */ = {isa = PBXBuildFile; fileRef = 2E68A74AC57A313668A716ED /* SHGPUC-----.svg */; };
 		F9E1491477B06406FB3F8370 /* SFGPUULC---.svg in Resources */ = {isa = PBXBuildFile; fileRef = D4EB93CD70E0285BEEAFF8C2 /* SFGPUULC---.svg */; };
@@ -625,6 +642,21 @@
 		397C16C7CEF45EB144B930F7 /* MeshTopologyView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshTopologyView.swift; path = OmniTAKMobile/Features/Meshtastic/Views/MeshTopologyView.swift; sourceTree = "<group>"; };
 		39F6E5D7A7C95BE91E8BE483 /* QuickActionToolbar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QuickActionToolbar.swift; path = OmniTAKMobile/Shared/UI/Components/QuickActionToolbar.swift; sourceTree = "<group>"; };
 		3A42F35542E714D9F02B359A /* AppPluginHost.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppPluginHost.swift; path = OmniTAKMobile/Core/Plugin/AppPluginHost.swift; sourceTree = "<group>"; };
+		9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NativePTTManager.swift; path = OmniTAKMobile/Features/Voice/NativePTT/NativePTTManager.swift; sourceTree = "<group>"; };
+		A2ACB0D2808505D72396A294 /* TransmitGate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TransmitGate.swift; path = OmniTAKMobile/Features/Voice/NativePTT/TransmitGate.swift; sourceTree = "<group>"; };
+		08D87E68781371B6D34EAE93 /* IconImage.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = IconImage.swift; path = OmniTAKMobile/Shared/UI/Components/IconImage.swift; sourceTree = "<group>"; };
+		F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = EmergencyPressTracker.swift; path = OmniTAKMobile/Features/Voice/Bluetooth/EmergencyPressTracker.swift; sourceTree = "<group>"; };
+		8082169F4979938A0F7FA324 /* VoiceTones.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceTones.swift; path = OmniTAKMobile/Features/Voice/Audio/VoiceTones.swift; sourceTree = "<group>"; };
+		60479381CF6F6D2C37D7B815 /* VoiceChannelPicker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceChannelPicker.swift; path = OmniTAKMobile/Features/Voice/UI/VoiceChannelPicker.swift; sourceTree = "<group>"; };
+		E3303B565143293449DF72C1 /* VoiceAudioEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceAudioEngine.swift; path = OmniTAKMobile/Features/Voice/Audio/VoiceAudioEngine.swift; sourceTree = "<group>"; };
+		8D38A8AE981AAB0B003E2CD9 /* MumbleWire.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MumbleWire.swift; path = OmniTAKMobile/Features/Voice/Mumble/MumbleWire.swift; sourceTree = "<group>"; };
+		C6174FF85B26D1003C3B5E17 /* MumbleClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MumbleClient.swift; path = OmniTAKMobile/Features/Voice/Mumble/MumbleClient.swift; sourceTree = "<group>"; };
+		340F0BFBFB1FC6AC3C60B13E /* BLEPTTManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BLEPTTManager.swift; path = OmniTAKMobile/Features/Voice/Bluetooth/BLEPTTManager.swift; sourceTree = "<group>"; };
+		405C9C1DFE7C1C15E45C01B0 /* VoiceController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoiceController.swift; path = OmniTAKMobile/Features/Voice/VoiceController.swift; sourceTree = "<group>"; };
+		834E5CF1868D9CFAC489022E /* VoicePTTOverlay.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoicePTTOverlay.swift; path = OmniTAKMobile/Features/Voice/UI/VoicePTTOverlay.swift; sourceTree = "<group>"; };
+		DC27E2A99E69984CFD4E9DB8 /* VoicePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoicePlugin.swift; path = OmniTAKMobile/Features/Voice/Plugin/VoicePlugin.swift; sourceTree = "<group>"; };
+		C0CA1D8880732A39A64F65D4 /* VoiceHostBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "VoiceHostBridge.swift"; path = "OmniTAKMobile/Core/Plugin/VoiceHostBridge.swift"; sourceTree = "<group>"; };
+		A723C059651EE1E6A145D7A4 /* AppPluginHost+Voice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "AppPluginHost+Voice.swift"; path = "OmniTAKMobile/Core/Plugin/AppPluginHost+Voice.swift"; sourceTree = "<group>"; };
 		3A7BF0F8036A4641AE333F42 /* MarkerLifecycleTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MarkerLifecycleTests.swift; path = OmniTAKMobileTests/MarkerLifecycleTests.swift; sourceTree = "<group>"; };
 		3B72EF5EEBCC4E173B3AE30D /* SNSPX------.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SNSPX------.svg"; sourceTree = "<group>"; };
 		3B8D46995079943866D66720 /* CSRGenerator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CSRGenerator.swift; path = OmniTAKMobile/Features/Networking/Managers/CSRGenerator.swift; sourceTree = "<group>"; };
@@ -903,6 +935,8 @@
 		F0E7ACFAB445E2075F4E5FEF /* MBTilesRenderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MBTilesRenderTests.swift; path = OmniTAKMobileTests/MBTilesRenderTests.swift; sourceTree = "<group>"; };
 		809E8C5B4560FABB17AAF3AE /* MBTilesOverlayStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MBTilesOverlayStoreTests.swift; path = OmniTAKMobileTests/MBTilesOverlayStoreTests.swift; sourceTree = "<group>"; };
 		C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PluginSDKTests.swift; path = OmniTAKMobileTests/PluginSDKTests.swift; sourceTree = "<group>"; };
+		9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = VoicePluginTests.swift; path = OmniTAKMobileTests/VoicePluginTests.swift; sourceTree = "<group>"; };
+		85C93DF22960AEC8D2F66DA8 /* TransmitGateTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TransmitGateTests.swift; path = OmniTAKMobileTests/TransmitGateTests.swift; sourceTree = "<group>"; };
 		C644AA06A8883B0013638A4E /* OpenDroneIdParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = OpenDroneIdParserTests.swift; path = OmniTAKMobileTests/OpenDroneIdParserTests.swift; sourceTree = "<group>"; };
 		C79FECE8C2536E714592CD83 /* SHGPUCS----.svg */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; path = "SHGPUCS----.svg"; sourceTree = "<group>"; };
 		C7E7E03CF8CE1ECA81C1AA86 /* MeshtasticManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeshtasticManager.swift; path = OmniTAKMobile/Features/Meshtastic/Managers/MeshtasticManager.swift; sourceTree = "<group>"; };
@@ -2236,10 +2270,27 @@
 				4F6A1EA71D839AA2F8A09BAE /* PluginHost.swift */,
 				1D95E31A4FB55F17B88EDA43 /* PluginRegistry.swift */,
 				3A42F35542E714D9F02B359A /* AppPluginHost.swift */,
+				9C442CDF3ACF1D7BBE566BE4 /* NativePTTManager.swift */,
+				A2ACB0D2808505D72396A294 /* TransmitGate.swift */,
+				08D87E68781371B6D34EAE93 /* IconImage.swift */,
+				F85989515506FBCCD458CDF3 /* EmergencyPressTracker.swift */,
+				8082169F4979938A0F7FA324 /* VoiceTones.swift */,
+				60479381CF6F6D2C37D7B815 /* VoiceChannelPicker.swift */,
+				E3303B565143293449DF72C1 /* VoiceAudioEngine.swift */,
+				8D38A8AE981AAB0B003E2CD9 /* MumbleWire.swift */,
+				C6174FF85B26D1003C3B5E17 /* MumbleClient.swift */,
+				340F0BFBFB1FC6AC3C60B13E /* BLEPTTManager.swift */,
+				405C9C1DFE7C1C15E45C01B0 /* VoiceController.swift */,
+				834E5CF1868D9CFAC489022E /* VoicePTTOverlay.swift */,
+				DC27E2A99E69984CFD4E9DB8 /* VoicePlugin.swift */,
+				C0CA1D8880732A39A64F65D4 /* VoiceHostBridge.swift */,
+				A723C059651EE1E6A145D7A4 /* AppPluginHost+Voice.swift */,
 				C7F55D934522295329FE6400 /* DiagnosticsPlugin.swift */,
 				1E000347E77659FB9483E560 /* ADSBPlugin.swift */,
 				5821A1F45BE3F2985B6BAB51 /* ADSBStatusOverlay.swift */,
 				C5B1610A03C98F73C6517BA8 /* PluginSDKTests.swift */,
+				9EDA1E5F283ABE9B436401A1 /* VoicePluginTests.swift */,
+				85C93DF22960AEC8D2F66DA8 /* TransmitGateTests.swift */,
 				771357A62E95D5EECDB9E041 /* MeshFramework.swift */,
 				621CB29178D35F0EF1EE7268 /* Meshtastic+MeshProtocols.swift */,
 				55FD474B6A8250F778891C09 /* MeshCoreFrameCodec.swift */,
@@ -3079,6 +3130,8 @@
 				E3A71A2E344F9BB61504F9E2 /* TAKLinkLivenessTests.swift in Sources */,
 				EABE994F076F698CA4AF2DF0 /* LoopbackTAKServer.swift in Sources */,
 				F831B10A1D135F2E88925F52 /* PluginSDKTests.swift in Sources */,
+				992F3CBAE5D09F95B1494FD4 /* VoicePluginTests.swift in Sources */,
+				264FC08ED0EA6D4E98E6719B /* TransmitGateTests.swift in Sources */,
 				C5C06A972D151475A44BC316 /* MeshCoreFrameCodecTests.swift in Sources */,
 				A7CB00010000000000B00001 /* MeshChannelApplyTests.swift in Sources */,
 				CF000005B000000000000001 /* ConfigProfileTests.swift in Sources */,
@@ -3386,6 +3439,21 @@
 				7E5C86C855523AF841D45383 /* PluginHost.swift in Sources */,
 				DFE366B176992E3CE85E10BF /* PluginRegistry.swift in Sources */,
 				323ACB8B767580D6B6193160 /* AppPluginHost.swift in Sources */,
+				9D4EFAE35F91677D04367286 /* NativePTTManager.swift in Sources */,
+				9B1A3AD49904A3824796C074 /* TransmitGate.swift in Sources */,
+				B07D60593A0D37A15DC8A39E /* IconImage.swift in Sources */,
+				F853A201FB069A31A6170A71 /* EmergencyPressTracker.swift in Sources */,
+				4E4B58CA303CFD3409D4099D /* VoiceTones.swift in Sources */,
+				B7B6CD0640B537A46EE14902 /* VoiceChannelPicker.swift in Sources */,
+				F6153C544C7F1F0CAE9B3260 /* VoiceAudioEngine.swift in Sources */,
+				7E7ED0DC3C617257CE03212E /* MumbleWire.swift in Sources */,
+				22BC7744F3D7EB7A314CE297 /* MumbleClient.swift in Sources */,
+				170C44BD5B05FACA8FF5A1E0 /* BLEPTTManager.swift in Sources */,
+				2E887D8337A15C0DF142A09D /* VoiceController.swift in Sources */,
+				B767843A3A4CFA48E19F0AE4 /* VoicePTTOverlay.swift in Sources */,
+				EAFF111F7B98E6AFC39D355E /* VoicePlugin.swift in Sources */,
+				9D6599EB9DA2D330C3C24240 /* VoiceHostBridge.swift in Sources */,
+				86B43EE10E36EA029F9B7D15 /* AppPluginHost+Voice.swift in Sources */,
 				7E069116B694B15B5EFDE612 /* DiagnosticsPlugin.swift in Sources */,
 				BD5ED2F273C06C32FB3CAA0E /* ADSBPlugin.swift in Sources */,
 				42DCF526B899E93E4340934B /* ADSBStatusOverlay.swift in Sources */,
@@ -3465,7 +3533,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = OmniTAKMobileUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3488,7 +3556,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = OmniTAKMobileUITests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3513,7 +3581,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OmniTAKMobileTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3583,7 +3651,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -3643,7 +3711,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -3674,6 +3742,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/OmniTAKMobile/ThirdParty/Unishox2",
 				);
+				CODE_SIGN_ENTITLEMENTS = OmniTAKMobile/OmniTAKMobile.entitlements;
 				INFOPLIST_FILE = OmniTAKMobile/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = OmniTAK;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -3688,7 +3757,7 @@
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3727,6 +3796,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/OmniTAKMobile/ThirdParty/Unishox2",
 				);
+				CODE_SIGN_ENTITLEMENTS = OmniTAKMobile/OmniTAKMobile.entitlements;
 				INFOPLIST_FILE = OmniTAKMobile/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = OmniTAK;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -3741,7 +3811,7 @@
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -3769,7 +3839,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OmniTAKMobileTests/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

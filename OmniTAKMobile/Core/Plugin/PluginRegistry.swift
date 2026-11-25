@@ -49,6 +49,7 @@ final class PluginRegistry {
     func loadBundledPlugins() {
         register(ADSBPlugin())
         register(DiagnosticsPlugin())
+        register(VoicePlugin())
     }
 
     // MARK: - Activation

@@ -66,8 +66,7 @@ struct ToolbarAddPalette: View {
                         }
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: 18))
+                            IconImage(name: item.icon, size: 18)
                                 .foregroundColor(item.tint)
                                 .frame(width: 30)
                             // Reuse the bar's per-id label keys so the

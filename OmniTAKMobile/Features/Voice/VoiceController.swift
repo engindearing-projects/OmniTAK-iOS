@@ -1,0 +1,1172 @@
+//
+//  VoiceController.swift
+//  OmniTAKMobile
+//
+//  Ties the voice pieces together for the plugin: two Mumble clients (dual
+//  PTT: slot 1 = VS1, slot 2 = VS2, as on TAK-XVoice), the audio engine
+//  (mic/speaker/Opus), the BLE PTT button manager, and push-to-talk
+//  arbitration. Main-thread ObservableObject that the PTT overlay and the
+//  settings screen observe.
+//
+//  Slot rules (from TAK-XVoice, with its gaps closed):
+//  - Slot 1 always exists while the plugin is on and always has priority.
+//  - Slot 2 is OFF until the operator picks a second channel. It connects only
+//    after slot 1 is connected AND has settled in its channel, and it is taken
+//    down whenever slot 1 drops or fails (it comes back with slot 1).
+//  - The two slots never share a channel: picks are refused both ways (by id
+//    and by configured name). If the server puts them together anyway, PTT 2
+//    falls back to slot 1 and slot 2's duplicate received audio is dropped.
+//  - Slot 2 failures stay local: a short retry ladder (3 s, 8 s) for Murmur's
+//    lingering "ghost" session, then it stays down. Slot 1 is never touched.
+//  - One microphone: only one slot transmits at a time; the first press wins.
+//    PTT 2 falls back to slot 1 when slot 2 can't carry audio. Nothing
+//    transmits while slot 1 is down. A listen-only (suppressed) slot can't
+//    transmit.
+//  - Within a slot, PTT is an OR-gate over sources (on-screen, Bluetooth).
+//  - Full duplex: received audio keeps playing while transmitting (echo is
+//    handled by the .voiceChat audio session), and transmitting is never
+//    blocked by someone else talking. While transmitting on one slot, the
+//    OTHER slot's received audio is ducked; the slot you talk on stays at full
+//    level.
+//
+
+import Foundation
+import AVFoundation
+import Combine
+import UIKit
+import PushToTalk
+
+/// `system`: the PushToTalk system UI Talk button or a hands-free accessory.
+enum PTTSource: Hashable { case onScreen, bluetooth, system }
+
+final class VoiceController: ObservableObject {
+    enum ConnState: Equatable { case off, noServer, noCertificate, connecting, connected, reconnecting, failed }
+
+    struct SlotStatus: Equatable {
+        var state: ConnState = .off
+        var statusLine = "Off"
+        var channels: [Channel] = []
+        var currentChannelId: UInt32?
+        var suppressed = false
+        var settled = false
+        var currentChannelName: String {
+            guard let id = currentChannelId else { return "—" }
+            return channels.first { $0.id == id }?.name ?? (id == 0 ? "Lobby" : "Channel \(id)")
+        }
+    }
+    struct Channel: Equatable, Identifiable { let id: UInt32; let name: String }
+
+    /// Index 0 = slot 1 (VS1), index 1 = slot 2 (VS2).
+    @Published private(set) var slots = [SlotStatus(), SlotStatus()]
+    /// The slot that owns the mic while transmitting (after any PTT 2 → slot 1
+    /// fallback), nil otherwise.
+    @Published private(set) var transmittingSlot: Int?
+    /// The PTT button that started the current burst (1 or 2).
+    @Published private(set) var pressedSlot: Int?
+    @Published private(set) var activeSpeakers: [String] = []
+    @Published private(set) var micPermission = "Unknown"
+    @Published private(set) var audioRoute = ""
+    @Published var notice: String?
+
+    var statusLine: String { slots[0].statusLine }
+    var isTransmitting: Bool { transmittingSlot != nil }
+
+    let blePTT = BLEPTTManager()
+    /// Apple PushToTalk integration (system channel, audio session, Talk button).
+    let nativePTT = NativePTTManager()
+    /// True while the current burst asked the system to transmit.
+    private var requestedSystemTX = false
+
+    private static func channelKey(_ slot: Int) -> String { "voice.lastChannel.vs\(slot)" }
+    private static func channelIdKey(_ slot: Int) -> String { "voice.lastChannelId.vs\(slot)" }
+
+    /// The channel id a slot is set to join, when known (ids are unambiguous;
+    /// names can repeat on a server).
+    private func configuredId(_ slot: Int) -> UInt32? {
+        (UserDefaults.standard.object(forKey: Self.channelIdKey(slot)) as? Int).map { UInt32($0) }
+    }
+
+    private func saveChannel(_ slot: Int, id: UInt32, name: String) {
+        UserDefaults.standard.set(id == 0 ? "Lobby" : name, forKey: Self.channelKey(slot))
+        UserDefaults.standard.set(Int(id), forKey: Self.channelIdKey(slot))
+    }
+
+    private func clearChannel(_ slot: Int) {
+        UserDefaults.standard.removeObject(forKey: Self.channelKey(slot))
+        UserDefaults.standard.removeObject(forKey: Self.channelIdKey(slot))
+    }
+
+    /// True if channel (`id`, `name`) is where `slot` is set to go.
+    private func isConfigured(_ slot: Int, id: UInt32, name: String) -> Bool {
+        if let cid = configuredId(slot) { return cid == id }
+        return Self.sameName(configuredName(slot), id == 0 ? "Lobby" : name)
+    }
+    private weak var bridge: VoiceHostBridge?
+    private var clients: [Int: MumbleClient] = [:]
+    private let audio = VoiceAudioEngine()
+    private var held: [Int: Set<PTTSource>] = [1: [], 2: []]
+    private var speakerLastHeard: [UInt32: (slot: Int, session: UInt32, at: Date)] = [:]
+    private var speakerTimer: Timer?
+    private var routeObserver: NSObjectProtocol?
+    private var bleCancellable: AnyCancellable?
+    private var started = false
+    private var startGeneration = 0
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    /// Mirror of `transmittingSlot` for the audio callback (set on main).
+    private var txSlotForAudio: Int?
+    /// Same-channel state already logged (so it is logged once per change).
+    private var loggedSameChannel = false
+
+    init(bridge: VoiceHostBridge?) {
+        self.bridge = bridge
+        // Slot 2 became opt-in: clear any VS2 channel an earlier build saved.
+        if !UserDefaults.standard.bool(forKey: "voice.vs2OptInMigrated") {
+            clearChannel(2)
+            UserDefaults.standard.set(true, forKey: "voice.vs2OptInMigrated")
+        }
+        // One-time migration of the single-slot channel key.
+        if let old = UserDefaults.standard.string(forKey: "voice.lastChannel"),
+           UserDefaults.standard.string(forKey: Self.channelKey(1)) == nil {
+            UserDefaults.standard.set(old, forKey: Self.channelKey(1))
+        }
+        audio.onEncodedFrame = { [weak self] opus in
+            // Hop to main so the clients dictionary is only touched on one thread.
+            DispatchQueue.main.async {
+                guard let self = self, let s = self.txSlotForAudio else { return }
+                if self.dryRun { self.dryRunPackets += 1; return }
+                self.clients[s]?.sendVoice(opus)
+            }
+        }
+        blePTT.onEvent = { [weak self] e in
+            switch e {
+            case .pttDown(let slot): self?.pttDown(slot: slot, source: .bluetooth)
+            case .pttUp(let slot): self?.pttUp(slot: slot, source: .bluetooth)
+            case .emergency(let down): self?.onEmergencyButton(down: down)
+            case .linkLost: self?.onButtonLinkLost()
+            case .function(let code): self?.onFunctionButton(code: code)
+            }
+        }
+        bleCancellable = blePTT.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        wireNativePTT()
+        audio.onEngineRestart = { [weak self] reason in
+            guard let self = self else { return }
+            if self.txState != .idle {
+                print("[Voice] audio engine restarted (\(reason)) — ending the burst in progress")
+                self.held = [1: [], 2: []]
+                self.stopBurst()
+            }
+            self.audioRoute = VoiceAudioEngine.routeDescription()
+        }
+        // The on-screen button can't be held while the app isn't active (and a
+        // cancelled gesture never reports its release). Hardware/BLE PTT keeps
+        // working in the background.
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.releaseOnScreenPTT()
+        })
+        // A speaker-mic switched on while the app was in the background.
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.started else { return }
+            self.autoConnectSpeakerMicButton()
+        })
+    }
+
+    deinit { lifecycleObservers.forEach { NotificationCenter.default.removeObserver($0) } }
+
+    // MARK: - Apple PushToTalk bridge
+
+    private func wireNativePTT() {
+        // The channel manager must exist from launch (plugin activation).
+        nativePTT.setUp()
+        nativePTT.onAudioActivated = { [weak self] in self?.audio.systemDidActivate() }
+        nativePTT.onAudioDeactivated = { [weak self] in
+            guard let self = self else { return }
+            // While ACQUIRING, the system may recycle the session (off, then on
+            // for the new transmission): keep waiting for the activation.
+            if self.txState != .idle && self.txState != .acquiring {
+                print("[Voice] system deactivated audio mid-burst — ending it")
+                self.held = [1: [], 2: []]
+                self.stopBurst()
+            }
+            self.audio.systemDidDeactivate()
+        }
+        nativePTT.onTransmitBegan = { [weak self] source in
+            guard let self = self else { return }
+            // Our own requests come back as .developerRequest; the system Talk
+            // button and hands-free buttons start a burst on PTT 1.
+            if source != .developerRequest && self.txState == .idle && self.pressedSlot == nil {
+                self.pttDown(slot: 1, source: .system)
+                if self.txState == .idle {
+                    // We couldn't take it (voice not connected, listen-only
+                    // channel, refractory window): don't leave the system
+                    // showing "transmitting" with nothing going out.
+                    self.held[1, default: []].remove(.system)
+                    print("[Voice] system Talk press refused — ending the system transmission")
+                    self.nativePTT.stopTransmitting()
+                }
+            } else if source == .developerRequest && self.txState == .acquiring && self.requestedSystemTX {
+                // Our own request went through: now wait for the audio session.
+                self.waitForAudioThenPrime()
+            } else if source == .developerRequest && self.txState == .idle {
+                // A transmission of ours began with no press behind it any more.
+                print("[Voice] transmission began with no press behind it — ending it")
+                self.nativePTT.stopTransmitting()
+            }
+        }
+        nativePTT.onTransmitEnded = { [weak self] source in
+            guard let self = self else { return }
+            // A press queued behind this (ending) transmission keeps its
+            // request: its own "began" comes next.
+            if self.txState == .idle { self.requestedSystemTX = false }
+            defer {
+                // With nobody talking, the system deactivates the session right
+                // after a transmission ends. Treat audio as gone now, so the next
+                // press waits for a fresh activation instead of racing it.
+                if !self.nativePTT.hasRemoteParticipant && self.txState == .idle {
+                    self.audio.systemDidDeactivate()
+                }
+            }
+            let systemHeld = [1, 2].filter { self.held[$0, default: []].contains(.system) }
+            if !systemHeld.isEmpty {
+                // Release .system from the slot that actually holds it.
+                systemHeld.forEach { self.pttUp(slot: $0, source: .system) }
+            } else if source != .developerRequest, self.txState != .idle {
+                // The system ended our transmission (e.g. a phone call).
+                self.held = [1: [], 2: []]
+                self.stopBurst()
+            }
+        }
+        nativePTT.onTransmitFailed = { [weak self] error in
+            guard let self = self else { return }
+            self.requestedSystemTX = false
+            guard self.txState != .idle else { return }
+            print("[Voice] system refused to transmit: \(error.localizedDescription)")
+            self.notice = "Couldn't start transmitting: \(error.localizedDescription)"
+            self.held = [1: [], 2: []]
+            self.stopBurst()
+        }
+        nativePTT.onLeftChannel = { [weak self] reason in
+            // The operator left X Voice from the system UI: stop voice.
+            if reason == .userRequest { self?.stop() }
+        }
+        audio.onSessionNeeded = { [weak self] _ in
+            guard let self = self else { return }
+            self.nativePTT.setActiveRemoteParticipant(self.currentTalkerName())
+        }
+        audio.onSessionIdle = { [weak self] in
+            self?.nativePTT.setActiveRemoteParticipant(nil)
+        }
+        audio.onActivationStalled = { [weak self] in
+            self?.nativePTT.setActiveRemoteParticipant(nil)
+        }
+    }
+
+    /// Name shown by the system while someone is talking.
+    private func currentTalkerName() -> String {
+        guard let first = activeSpeakers.first else { return "X Voice" }
+        // activeSpeakers entries are "<slot>: <name>"
+        return first.split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? first
+    }
+
+    /// System channel title: X Voice and the channel(s) the slots are in.
+    private func systemChannelName() -> String {
+        var parts = [slots[0].currentChannelName]
+        if isSlot2Enabled, slots[1].currentChannelId != nil { parts.append(slots[1].currentChannelName) }
+        let names = parts.filter { $0 != "—" }
+        return names.isEmpty ? "X Voice" : "X Voice · " + names.joined(separator: " / ")
+    }
+
+    // MARK: - Status chirps (TAK-XVoice StatusTones)
+    //  join (ascending) when a slot lands in a channel, leave (descending)
+    //  when PTT 2 is turned off, voice-lost (double 850 Hz) when slot 1's
+    //  connection drops unexpectedly — which also cuts off a burst in
+    //  progress. 5 s cooldown per kind. Setting "voice.statusTones" (default on).
+
+    enum StatusTone: String { case join, leave, voiceLost }
+    static let statusTonesKey = "voice.statusTones"
+    private var lastStatusTone: [StatusTone: Date] = [:]
+    private var lastChannelBySlot: [Int: UInt32] = [:]
+    private var slot1WasConnected = false
+
+    private func playStatus(_ kind: StatusTone) {
+        // Off by default under PushToTalk: the system UI shows joined /
+        // connecting / unavailable (service status).
+        let enabled = UserDefaults.standard.object(forKey: Self.statusTonesKey) as? Bool ?? false
+        guard enabled, !dryRun else { return }
+        let now = Date()
+        if let last = lastStatusTone[kind], now.timeIntervalSince(last) < 5 {
+            print("[Voice] status tone \(kind) suppressed (cooldown)"); return
+        }
+        lastStatusTone[kind] = now
+        print("[Voice] status tone: \(kind)")
+        switch kind {
+        case .join: audio.playTone(VoiceTones.joinChirp())
+        case .leave: audio.playTone(VoiceTones.leaveChirp())
+        case .voiceLost: audio.playTone(VoiceTones.voiceLost())
+        }
+    }
+
+    // MARK: - Emergency button (ported from TAK-XVoice EmergencyController)
+    //
+    //  PRESS:                    arm, schedule CANCEL at 1 s.
+    //  RELEASE before 1 s:       FIRE the 911 alert (no-op if already active).
+    //  HELD to 1 s:              CANCEL immediately (feedback at the threshold);
+    //                            the later release does nothing.
+    //  A stuck button can't keep firing, and holding the same button is how an
+    //  operator affirmatively cancels. The Inrico BT02 key is a one-shot pulse
+    //  (down+up), so on that device it always fires.
+
+    static let emergencyLongPress: TimeInterval = EmergencyPressTracker.longPress
+    private var emergency = EmergencyPressTracker()
+    private var emergencyCancelTimer: DispatchWorkItem?
+
+    // MARK: Speaker-mic function buttons
+    //
+    // Inrico BT02: top button 0x03, side buttons 0x02 / 0x04 (single pulses).
+    // Deliberately unmapped for now — reserved for future settings toggles.
+    // (They do NOT cancel an emergency alert: cancel from OmniTAK's Emergency
+    // screen.)
+    func onFunctionButton(code: UInt8) {
+        print("[Voice] speaker-mic button 0x\(String(format: "%02x", code)) (unmapped)")
+    }
+
+    /// The button's link dropped: a half-finished emergency press is void. It
+    /// must neither fire nor — via the 1 s hold timer — cancel a live alert.
+    func onButtonLinkLost() {
+        guard emergencyCancelTimer != nil else { return }
+        emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
+        emergency = EmergencyPressTracker()
+        print("[Voice] button link lost during an emergency press — press ignored")
+    }
+
+    func onEmergencyButton(down: Bool) {
+        if down {
+            emergency.press(at: Date())
+            emergencyCancelTimer?.cancel()
+            let t = DispatchWorkItem { [weak self] in
+                guard let self = self, self.emergency.thresholdReached() == .cancel else { return }
+                self.performEmergency(.cancel, detail: "held 1 s")
+            }
+            emergencyCancelTimer = t
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.emergencyLongPress, execute: t)
+            print("[Voice] emergency button pressed (armed)")
+        } else {
+            emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
+            performEmergency(emergency.release(at: Date()), detail: "released")
+        }
+    }
+
+    private func performEmergency(_ action: EmergencyPressTracker.Action, detail: String) {
+        switch action {
+        case .none:
+            return
+        case .fire:
+            print("[Voice] emergency \(detail) — FIRE")
+            // Only a NEW alert gets the confirmation cue: repeated presses
+            // while one is already active do nothing audible.
+            let alreadyActive = bridge?.isEmergencyActive() ?? false
+            bridge?.setEmergency(active: true, reason: "speaker-mic emergency button")
+            if alreadyActive {
+                print("[Voice] emergency already active — no cue")
+            } else {
+                // The beacon is started without its full-volume system sound;
+                // confirm with a moderate cue in the speaker-mic instead.
+                audio.playCue(VoiceTones.emergencyCue())
+            }
+            notice = "Emergency alert sent. Hold the emergency button 1 s to cancel."
+        case .cancel:
+            print("[Voice] emergency \(detail) — CANCEL")
+            bridge?.setEmergency(active: false, reason: "speaker-mic emergency cancel (\(detail))")
+            audio.playTone(VoiceTones.deny())
+            notice = "Emergency alert cancelled."
+        }
+    }
+
+    /// If audio is on a supported Bluetooth speaker-mic (Inrico BT02, AINA),
+    /// connect its BLE PTT button automatically.
+    func autoConnectSpeakerMicButton() {
+        guard started else { return }
+        // With PushToTalk the session is usually INACTIVE, and then the current
+        // route lists no Bluetooth device. availableInputs still lists paired,
+        // connected HFP devices (the category is playAndRecord), so check both.
+        let session = AVAudioSession.sharedInstance()
+        let r = session.currentRoute
+        let ports = (r.inputs + r.outputs + (session.availableInputs ?? []))
+            .filter { $0.portType == .bluetoothHFP }
+        let names = ports.map { $0.portName }
+        if let name = names.first(where: { BLEPTTManager.classify(name: $0, services: []) != nil }) {
+            print("[Voice] speaker-mic in use: '\(name)' (Bluetooth HFP)")
+            blePTT.autoConnect(matching: name)
+        } else if !names.isEmpty {
+            print("[Voice] Bluetooth HFP devices (not supported speaker-mics): \(names)")
+        }
+        // No speaker-mic visible to the audio system: nothing is scanned for.
+        // A saved button reconnects by itself; any other device needs one tap
+        // in the scan list (connecting "whatever is nearby" could key the mic
+        // from an unrelated gadget or a teammate's button).
+    }
+
+    func reloadAudioLevels() { audio.reloadGains() }
+
+    /// Release every on-screen PTT hold (gesture cancelled / view gone / app inactive).
+    func releaseOnScreenPTT() {
+        for slot in [1, 2] where held[slot, default: []].contains(.onScreen) {
+            pttUp(slot: slot, source: .onScreen)
+        }
+    }
+
+    // MARK: - Slot 2 configuration
+
+    /// Slot 2 is enabled only while a second channel is chosen.
+    var isSlot2Enabled: Bool { configuredName(2) != nil }
+
+    /// The channel name a slot is set to join (persisted), if any.
+    func configuredChannelName(_ slot: Int) -> String? { configuredName(slot) }
+
+    /// True if `name` matches the other slot's configured channel ("Root" == "Lobby").
+    func isConfiguredForOtherSlot(_ ch: Channel, slot: Int) -> Bool {
+        let other = slot == 1 ? 2 : 1
+        if other == 2 && !isSlot2Enabled { return false }
+        return isConfigured(other, id: ch.id, name: ch.name)
+    }
+
+    private func configuredName(_ slot: Int) -> String? {
+        let n = UserDefaults.standard.string(forKey: Self.channelKey(slot))
+        return (n?.isEmpty ?? true) ? nil : n
+    }
+
+    /// Slot 2 is live and in its own channel (not shared with slot 1).
+    private var isSlot2Usable: Bool {
+        let s2 = slots[1]
+        return clients[2] != nil && s2.state == .connected && s2.currentChannelId != nil && !slotsShareChannel
+    }
+
+    private var slotsShareChannel: Bool {
+        guard clients[2] != nil, let a = slots[0].currentChannelId, let b = slots[1].currentChannelId else { return false }
+        return a == b
+    }
+
+    private static func sameName(_ a: String?, _ b: String?) -> Bool {
+        guard let a = a, let b = b else { return false }
+        func norm(_ s: String) -> String { s.caseInsensitiveCompare("Root") == .orderedSame ? "lobby" : s.lowercased() }
+        return norm(a) == norm(b)
+    }
+
+    // MARK: - Start / stop
+
+    func start() {
+        guard !started else { return }
+        guard let bridge = bridge else { setSlot(1, .failed, "Host bridge unavailable"); return }
+        guard let host = bridge.activeServerHost(), !host.isEmpty else {
+            setSlot(1, .noServer, "No active TAK server")
+            #if DEBUG
+            // Self-test without a server (simulator): audio only, slot 1 faked
+            // as connected, dry run so nothing could be sent anyway.
+            if UserDefaults.standard.bool(forKey: "XVoiceSelfTest") {
+                started = true
+                requestMic { [weak self] ok in
+                    guard let self = self, ok else {
+                        print("[SelfTest] cannot start audio: no mic permission"); return
+                    }
+                    do { try self.audio.start() } catch {
+                        print("[SelfTest] cannot start audio: \(error.localizedDescription)"); return
+                    }
+                    self.setSlot(1, .connected, "Connected (self-test, no server)")
+                    self.runSelfTestIfRequested()
+                }
+            }
+            #endif
+            return
+        }
+        started = true
+        startGeneration += 1
+        let gen = startGeneration
+        requestMic { [weak self] granted in
+            guard let self = self, self.started, self.startGeneration == gen else { return }
+            guard granted else { self.setSlot(1, .failed, "Microphone permission denied"); return }
+            do { try self.audio.start() } catch {
+                self.setSlot(1, .failed, "Audio error: \(error.localizedDescription)"); return
+            }
+            self.audioRoute = VoiceAudioEngine.routeDescription()
+            self.observeRoute()
+            self.startClient(slot: 1, host: host, bridge: bridge)
+        }
+        blePTT.start()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.autoConnectSpeakerMicButton() }
+        startSpeakerTimer()
+    }
+
+    private func startClient(slot: Int, host: String, bridge: VoiceHostBridge) {
+        guard clients[slot] == nil else { return }
+        let c = MumbleClient(host: host, callsign: bridge.selfCallsign(), deviceUid: bridge.selfUid(), slot: slot) {
+            [weak self, weak bridge] h, p in
+            guard let bridge = bridge else { return nil }
+            // The operator switched TAK servers: this connection's host is no
+            // longer the active one. Don't reconnect to it (the bridge would
+            // refuse anyway) — restart voice against the new server.
+            if let active = bridge.activeServerHost(), active.caseInsensitiveCompare(h) != .orderedSame {
+                DispatchQueue.main.async { self?.activeServerChanged() }
+                return nil
+            }
+            return bridge.makeServerTLSConnection(host: h, port: p)
+        }
+        c.delegate = self
+        c.desiredChannelName = configuredName(slot)
+        c.desiredChannelId = configuredId(slot)
+        if slot == 2 { c.retryLadder = [3, 8] }
+        clients[slot] = c
+        setSlot(slot, .connecting, "Connecting…")
+        c.start()
+    }
+
+    /// Bring slot 2 up if it is configured and slot 1 is connected and settled
+    /// in a different channel. Called whenever slot 1's state changes.
+    private func maybeStartSlot2() {
+        guard started, isSlot2Enabled, clients[2] == nil else { return }
+        let s1 = slots[0]
+        guard s1.state == .connected, s1.settled, s1.currentChannelId != nil else {
+            if slots[1].statusLine != "Waiting for PTT 1" { slots[1].statusLine = "Waiting for PTT 1" }
+            return
+        }
+        if let cur = s1.currentChannelId, isConfigured(2, id: cur, name: s1.currentChannelName) {
+            notice = "PTT 2's channel '\(configuredName(2) ?? "")' is PTT 1's channel — pick another for PTT 2"
+            slots[1].statusLine = "Same channel as PTT 1"
+            return
+        }
+        guard let bridge = bridge, let host = bridge.activeServerHost() else { return }
+        startClient(slot: 2, host: host, bridge: bridge)
+    }
+
+    /// Take slot 2 down without forgetting its channel (it returns with slot 1).
+    private func parkSlot2(_ why: String) {
+        if burstSlot == 2 { endTX() }
+        held[2] = []
+        clients[2]?.stop(); clients[2] = nil
+        var st = SlotStatus()
+        st.statusLine = why
+        slots[1] = st
+    }
+
+    func stop() {
+        started = false
+        if burstSlot != nil { endTX() }
+        held = [1: [], 2: []]
+        clients[2]?.stop(); clients[1]?.stop()   // slot 2 first, like Android
+        nativePTT.setActiveRemoteParticipant(nil)
+        nativePTT.leave()
+        clients.removeAll()
+        audio.stop()
+        blePTT.stop()
+        emergencyCancelTimer?.cancel(); emergencyCancelTimer = nil
+        speakerTimer?.invalidate(); speakerTimer = nil
+        if let o = routeObserver { NotificationCenter.default.removeObserver(o); routeObserver = nil }
+        speakerLastHeard.removeAll(); activeSpeakers = []
+        slots = [SlotStatus(), SlotStatus()]
+        setSlot(1, .off, "Voice off")
+    }
+
+    func reconnect() { stop(); start() }
+
+    private var handlingServerChange = false
+    private func activeServerChanged() {
+        guard started, !handlingServerChange else { return }
+        handlingServerChange = true
+        print("[Voice] the active TAK server changed — restarting voice against it")
+        reconnect()
+        handlingServerChange = false
+    }
+
+    // MARK: - Channels
+
+    /// Join a channel on a slot. Refused if the other slot is there (live or
+    /// configured).
+    func join(slot: Int, channelId: UInt32) {
+        if slot == 2 { setSecondChannel(channelId); return }
+        let name = slots[0].channels.first { $0.id == channelId }?.name ?? (channelId == 0 ? "Lobby" : "")
+        if isSlot2Enabled && (slots[1].currentChannelId == channelId || isConfigured(2, id: channelId, name: name)) {
+            notice = "'\(name)' is in use by PTT 2 — pick another or change PTT 2 first"
+            return
+        }
+        notice = nil
+        saveChannel(1, id: channelId, name: name)
+        clients[1]?.join(channelId: channelId)
+    }
+
+    /// Choose slot 2's channel (from slot 1's directory, same server), or pass
+    /// nil to turn slot 2 off.
+    func setSecondChannel(_ channelId: UInt32?) {
+        guard let id = channelId else {
+            if clients[2] != nil { playStatus(.leave) }
+            parkSlot2("Off")
+            clearChannel(2)
+            lastChannelBySlot[2] = nil
+            notice = nil
+            objectWillChange.send()
+            print("[Voice VS2] off")
+            return
+        }
+        let directory = slots[1].channels.isEmpty ? slots[0].channels : slots[1].channels
+        let name = id == 0 ? "Lobby" : (directory.first { $0.id == id }?.name ?? "")
+        guard !name.isEmpty else { return }
+        if slots[0].currentChannelId == id || isConfigured(1, id: id, name: name) {
+            notice = "'\(name)' is in use by PTT 1 — pick another or change PTT 1 first"
+            return
+        }
+        notice = nil
+        saveChannel(2, id: id, name: name)
+        objectWillChange.send()
+        if let c = clients[2], slots[1].state == .connected {
+            c.join(channelId: id)
+        } else {
+            parkSlot2("Starting…")
+            maybeStartSlot2()
+        }
+    }
+
+    // MARK: - Status helpers
+
+    private func setSlot(_ slot: Int, _ s: ConnState, _ line: String) {
+        slots[slot - 1].state = s
+        slots[slot - 1].statusLine = line
+        print("[Voice VS\(slot)] \(line)")
+    }
+
+    private func refreshStatusLine(_ slot: Int) {
+        var st = slots[slot - 1]
+        guard st.state == .connected else { return }
+        var line = "Connected · \(st.currentChannelName)"
+        if st.suppressed { line += " · listen only" }
+        if slot == 2 && slotsShareChannel { line = "Same channel as PTT 1 — paused" }
+        st.statusLine = line
+        slots[slot - 1] = st
+    }
+
+    private func checkSameChannel() {
+        let same = slotsShareChannel
+        if same != loggedSameChannel {
+            loggedSameChannel = same
+            print("[Voice] slot channels: VS1=\(slots[0].currentChannelId.map(String.init) ?? "nil") VS2=\(slots[1].currentChannelId.map(String.init) ?? "nil") configured VS1='\(configuredName(1) ?? "")' VS2='\(configuredName(2) ?? "")'")
+            print(same ? "[Voice] slots share a channel — PTT 2 falls back to slot 1, slot 2 RX muted"
+                       : "[Voice] slots in separate channels again")
+            if same { notice = "The server put PTT 2 in PTT 1's channel — PTT 2 is paused. Pick another channel for PTT 2." }
+        }
+        refreshStatusLine(2)
+    }
+
+    private func requestMic(_ done: @escaping (Bool) -> Void) {
+        let session = AVAudioSession.sharedInstance()
+        switch session.recordPermission {
+        case .granted: micPermission = "Granted"; done(true)
+        case .denied: micPermission = "Denied"; done(false)
+        default:
+            session.requestRecordPermission { ok in
+                DispatchQueue.main.async { self.micPermission = ok ? "Granted" : "Denied"; done(ok) }
+            }
+        }
+    }
+
+    private func observeRoute() {
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.audioRoute = VoiceAudioEngine.routeDescription()
+            print("[Voice] audio route: \(self?.audioRoute ?? "")")
+            self?.autoConnectSpeakerMicButton()
+        }
+    }
+
+    // MARK: - PTT / TX state machine (ported from TAK-XVoice TxController)
+    //
+    //  PTT down ─► (refused → deny tone)
+    //          ─► PRIMING: mic measured and DISCARDED until it is proven alive
+    //               fast gates  : ≥5 frames, or rms ≥ 5,  500 ms timeout
+    //               cold BT HFP : ≥30 non-silent frames, or rms ≥ 200, 1500 ms
+    //               timeout with no mic audio at all → bonk, abandon
+    //          ─► cold BT only: 700 ms hold (still discarding)
+    //          ─► TPT: [80 ms silence][tone][100 ms silence] played; mic still
+    //               discarded. Interrupt chirp instead if a peer is talking.
+    //               Done = buffer actually played back (+350 ms on BT HFP);
+    //               watchdog 2×tone+500 ms.
+    //          ─► TRANSMITTING: encode + send through a 60 ms trailing delay.
+    //  PTT up: before TRANSMITTING → no TX, no terminator (a playing tone is
+    //          left to finish but starts nothing). During TRANSMITTING → drop
+    //          the trailing 60 ms (click), send the terminator.
+    //  Refractory: 200 ms between bursts (50 ms when Bluetooth is warm).
+    //  "Cold" Bluetooth = HFP route with no RX in the last 8 s and no TX in the
+    //  last 5 s (Android's SCO hold windows), i.e. a speaker-mic that has gone
+    //  idle and needs to wake up before the tone can be heard.
+    //  Frames are 10 ms on Android; here mic buffers are counted in 10 ms units.
+
+    enum TxState: Equatable { case idle, acquiring, priming, coldHold, tpt, transmitting }
+    @Published private(set) var txState: TxState = .idle
+    private var burstSlot: Int?
+    private var burstCold = false
+    private var burstHFP = false
+    /// Identifies the current press. An audio-activation callback registered by
+    /// an earlier press (released before audio came on) must not act for a
+    /// later one: it started "transmitting" before the system had begun the new
+    /// transmission, and the press went out silent.
+    private var burstID = 0
+    /// Built-in / wired mic only: drop mic audio for this long after audio
+    /// comes on. iOS plays its start cue (sound + vibration) as the session
+    /// activates and the iPhone's own mic picks it up: measured on device as a
+    /// flat ~-30 dBFS buzz from ~0.1 s to ~0.55-0.7 s after the mic starts. A
+    /// Bluetooth speaker-mic doesn't hear it, and iOS Voice Isolation removes
+    /// it, so both send at once.
+    static let builtInMicCueGuard: TimeInterval = 0.75   // cue tail ran to ~0.7 s once
+    private var primingTimer: DispatchWorkItem?
+    private var acquireTimer: DispatchWorkItem?
+    private var txWarnTimer: DispatchWorkItem?
+    private var txCutoffTimer: DispatchWorkItem?
+
+    // MARK: TX timeout (TAK-XVoice PttDispatcher): a held PTT is cut off after
+    // `voice.pttTimeoutSec` (default 30 s, 0 = never). A warning chirp plays
+    // 5 s before; at the limit a 1.2 s cutoff tone plays and TX stops. The
+    // operator must release and press again — a stuck button can't keep a
+    // channel open.
+
+    static let txTimeoutKey = "voice.pttTimeoutSec"
+    static let defaultTxTimeout = 30
+    static var txTimeoutSeconds: Int {
+        UserDefaults.standard.object(forKey: txTimeoutKey) == nil
+            ? defaultTxTimeout : UserDefaults.standard.integer(forKey: txTimeoutKey)
+    }
+
+    private func armTxTimeout() {
+        let limit = Self.txTimeoutSeconds
+        guard limit > 0 else { return }
+        if limit > 5 {
+            let warn = DispatchWorkItem { [weak self] in
+                guard let self = self, self.txState != .idle else { return }
+                print("[Voice] TX timeout in 5 s")
+                self.audio.playTone(VoiceTones.timeoutWarning())
+            }
+            txWarnTimer = warn
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(limit - 5), execute: warn)
+        }
+        let cut = DispatchWorkItem { [weak self] in
+            guard let self = self, self.txState != .idle else { return }
+            print("[Voice] TX timeout (\(limit) s) — cutting off; release and press again to talk")
+            self.notice = "Transmit time limit (\(limit) s) reached — release PTT and press again."
+            self.held = [1: [], 2: []]          // the current hold no longer counts
+            self.stopBurst()
+            self.audio.playTone(VoiceTones.timeoutCutoff())
+        }
+        txCutoffTimer = cut
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(limit), execute: cut)
+    }
+    private var holdTimer: DispatchWorkItem?
+    private var tptWatchdog: DispatchWorkItem?
+    private var primingSamples = 0
+    private var primingLoudSamples = 0
+    private var lastStopAt = Date.distantPast
+    private var lastTxStopAt = Date.distantPast
+    private var lastRxAt = Date.distantPast
+
+    private static var routeIsHFP: Bool {
+        let r = AVAudioSession.sharedInstance().currentRoute
+        return (r.inputs + r.outputs).contains { $0.portType == .bluetoothHFP }
+    }
+
+    func pttDown(slot: Int, source: PTTSource) {
+        guard slot == 1 || slot == 2 else { return }
+        held[slot, default: []].insert(source)
+        guard txState == .idle, pressedSlot == nil else { return }       // first press wins
+
+        // Cold = the audio engine is in standby (Bluetooth link idle) and the
+        // speaker-mic is Bluetooth HFP: it has to wake before the tone is heard.
+        let hfp = audio.usesBluetoothHFP || Self.routeIsHFP
+        let standby = audio.isStandby
+        let now = Date()
+        let warm = hfp && !standby
+        let refractory = warm ? 0.05 : 0.2
+        guard now.timeIntervalSince(lastStopAt) >= refractory else { return }
+
+        // Can we transmit? Nothing without slot 1; PTT 2 uses slot 2 only when
+        // it can carry audio, else slot 1; never on a listen-only channel.
+        guard slots[0].state == .connected else {
+            print("[Voice] PTT refused: voice not connected")
+            audio.playTone(VoiceTones.deny())
+            return
+        }
+        let target = (slot == 2 && isSlot2Usable) ? 2 : 1
+        if slot == 2 && target == 1 { print("[Voice] PTT 2 → slot 1 (slot 2 not usable)") }
+        guard !slots[target - 1].suppressed else {
+            notice = "PTT \(target) is listen-only in this channel"
+            audio.playTone(VoiceTones.deny())
+            return
+        }
+
+        pressedSlot = slot
+        burstSlot = target
+        burstID &+= 1
+        audio.setBusy(true)
+        armTxTimeout()
+        burstHFP = hfp
+        burstCold = hfp && standby
+        // Apple PushToTalk: every burst is a system transmission. The audio
+        // session signals lag behind presses, so a press first waits for ITS
+        // OWN "transmit began" (ACQUIRING), and only then for the session —
+        // a stale activate/deactivate from a previous press is ignored.
+        txState = .acquiring
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self = self, self.txState == .acquiring else { return }
+            print("[Voice] the system didn't start the transmission / audio within 4 s — giving up")
+            self.notice = "Couldn't start transmitting (audio not available)."
+            self.audio.cancelActivationWaiters()
+            self.held = [1: [], 2: []]
+            self.stopBurst()
+        }
+        acquireTimer = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: timeout)
+        if source == .system || dryRun {
+            // The system already began transmitting (its Talk button / a
+            // hands-free button), or no system transmission in a dry run.
+            print("[Voice] \(Self.ts()) ACQUIRING audio (\(source == .system ? "system Talk button" : "dry run"))")
+            waitForAudioThenPrime()
+        } else {
+            print("[Voice] \(Self.ts()) ACQUIRING (asking the system to transmit)")
+            requestedSystemTX = true
+            nativePTT.beginTransmitting()
+        }
+    }
+
+    /// After the system began our transmission: wait for the audio session
+    /// (immediately if it is already up), then PRIMING.
+    private func waitForAudioThenPrime() {
+        let id = burstID
+        audio.activate("PTT") { [weak self] in
+            guard let self = self, self.burstID == id, self.txState == .acquiring else { return }
+            self.acquireTimer?.cancel(); self.acquireTimer = nil
+            self.burstHFP = self.audio.usesBluetoothHFP
+            if Self.systemProvidesCues {
+                // iOS's start cue (vibration) comes BEFORE audio is available,
+                // so the operator is already talking: send from the instant
+                // the system activates audio. No PRIMING discard — it only
+                // existed to keep our own talk-permit tone off the air. The
+                // 60 ms trailing trim at release (button clunk) is kept.
+                // Voice Isolation removes the cue completely (measured: the first
+                // 0.8 s stays at -90 to -185 dBFS), so no drop is needed then. The
+                // ACTIVE mode decides: iOS sometimes runs Standard despite the choice.
+                if self.burstHFP || AVCaptureDevice.activeMicrophoneMode == .voiceIsolation {
+                    print("[Voice] \(Self.ts()) audio on — transmitting immediately (no priming gate; \(self.burstHFP ? "Bluetooth" : "built-in mic, Voice Isolation"))")
+                    self.startTransmitting(notBeforeHost: 0)
+                } else {
+                    // Built-in mic: skip iOS's start cue.
+                    let gate = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: Self.builtInMicCueGuard)
+                    print("[Voice] \(Self.ts()) audio on — built-in mic (mic mode chosen \(MicModeRow.name(AVCaptureDevice.preferredMicrophoneMode)), active \(MicModeRow.name(AVCaptureDevice.activeMicrophoneMode))), skipping the first \(Int(Self.builtInMicCueGuard * 1000)) ms (iOS start cue)")
+                    self.startTransmitting(notBeforeHost: gate)
+                }
+            } else {
+                self.startPriming()
+            }
+        }
+    }
+
+    func pttUp(slot: Int, source: PTTSource) {
+        held[slot, default: []].remove(source)
+        guard pressedSlot == slot, held[slot, default: []].isEmpty else { return }
+        stopBurst()
+    }
+
+    private func startPriming() {
+        txState = .priming
+        primingSamples = 0
+        primingLoudSamples = 0
+        let cold = burstCold
+        let frameGate = (cold ? 30 : 5) * 480          // in samples (10 ms frames)
+        let rmsGate: Float = cold ? 200 : 5
+        print("[Voice] \(Self.ts()) PRIMING (\(burstHFP ? (cold ? "Bluetooth, cold" : "Bluetooth, warm") : "built-in/wired"))")
+        audio.setMicLevelHandler { [weak self] n, rms in
+            DispatchQueue.main.async {
+                guard let self = self, self.txState == .priming else { return }
+                self.primingSamples += n
+                if rms > 0 { self.primingLoudSamples += n }
+                let framesOK = cold ? self.primingLoudSamples >= frameGate : self.primingSamples >= frameGate
+                if rms >= rmsGate || framesOK { self.micAlive() }
+            }
+        }
+        audio.setMicMode(.listen)
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self = self, self.txState == .priming else { return }
+            if self.primingSamples == 0 {
+                print("[Voice] PRIMING timed out with no mic audio — bonk")
+                self.audio.playTone(VoiceTones.bonk())
+                self.stopBurst()
+            } else {
+                self.micAlive()
+            }
+        }
+        primingTimer = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + (cold ? 1.5 : 0.5), execute: timeout)
+    }
+
+    private func micAlive() {
+        primingTimer?.cancel(); primingTimer = nil
+        audio.setMicLevelHandler(nil)
+        // PushToTalk: the system only reports the session active once it has
+        // brought the route (incl. Bluetooth HFP) up, and PRIMING has just
+        // proven the mic delivers audio — Android's extra 700 ms cold hold
+        // only adds delay here.
+        if burstCold && !Self.systemProvidesCues {
+            txState = .coldHold                       // mic still discarding
+            let hold = DispatchWorkItem { [weak self] in
+                guard let self = self, self.txState == .coldHold else { return }
+                self.startTpt()
+            }
+            holdTimer = hold
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: hold)
+        } else {
+            startTpt()
+        }
+    }
+
+    static func ts() -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f.string(from: Date())
+    }
+
+    /// Apple PushToTalk gives its own start/stop sound and haptic, so the app
+    /// plays no talk-permit / interrupt tone (those stay on Android, which has
+    /// no native PTT). PRIMING still gates the mic before anything is sent.
+    static let systemProvidesCues = true
+
+    private func startTpt() {
+        txState = .tpt                                 // mic still discarding
+        if Self.systemProvidesCues {
+            print("[Voice] \(Self.ts()) mic ready — transmitting (iOS provides the start cue)")
+            startTransmitting(notBeforeHost: mach_absolute_time())
+            return
+        }
+        print("[Voice] \(Self.ts()) TPT start")
+        let peerTalking = !activeSpeakers.isEmpty
+        guard let tone = peerTalking ? VoiceTones.interruptChirp() : VoiceTones.permit() else {
+            startTransmitting(notBeforeHost: mach_absolute_time())   // tone "None": straight to TX
+            return
+        }
+        let tail = burstHFP ? 0.35 : 0                 // Bluetooth tail guard
+        let watchdog = DispatchWorkItem { [weak self] in
+            guard let self = self, self.txState == .tpt else { return }
+            print("[Voice] TPT watchdog fired")
+            self.startTransmitting(notBeforeHost: mach_absolute_time())
+        }
+        tptWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(VoiceTones.durationMs(tone) * 2 + 500) / 1000 + 0.18 + tail,
+                                      execute: watchdog)
+        audio.playTone(tone, padded: true) { [weak self] playedHost in
+            print("[Voice] \(Self.ts()) TPT played back (+\(Int(tail * 1000)) ms guard)")
+            // Mic audio captured before (playback end + tail guard) is never
+            // sent — enforced by capture timestamp in the audio engine.
+            let gate = playedHost + AVAudioTime.hostTime(forSeconds: tail)
+            DispatchQueue.main.asyncAfter(deadline: .now() + tail) {
+                guard let self = self, self.txState == .tpt else { return }
+                self.startTransmitting(notBeforeHost: gate)
+            }
+        }
+    }
+
+    private func startTransmitting(notBeforeHost: UInt64) {
+        tptWatchdog?.cancel(); tptWatchdog = nil
+        guard let target = burstSlot else { return }
+        txState = .transmitting
+        transmittingSlot = target
+        txSlotForAudio = target
+        if !dryRun { clients[target]?.beginTransmission() }
+        audio.setMicMode(.transmit, notBeforeHost: notBeforeHost)
+        audio.setDucked(slot: target == 1 ? 2 : 1, true)
+        print("[Voice] \(Self.ts()) TRANSMITTING on slot \(target)")
+    }
+
+    /// PTT-up or anything that ends the burst. Only a burst that reached
+    /// TRANSMITTING sends a terminator.
+    private func stopBurst() {
+        audio.cancelActivationWaiters()    // a released press must not wake later
+        primingTimer?.cancel(); primingTimer = nil
+        acquireTimer?.cancel(); acquireTimer = nil
+        txWarnTimer?.cancel(); txWarnTimer = nil
+        txCutoffTimer?.cancel(); txCutoffTimer = nil
+        holdTimer?.cancel(); holdTimer = nil
+        tptWatchdog?.cancel(); tptWatchdog = nil
+        audio.setMicLevelHandler(nil)
+        let wasTransmitting = txState == .transmitting
+        if txState != .idle && !wasTransmitting {
+            print("[Voice] \(Self.ts()) burst ended during \(txState) — nothing transmitted")
+        }
+        let slot = burstSlot
+        txSlotForAudio = nil                           // in-flight frames are dropped
+        audio.setMicMode(.off)
+        if wasTransmitting, let s = slot {
+            if !dryRun { clients[s]?.endTransmission() }
+            lastTxStopAt = Date()
+        }
+        audio.setDucked(slot: 1, false)
+        audio.setDucked(slot: 2, false)
+        if requestedSystemTX || nativePTT.isTransmitting {
+            requestedSystemTX = false
+            nativePTT.stopTransmitting()
+        }
+        txState = .idle
+        transmittingSlot = nil
+        pressedSlot = nil
+        burstSlot = nil
+        lastStopAt = Date()
+        audio.setBusy(false)
+    }
+
+    /// Kept for existing callers: end whatever burst is in progress.
+    private func endTX() { stopBurst() }
+
+    // MARK: - Debug self-test (launch with -XVoiceSelfTest YES)
+    //
+    // Drives PTT through the full TX state machine on a real device WITHOUT
+    // sending anything to the server (dry run), and probes the first frames of
+    // each burst for the permit tone. Scenarios: full burst, release during
+    // PRIMING, release during the tone, second full burst.
+
+    /// When true, nothing is sent to Mumble (no voice, no terminator).
+    private(set) var dryRun = false
+    private var dryRunPackets = 0
+    private var selfTestStarted = false
+
+    #if DEBUG
+    private func runSelfTestIfRequested() {
+        guard !selfTestStarted, UserDefaults.standard.bool(forKey: "XVoiceSelfTest") else { return }
+        selfTestStarted = true
+        dryRun = true
+        let tone = TalkPermitTone.current
+        audio.leakProbeHz = [TalkPermitTone.astro25: 910, .dmr: 1569, .nextel: 1800, .nextelAlt: 911, .vertex: 1050][tone]
+        print("[SelfTest] start — DRY RUN (nothing sent). tone=\(tone.rawValue) route=\(VoiceAudioEngine.routeDescription())")
+        let steps: [(Double, String, () -> Void)] = [
+            (3.0, "A: press (full burst)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (5.5, "A: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (7.0, "B: press (release during PRIMING)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (7.15, "B: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (9.0, "C: press (release during TPT)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (9.45, "C: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (11.0, "D: press (second full burst)", { self.pttDown(slot: 1, source: .onScreen) }),
+            (13.5, "D: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            // E: after the 5 s / 8 s holds the engine is in standby, so this
+            // press exercises ACQUIRING (wake) → PRIMING → TPT → TX.
+            (26.0, "E: press after standby (wake path)", { print("[SelfTest] engine standby before E: \(self.audio.isStandby)"); self.pttDown(slot: 1, source: .onScreen) }),
+            (29.5, "E: release", { self.pttUp(slot: 1, source: .onScreen) }),
+            (31.0, "done", { print("[SelfTest] done — packets that would have been sent: \(self.dryRunPackets), state=\(self.txState)") }),
+        ]
+        let t0 = Date()
+        for (at, label, action) in steps {
+            DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                print(String(format: "[SelfTest] t=%.2fs %@ (state before: %@)", Date().timeIntervalSince(t0), label, "\(self.txState)"))
+                action()
+            }
+        }
+    }
+    #endif
+
+    // MARK: - Talking indicator (600 ms after the last frame, like XV)
+
+    private static func speakerKey(slot: Int, session: UInt32) -> UInt32 {
+        slot == 2 ? (session | 0x8000_0000) : (session & 0x7FFF_FFFF)
+    }
+
+    private func startSpeakerTimer() {
+        speakerTimer?.invalidate()
+        speakerTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            self?.refreshSpeakers()
+        }
+    }
+
+    private func refreshSpeakers() {
+        let now = Date()
+        speakerLastHeard = speakerLastHeard.filter { now.timeIntervalSince($0.value.at) < 0.6 }
+        let names = speakerLastHeard.values
+            .sorted { ($0.slot, $0.session) < ($1.slot, $1.session) }
+            .map { "\($0.slot): " + (clients[$0.slot]?.userName($0.session) ?? "Session \($0.session)") }
+        if names != activeSpeakers {
+            activeSpeakers = names
+            if !names.isEmpty, nativePTT.hasRemoteParticipant {
+                nativePTT.setActiveRemoteParticipant(currentTalkerName())
+            }
+        }
+    }
+}
+
+extension VoiceController: MumbleClientDelegate {
+    func mumble(_ client: MumbleClient, stateChanged s: MumbleClient.State) {
+        let slot = client.slot
+        guard clients[slot] === client else { return }
+        switch s {
+        case .idle: break
+        case .connecting: setSlot(slot, .connecting, "Connecting…")
+        case .connected:
+            if slot == 1 {
+                slot1WasConnected = true
+                nativePTT.join(name: systemChannelName())
+                nativePTT.setServiceStatus(.ready)
+            }
+            setSlot(slot, .connected, "Connected")
+            #if DEBUG
+            if slot == 1 { runSelfTestIfRequested() }
+            #endif
+            if slot == 1 { maybeStartSlot2() }
+        case .reconnecting(let secs, _):
+            let wasTX = txState == .transmitting && burstSlot == slot
+            if burstSlot == slot { endTX() }
+            if wasTX { audio.playTone(VoiceTones.timeoutCutoff()) }   // dropped mid-burst
+            if slot == 1 && slot1WasConnected { playStatus(.voiceLost) }
+            if slot == 1 { slot1WasConnected = false; lastChannelBySlot = [:] }
+            setSlot(slot, .reconnecting, "Reconnecting in \(secs)s")
+            if slot == 1 { nativePTT.setServiceStatus(.connecting) }
+            slots[slot - 1].settled = false
+            if slot == 1 { parkSlot2(isSlot2Enabled ? "Waiting for PTT 1" : "Off") }
+        case .failed(let why):
+            if burstSlot == slot { endTX() }
+            if slot == 1 && slot1WasConnected { playStatus(.voiceLost) }
+            if slot == 1 { slot1WasConnected = false; lastChannelBySlot = [:] }
+            setSlot(slot, why.contains("certificate") ? .noCertificate : .failed, why)
+            if slot == 1 { nativePTT.setServiceStatus(.unavailable) }
+            if slot == 1 { parkSlot2(isSlot2Enabled ? "Waiting for PTT 1" : "Off") }
+        }
+    }
+
+    func mumble(_ client: MumbleClient, channelsChanged ch: [UInt32: String], current: UInt32?,
+                suppressed: Bool, settled: Bool, onTarget: Bool) {
+        let slot = client.slot
+        guard clients[slot] === client else { return }
+        var st = slots[slot - 1]
+        st.channels = ch.map { Channel(id: $0.key, name: $0.key == 0 ? "Lobby" : $0.value) }.sorted { $0.id < $1.id }
+        st.currentChannelId = current
+        st.suppressed = suppressed
+        st.settled = settled
+        slots[slot - 1] = st
+        // Remember where the server actually put slot 1 (admin moves included).
+        // Only when it's where we asked to be (or an adopted admin move) — a
+        // refused or missing target must not overwrite the operator's choice.
+        if slot == 1, settled, onTarget, let current = current {
+            saveChannel(1, id: current, name: st.currentChannelName)
+        }
+        if settled, let cur = current, lastChannelBySlot[slot] != cur {
+            lastChannelBySlot[slot] = cur
+            playStatus(.join)
+        }
+        refreshStatusLine(slot)
+        nativePTT.updateDescriptor(name: systemChannelName())
+        if slot == 1 { maybeStartSlot2() }
+        checkSameChannel()
+        // If the slot that owns the mic just became listen-only, stop.
+        if suppressed, burstSlot == slot { endTX() }
+    }
+
+    func mumble(_ client: MumbleClient, voice opus: Data, from session: UInt32, terminator: Bool) {
+        let slot = client.slot
+        let key = Self.speakerKey(slot: slot, session: session)
+        DispatchQueue.main.async {
+            guard self.clients[slot] === client else { return }   // stale (parked/stopped) client
+            // Slots sharing a channel would play every speaker twice: keep slot 1's copy.
+            if slot == 2 && self.slotsShareChannel { return }
+            if !opus.isEmpty { self.audio.playOpus(opus, speaker: key, slot: slot) }
+            if terminator { self.audio.endOfStream(speaker: key) }
+            if terminator { self.speakerLastHeard[key] = nil }
+            else { self.speakerLastHeard[key] = (slot, session, Date()) }
+            self.lastRxAt = Date()
+            self.refreshSpeakers()
+        }
+    }
+}

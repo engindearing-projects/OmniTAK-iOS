@@ -255,8 +255,7 @@ struct CustomToolbar: View {
                         Circle()
                             .fill(isActive ? item.tint.opacity(0.22) : Color.clear)
                             .frame(width: isActive ? 40 : 32, height: isActive ? 40 : 32)
-                        Image(systemName: item.icon)
-                            .font(.system(size: 20, weight: isActive ? .semibold : .regular))
+                        IconImage(name: item.icon, size: 20, weight: isActive ? .semibold : .regular)
                             .foregroundColor(isActive ? item.tint : Color.white.opacity(0.85))
                     }
                     .overlay(alignment: .topTrailing) {

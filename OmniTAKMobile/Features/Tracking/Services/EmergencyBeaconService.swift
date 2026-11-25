@@ -125,6 +125,36 @@ class EmergencyBeaconService: ObservableObject {
 
     // Services
     private var takService: TAKService?
+
+    /// Nothing in the app ever called `configure(takService:locationManager:)`,
+    /// so every emergency broadcast failed with "TAKService not configured"
+    /// (both the Emergency tool and a speaker-mic emergency button). Fall back
+    /// to the app-wide TAK service and the app's own location.
+    private var effectiveTAKService: TAKService { takService ?? TAKService.shared }
+
+    /// Last position seen while an emergency was being broadcast, for when the
+    /// fix is lost mid-emergency.
+    private var lastKnownCoordinate: (lat: Double, lon: Double, alt: Double)?
+
+    /// The position for the next broadcast. `known == false` means there is no
+    /// fix and none was seen: the CoT then goes out at 0,0 marked "position
+    /// unknown" (ce/le 9999999) rather than as a confident point. Broadcasts
+    /// repeat every `broadcastInterval` and re-read this, so the alert moves to
+    /// the real position on the first broadcast after a fix.
+    private var currentCoordinate: (lat: Double, lon: Double, alt: Double, known: Bool) {
+        var fix: (lat: Double, lon: Double, alt: Double)?
+        if let c = locationManager?.location {
+            fix = (c.latitude, c.longitude, locationManager?.altitude ?? 0)
+        } else if let l = LocationManager.shared.location {
+            fix = (l.coordinate.latitude, l.coordinate.longitude, l.altitude)
+        }
+        if let f = fix {
+            lastKnownCoordinate = f
+            return (f.lat, f.lon, f.alt, true)
+        }
+        if let k = lastKnownCoordinate { return (k.lat, k.lon, k.alt, true) }
+        return (0, 0, 0, false)
+    }
     private var locationManager: BeaconLocationManager?
     private var broadcastTimer: Timer?
 
@@ -157,7 +187,12 @@ class EmergencyBeaconService: ObservableObject {
 
     // MARK: - Emergency Activation
 
-    func activateEmergency(type: EmergencyType, message: String? = nil) {
+    /// - Parameter playSound: false for a hardware trigger (e.g. a speaker-mic
+    ///   emergency key): the system alert sound plays at full volume through
+    ///   the active audio route — straight into the operator's speaker-mic —
+    ///   and a man-down / covert trigger shouldn't sound at all. The phone
+    ///   still vibrates.
+    func activateEmergency(type: EmergencyType, message: String? = nil, playSound: Bool = true) {
         let finalMessage = message ?? type.defaultMessage
 
         emergencyState = EmergencyState(
@@ -174,7 +209,8 @@ class EmergencyBeaconService: ObservableObject {
 
         // Provide haptic feedback
         provideHapticFeedback(.heavy)
-        playAlertSound()
+        if playSound { playAlertSound() }
+        else { AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate)) }
 
         // Send initial broadcast immediately
         sendEmergencyBroadcast()
@@ -224,17 +260,13 @@ class EmergencyBeaconService: ObservableObject {
 
     private func sendEmergencyBroadcast() {
         guard emergencyState.isActive else { return }
-        guard let takService = takService else {
-            lastBroadcastStatus = "Error: TAKService not configured"
-            print("Cannot broadcast emergency: TAKService not configured")
-            return
-        }
+        let takService = effectiveTAKService
 
         // Get current location
-        let location = locationManager?.location
-        let latitude = location?.latitude ?? 0.0
-        let longitude = location?.longitude ?? 0.0
-        let altitude = locationManager?.altitude ?? 0.0
+        let pos = currentCoordinate
+        let latitude = pos.lat
+        let longitude = pos.lon
+        let altitude = pos.alt
 
         // Generate CoT XML
         let xml = generateEmergencyCoT(
@@ -242,7 +274,8 @@ class EmergencyBeaconService: ObservableObject {
             message: emergencyState.message,
             latitude: latitude,
             longitude: longitude,
-            altitude: altitude
+            altitude: altitude,
+            positionKnown: pos.known
         )
 
         // Send via TAKService
@@ -263,19 +296,20 @@ class EmergencyBeaconService: ObservableObject {
     }
 
     private func sendCancellationBroadcast() {
-        guard let takService = takService else { return }
+        let takService = effectiveTAKService
 
-        let location = locationManager?.location
-        let latitude = location?.latitude ?? 0.0
-        let longitude = location?.longitude ?? 0.0
-        let altitude = locationManager?.altitude ?? 0.0
+        let pos = currentCoordinate
+        let latitude = pos.lat
+        let longitude = pos.lon
+        let altitude = pos.alt
 
         let xml = generateEmergencyCoT(
             type: .cancel,
             message: "EMERGENCY CANCELLED",
             latitude: latitude,
             longitude: longitude,
-            altitude: altitude
+            altitude: altitude,
+            positionKnown: pos.known
         )
 
         _ = takService.sendCoT(xml: xml)
@@ -289,7 +323,8 @@ class EmergencyBeaconService: ObservableObject {
         message: String,
         latitude: Double,
         longitude: Double,
-        altitude: Double
+        altitude: Double,
+        positionKnown: Bool = true
     ) -> String {
         let now = Date()
         let uid = "\(userUID)-\(Int(now.timeIntervalSince1970))"
@@ -298,7 +333,7 @@ class EmergencyBeaconService: ObservableObject {
         let detail = """
                 <contact callsign="\(userCallsign.xmlEscaped)"/>
                 <emergency type="\(type.rawValue.xmlEscaped)">\(message.xmlEscaped)</emergency>
-                <remarks>\(message.xmlEscaped)</remarks>
+                <remarks>\((positionKnown ? message : message + " (position unknown — no GPS fix yet)").xmlEscaped)</remarks>
                 <status readiness="true"/>
                 <takv device="\(UIDevice.current.model)" platform="OmniTAK-iOS" os="\(UIDevice.current.systemVersion)" version="\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.0.0")"/>
                 <__group name="Emergency" role="Team Member"/>
@@ -313,8 +348,8 @@ class EmergencyBeaconService: ObservableObject {
             lat: latitude,
             lon: longitude,
             hae: altitude,
-            ce: 9999,
-            le: 9999,
+            ce: positionKnown ? 9999 : 9_999_999,
+            le: positionKnown ? 9999 : 9_999_999,
             detail: detail
         )
     }

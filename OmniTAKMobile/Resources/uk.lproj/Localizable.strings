@@ -149,6 +149,7 @@
 "bar.cmd.drawingslist" = "Малюнки";
 "bar.cmd.lasso" = "Виділення";
 "bar.cmd.engine" = "2D / 3D";
+"bar.cmd.voice" = "X Voice";
 "bar.tool.pointer" = "Поставити точку";
 "bar.tool.routes" = "Маршрути";
 "bar.tool.navigation" = "Навігація";

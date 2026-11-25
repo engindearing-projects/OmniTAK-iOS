@@ -149,6 +149,7 @@
 "bar.cmd.drawingslist" = "Dibujos";
 "bar.cmd.lasso" = "Selección";
 "bar.cmd.engine" = "2D / 3D";
+"bar.cmd.voice" = "X Voice";
 "bar.tool.pointer" = "Marcar punto";
 "bar.tool.routes" = "Rutas";
 "bar.tool.navigation" = "Navegación";

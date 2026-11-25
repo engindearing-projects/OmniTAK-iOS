@@ -80,13 +80,25 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 		<string>processing</string>
+		<!-- X Voice uses Apple's PushToTalk framework: the system owns the PTT
+		     channel and activates the audio session for transmit/receive.
+		     Both modes are needed (Apple DTS): `push-to-talk` for the channel,
+		     and `audio` so the system can activate the audio session while
+		     the app is in the background or the phone is locked. Without
+		     `audio`, a press on a locked phone begins transmitting but never
+		     gets a microphone. Requires the
+		     com.apple.developer.push-to-talk entitlement. -->
+		<string>audio</string>
+		<string>push-to-talk</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, and detects nearby drones broadcasting FAA Remote ID.</string>
+	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, detects nearby drones broadcasting FAA Remote ID, and connects to push-to-talk speaker-mics and PTT buttons for X Voice.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage.</string>
+	<string>OmniTAK connects to Meshtastic LoRa radios over Bluetooth so you can share position and messages with your team when there is no cellular or Wi-Fi coverage, and to push-to-talk speaker-mics and PTT buttons for X Voice.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>OmniTAK uses the camera to scan enrollment QR codes for TAK server certificates and to attach photos to map markers.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OmniTAK uses the microphone for push-to-talk voice so you can speak to your team over the TAK server.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>OmniTAK lets you attach photos from your library to map markers and share them with your team.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
