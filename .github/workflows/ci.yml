@@ -18,16 +18,41 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: Build + test (iOS Simulator)
-    # macos-26 (default Xcode 26.x) — the Mapbox SDK's compiled swiftinterface
-    # references `_LocationEssentials`, a CoreLocation submodule that only exists
-    # in the iOS 26 SDK. macos-15's Xcode 16.4 lacks it and fails with ~240×
-    # "cannot find type '_LocationEssentials' in scope". Matches local dev (26.5).
-    runs-on: macos-26
+    name: ${{ matrix.name }}
+    # Two toolchains, because they can disagree. Store builds are made with
+    # Xcode 27 (iOS 27 SDK), while some contributors are still on Xcode 26.
+    # In November 2026 main stopped compiling on Xcode 27.2 (a SwiftUI body in
+    # MapViewController timed out in the type checker) while this job, then
+    # Xcode 26 only, stayed green. A green run has to mean both.
+    #
+    # Nothing older than the iOS 26 SDK works: the Mapbox SDK's compiled
+    # swiftinterface references `_LocationEssentials`, a CoreLocation submodule
+    # that only exists from the iOS 26 SDK on. macos-15's Xcode 16.4 lacks it
+    # and fails with ~240× "cannot find type '_LocationEssentials' in scope".
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Build + test (iOS Simulator)
+            runner: macos-26
+            xcode: ''
+          - name: Build + test (iOS Simulator, Xcode 27)
+            runner: xcode-27
+            xcode: /Applications/Xcode_27.2.app
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
+
+      # macos-26 uses the image default (Xcode 26.x). The xcode-27 image
+      # defaults to an older 27.x, so pin the version store builds use.
+      - name: Select Xcode
+        if: matrix.xcode != ''
+        run: sudo xcode-select -s "${{ matrix.xcode }}"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       # SPM checkouts (Mapbox, Turf, VLCKit) dominate cold-start time.
       # Keyed on the pbxproj since Package.resolved is not committed —

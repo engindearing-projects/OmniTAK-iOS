@@ -96,6 +96,43 @@ final class LoopbackTAKServer {
         for peer in all { peer.connection.cancel() }
     }
 
+    /// Stop listening, and return only once the port refuses a connection.
+    /// `NWListener.cancel()` returns before the listening socket is closed, so
+    /// for a moment after `stop()` a dial to the old port can still complete
+    /// its handshake and then be reset. A test that needs "nothing is listening
+    /// here" has to see the refusal first. Returns false if the port was still
+    /// accepting when the timeout ran out. A probe that gets in before the
+    /// port closes is counted by the server like any other connection.
+    @discardableResult
+    func stopAndWaitUntilRefusing(timeout: TimeInterval = 5) -> Bool {
+        let oldPort = port
+        stop()
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Self.isRefused(port: oldPort) { return true }
+            usleep(10_000)
+        }
+        return false
+    }
+
+    /// One blocking TCP connect to 127.0.0.1. True only for ECONNREFUSED.
+    private static func isRefused(port: UInt16) -> Bool {
+        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return result != 0 && errno == ECONNREFUSED
+    }
+
     var pingBehavior: PingBehavior {
         get { lock.lock(); defer { lock.unlock() }; return behavior }
         set { lock.lock(); behavior = newValue; lock.unlock() }
