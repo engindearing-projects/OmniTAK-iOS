@@ -129,6 +129,23 @@ X Voice uses CoreBluetooth with the `bluetooth-central` background mode, so
 button presses reach it in the background and with the phone locked, and iOS
 lets it begin a transmission from them.
 
+Three things keep that working with the phone locked:
+
+- **The `audio` background mode**, alongside `push-to-talk`. Without it iOS
+  begins the transmission but never turns the microphone on.
+- **Background location.** OmniTAK's background location updates are what
+  keep the app, and its connection to the voice server, running while it is
+  not on screen. With location denied or off, iOS suspends the app and voice
+  stops until OmniTAK is opened again.
+- **Bluetooth state restoration.** If iOS ends the app in the background, a
+  press on the saved device relaunches it and hands the connection back.
+  That first press only wakes the app; voice reconnects a few seconds later.
+
+Scanning in the background only finds devices that advertise a known service
+(AINA V2, Inrico BT02, Pryme). An AINA V1 advertises none, so the first time
+it is used OmniTAK has to be on screen. Reconnecting a saved device does not
+need a scan.
+
 | Device | Service / characteristic | Decoding |
 |---|---|---|
 | AINA APTT V1/V2 | `127FACE1-…` / button `127FBEEF-…`, config `127FDEAF-…` | Bitmask: `0x01` PTT 1, `0x04` PTT 2, `0x02` emergency |

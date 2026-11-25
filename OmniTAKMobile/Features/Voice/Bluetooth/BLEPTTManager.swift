@@ -31,6 +31,7 @@
 
 import Foundation
 import CoreBluetooth
+import UIKit
 
 /// PTT events from a hardware button. `slot` 1 = primary PTT (VS1), 2 = secondary (VS2).
 /// `function`: a speaker-mic's extra button (Inrico BT02: 0x03 top button,
@@ -77,7 +78,16 @@ final class BLEPTTManager: NSObject, ObservableObject {
         static let prymeService = CBUUID(string: "FFE0")
         static let prymeFallback = CBUUID(string: "00420000-8F59-4420-870D-84F3B617E493")
         static let bt02Button  = CBUUID(string: "894C8042-E841-461C-A5C9-5A73D25DB08E")
+        static let battery = CBUUID(string: "180F")
     }
+    /// iOS delivers nothing to a background scan unless it names services.
+    /// These are what the supported devices advertise (seen on device): AINA
+    /// V2 its button service, Pryme FFE0, Inrico BT02 only Battery. An AINA V1
+    /// advertises no services, so it can only be found in the foreground.
+    private static let backgroundScanServices = [UUIDs.ainaService, UUIDs.prymeService, UUIDs.battery]
+    /// Lets iOS relaunch the app for this button after it ended the app in
+    /// the background, and hand the connection back (willRestoreState).
+    private static let restoreIdentifier = "xvoice.blePtt.central"
     private static let savedKey = "voice.blePtt.peripheral"
     private static let ainaA2dpControlsDisable: UInt8 = 0x20
     private static let ainaPhoneControlsDisable: UInt8 = 0x10
@@ -124,7 +134,10 @@ final class BLEPTTManager: NSObject, ObservableObject {
     /// central is what triggers the iOS Bluetooth permission prompt.
     func start() {
         wantRunning = true
-        if central == nil { central = CBCentralManager(delegate: self, queue: .main) }
+        if central == nil {
+            central = CBCentralManager(delegate: self, queue: .main,
+                                       options: [CBCentralManagerOptionRestoreIdentifierKey: Self.restoreIdentifier])
+        }
         else { reconnectSaved() }
     }
 
@@ -143,7 +156,12 @@ final class BLEPTTManager: NSObject, ObservableObject {
         seenThisScan.removeAll()
         isScanning = true
         status = "Scanning…"
-        c.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        // Foreground: everything, classified by name (an AINA V1 advertises
+        // no services). Background: only a scan that names services returns
+        // anything.
+        let background = UIApplication.shared.applicationState == .background
+        c.scanForPeripherals(withServices: background ? Self.backgroundScanServices : nil,
+                             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
         scanToken += 1
         let token = scanToken
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
@@ -235,8 +253,20 @@ final class BLEPTTManager: NSObject, ObservableObject {
     private func attach(_ p: CBPeripheral, kind k: Kind) {
         peripheral = p; kind = k; lastAinaMask = 0
         p.delegate = self
+        if p.state == .connected {
+            // Handed back by state restoration with the link still up.
+            didConnect(p)
+            return
+        }
         status = "Connecting to \(p.name ?? k.rawValue)…"
         central?.connect(p, options: nil)
+    }
+
+    private func didConnect(_ p: CBPeripheral) {
+        connectedName = p.name ?? kind?.rawValue
+        print("[BLEPTT] connected \(connectedName ?? "?")")
+        status = "Connected: \(connectedName ?? "device")"
+        p.discoverServices(nil)
     }
 
     static func classify(name: String?, services: [CBUUID]) -> Kind? {
@@ -359,10 +389,25 @@ extension BLEPTTManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
-        connectedName = p.name ?? kind?.rawValue
-        print("[BLEPTT] connected \(connectedName ?? "?")")
-        status = "Connected: \(connectedName ?? "device")"
-        p.discoverServices(nil)
+        guard peripheral?.identifier == p.identifier else { return }
+        didConnect(p)
+    }
+
+    /// iOS relaunched the app for a Bluetooth event after ending it in the
+    /// background. Runs before centralManagerDidUpdateState. Keep only the
+    /// saved device (one device at a time); the normal power-on path then
+    /// reattaches it — and finds it already connected if the link survived.
+    func centralManager(_ c: CBCentralManager, willRestoreState dict: [String: Any]) {
+        let restored = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral]) ?? []
+        print("[BLEPTT] restored by the system with \(restored.count) device(s)")
+        for p in restored {
+            if wantRunning, p.identifier == savedPeripheralId, p.identifier != forgottenPeripheralId {
+                peripheral = p          // keep a reference until power-on
+                p.delegate = self
+            } else {
+                c.cancelPeripheralConnection(p)
+            }
+        }
     }
 
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {

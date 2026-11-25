@@ -39,6 +39,15 @@ after it. iOS never started the audio. Current builds recover after 2 s
 (`system never activated audio … resetting the remote participant`), and the
 next press works. If it doesn't recover, disconnect and reconnect X Voice.
 
+### Voice stops when the phone is locked or OmniTAK is in the background
+
+- OmniTAK stays running in the background through its location updates. Check
+  iOS Settings → OmniTAK → Location is allowed (*Always*, or *While Using*
+  with the blue location indicator showing) and Location Services are on.
+- A press that begins (end sound on release) but never gives a start sound
+  means iOS did not turn the microphone on: the build is missing the `audio`
+  background mode.
+
 ### First word cut off
 
 - Bluetooth speaker-mic: the link takes about 0.3–0.5 s to come up after the
