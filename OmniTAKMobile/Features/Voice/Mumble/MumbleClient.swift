@@ -2,8 +2,8 @@
 //  MumbleClient.swift
 //  OmniTAKMobile
 //
-//  A small Mumble client for push-to-talk against the TAK server's Murmur
-//  (OTS co-hosts it on the TAK host, port 64738). Ported in spirit from
+//  A small Mumble client for push-to-talk against a Murmur server sharing the
+//  TAK Server's hostname on the standard port (64738). Ported in spirit from
 //  TAK-XVoice's MumbleSession/MumbleTransport (Android), not line by line:
 //
 //  - TCP only. Voice rides UDPTunnel (type 1) over the TLS control channel;

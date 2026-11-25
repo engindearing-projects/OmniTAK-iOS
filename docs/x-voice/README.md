@@ -2,8 +2,9 @@
 
 X Voice is OmniTAK's push-to-talk voice plugin. It is the iOS port of
 [TAK-XVoice](https://tx-tak.github.io/TAK-XVoice/), the ATAK voice plugin for
-Android, and talks to the same Mumble voice server on your TAK server, so iOS
-and Android operators share the same channels.
+Android, and connects to a standard Mumble (Murmur) voice server sharing your
+TAK Server's hostname and certificate, so iOS and Android operators share the
+same channels.
 
 > **Non-mission-critical use only.** Like TAK-XVoice, X Voice comes with no
 > warranty. Don't rely on it as your only means of communication for
@@ -11,8 +12,9 @@ and Android operators share the same channels.
 
 ## What it does
 
-- **Hold-to-talk voice** over your TAK server's Mumble server, signed in with
-  your device's TAK enrollment certificate. No separate voice account.
+- **Hold-to-talk voice** over a standard Mumble (Murmur) server sharing your
+  TAK Server's hostname (port 64738), authenticated with your device's shared
+  TAK enrollment certificate. No separate voice account.
 - **Two channels at once.** PTT 1 is your primary channel; PTT 2 is an
   optional second channel you listen to and can talk on.
 - **Full duplex.** You keep hearing others while you talk. While you talk on
@@ -25,6 +27,15 @@ and Android operators share the same channels.
   button needs one tap the first time.
 - **Emergency button.** A speaker-mic's emergency key raises a 911 alert in
   OmniTAK, the same alert as the in-app emergency button.
+
+## Design philosophy
+
+X Voice is intentionally simple: a zero-configuration solution for a common
+problem. Rather than exposing custom hosts, ports, usernames, or passwords, it
+standardizes on the setup that works out of the box for most teams—a standard
+TAK Server and a Murmur server sharing the same hostname on standard ports,
+authenticated with the same TAK enrollment certificate. Feature requests for
+additional options are welcome as the plugin evolves.
 
 ## Documentation
 

@@ -55,9 +55,10 @@ protocol VoiceHostBridge: AnyObject {
     /// returned connection's lifecycle (`start`/`cancel`).
     func makeServerTLSConnection(host: String, port: UInt16) -> NWConnection?
 
-    /// The active TAK server's hostname, or `nil` if none is active. OTS
-    /// co-hosts Murmur on the same host, so the voice plugin derives the Mumble
-    /// endpoint from this (mirrors Android's `TakServerDiscovery`).
+    /// The active TAK Server's hostname, or `nil` if none is active. Murmur
+    /// shares this hostname on the standard Mumble port (64738), so the voice
+    /// plugin derives its endpoint from this (mirrors Android's
+    /// `TakServerDiscovery`).
     func activeServerHost() -> String?
 
     /// The operator's self callsign (Mumble username is `callsign---slot`).

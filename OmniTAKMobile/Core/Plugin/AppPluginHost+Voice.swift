@@ -73,7 +73,7 @@ extension AppPluginHost: VoiceHostBridge {
         }
         sec_protocol_options_set_max_tls_protocol_version(secOptions, .TLSv13)
 
-        // --- Legacy cipher suites for older TAK/OTS servers (mirror connect) ---
+        // --- Legacy cipher suites for older TAK servers (mirror connect) ---
         let legacySuites = [TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384, TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
                             TLS_RSA_WITH_AES_256_GCM_SHA384, TLS_RSA_WITH_AES_128_GCM_SHA256,
                             TLS_RSA_WITH_AES_256_CBC_SHA, TLS_RSA_WITH_AES_128_CBC_SHA]

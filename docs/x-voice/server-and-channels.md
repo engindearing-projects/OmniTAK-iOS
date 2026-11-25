@@ -10,11 +10,11 @@ Mumble channels in sync with TAK Server groups.
 
 ## What X Voice on iOS expects
 
-- **Host:** the same hostname as your TAK server (OpenTAKServer co-hosts
-  Mumble there).
-- **Port:** 64738, the Mumble default.
-- **Sign-in:** TLS with your device's TAK enrollment certificate. There's no
-  separate voice username or password.
+- **Host:** the same hostname as your standard TAK Server (Murmur does not have
+  to run on the same machine, as long as it is reachable at that hostname).
+- **Port:** 64738 (the standard Mumble port).
+- **Sign-in:** mutual TLS using the same TAK Server enrollment certificate
+  already on the device. There is no separate voice username or password.
 - **Name on the server:** your callsign with spaces replaced by `_`, then
   `---`, a short device tag, and the slot: for example `ALPHA-1---1e374fVS1`
   and `ALPHA-1---1e374fVS2`. Other X Voice clients show only the callsign.
