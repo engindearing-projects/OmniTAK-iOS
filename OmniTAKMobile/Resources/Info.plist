@@ -81,9 +81,14 @@
 		<string>remote-notification</string>
 		<string>processing</string>
 		<!-- X Voice uses Apple's PushToTalk framework: the system owns the PTT
-		     channel and activates the audio session for transmit/receive, so
-		     the plain `audio` background mode is not used. Requires the
+		     channel and activates the audio session for transmit/receive.
+		     Both modes are needed (Apple DTS): `push-to-talk` for the channel,
+		     and `audio` so the system can activate the audio session while
+		     the app is in the background or the phone is locked. Without
+		     `audio`, a press on a locked phone begins transmitting but never
+		     gets a microphone. Requires the
 		     com.apple.developer.push-to-talk entitlement. -->
+		<string>audio</string>
 		<string>push-to-talk</string>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>

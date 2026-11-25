@@ -20,7 +20,8 @@
 //  the system.
 //
 //  Requires the com.apple.developer.push-to-talk entitlement and the
-//  `push-to-talk` UIBackgroundModes entry. The channel manager must be created
+//  `push-to-talk` and `audio` UIBackgroundModes entries (`audio` lets the
+//  system activate the session in the background). The channel manager must be created
 //  at app launch (the plugin activates at launch); a channel can only be
 //  joined while the app is in the foreground.
 //

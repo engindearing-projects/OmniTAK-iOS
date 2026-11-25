@@ -69,8 +69,9 @@ App Store app to do push-to-talk. The app target has:
   for the App ID),
 - `aps-environment` (PushToTalk requires it; X Voice receives over its live
   Mumble connection, not push notifications),
-- the `push-to-talk` background mode, and `bluetooth-central` so Bluetooth
-  buttons work in the background and locked,
+- the `push-to-talk` and `audio` background modes (iOS needs both to turn
+  the microphone on while the app is in the background or the phone is
+  locked), and `bluetooth-central` so Bluetooth buttons work there too,
 - a microphone usage description.
 
 iOS 16 is the minimum for PushToTalk; iOS 17 or later is recommended. Developer

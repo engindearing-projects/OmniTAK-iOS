@@ -456,6 +456,13 @@ final class VoiceAudioEngine {
         gateLock.lock(); engineID = ObjectIdentifier(engine); quietUntil = Date().addingTimeInterval(1.0); gateLock.unlock()
         var inDesc = "none (standby)"
         if p == .active {
+            // No input on the route means the system has taken the session
+            // away (seen when the phone locks mid-transmission). Touching the
+            // input node then raises an Objective-C exception Swift can't
+            // catch, so check before going near it.
+            guard !AVAudioSession.sharedInstance().currentRoute.inputs.isEmpty else {
+                throw NSError(domain: "VoiceAudio", code: 2, userInfo: [NSLocalizedDescriptionKey: "no input on the audio route"])
+            }
             let input = engine.inputNode
             // Apple voice processing (AEC/NS/AGC) only for the phone's own
             // mic + speaker, where full duplex needs echo cancellation. On a
@@ -507,6 +514,13 @@ final class VoiceAudioEngine {
     private func rebuild(_ reason: String, newEngine: Bool = false) {
         queue.async {
             guard self.running, self.profile == .active else { return }   // standby: nothing running
+            guard !AVAudioSession.sharedInstance().currentRoute.inputs.isEmpty else {
+                // The session lost its input without a deactivate callback:
+                // treat it as deactivated instead of retrying a dead route.
+                self.switchProfile(.standby, reason: "\(reason) — no input on the route")
+                DispatchQueue.main.async { self.onEngineRestart?(reason) }
+                return
+            }
             print("[VoiceAudio] rebuilding engine: \(reason)")
             self.setGate(.off, 0)
             self.micMode = .off; self.trailing.removeAll(); self.pending.removeAll()
